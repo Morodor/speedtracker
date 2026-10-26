@@ -111,17 +111,17 @@ class KinoveaBarbellTracker {
         val anchorX = currentCenter.x
         val anchorY = currentCenter.y
 
-        // En un snatch de halterofilia explosivo (>2.5 m/s a 30 fps), la velocidad vertical
-        // alcanza entre 40 y 90 píxeles por fotograma
-        val predX = anchorX + currentVelocity.x.coerceIn(-45f, 45f)
-        val predY = anchorY + currentVelocity.y.coerceIn(-110f, 85f)
+        // En un levantamiento olímpico de perfil (vista lateral 90°), la trayectoria de la barra
+        // es predominantemente vertical. La velocidad horizontal está fuertemente acotada.
+        val predX = anchorX + currentVelocity.x.coerceIn(-10f, 10f)
+        val predY = anchorY + currentVelocity.y.coerceIn(-95f, 75f)
 
         // 2. Ventana de búsqueda adaptada dinámicamente según la aceleración vertical
-        // Con amplio alcance vertical hacia arriba (hasta 95 px) para no quedarse atrás en tirones explosivos
+        // Margen horizontal controlado (20 px) para evitar desviaciones hacia objetos o luces del fondo
         val isFastMovement = abs(currentVelocity.y) > 10f
-        val searchRadiusX = 36
-        val searchRadiusYUp = if (isFastMovement) 95 else 70
-        val searchRadiusYDown = if (isFastMovement) 70 else 50
+        val searchRadiusX = 20
+        val searchRadiusYUp = if (isFastMovement) 90 else 65
+        val searchRadiusYDown = if (isFastMovement) 65 else 45
 
         val minSearchX = (minOf(anchorX, predX) - searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
         val maxSearchX = (maxOf(anchorX, predX) + searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
@@ -160,7 +160,11 @@ class KinoveaBarbellTracker {
         // Búsqueda gruesa con paso de 2 píxeles
         for (cy in minSearchY..maxSearchY step 2) {
             for (cx in minSearchX..maxSearchX step 2) {
-                val score = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
+                val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
+                // Penalizar desviaciones horizontales del corredor vertical de la barra
+                val hDist = abs(cx - anchorX)
+                val score = rawScore - (hDist / bW.toFloat()) * 0.45f
+
                 if (score > bestScore) {
                     bestScore = score
                     bestX = cx
@@ -177,7 +181,10 @@ class KinoveaBarbellTracker {
 
         for (cy in fineMinY..fineMaxY) {
             for (cx in fineMinX..fineMaxX) {
-                val score = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
+                val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
+                val hDist = abs(cx - anchorX)
+                val score = rawScore - (hDist / bW.toFloat()) * 0.45f
+
                 if (score > bestScore) {
                     bestScore = score
                     bestX = cx
@@ -188,8 +195,8 @@ class KinoveaBarbellTracker {
 
         // 3. Validación y continuación física con amortiguación
         val resolvedCenter: Offset
-        // Umbral adaptado (0.30f) para aceptar correlación bajo motion blur extremo a alta velocidad (>2.5 m/s)
-        if (bestScore >= 0.30f) {
+        // Umbral adaptado para aceptar correlación bajo motion blur vertical
+        if (bestScore >= 0.28f) {
             // Refinamiento subpíxel parabólico
             val sLeft = computeZNCC(lumBuf, roiW, roiLeft, roiTop, (bestX - 1).coerceAtLeast(minSearchX), bestY, tpl, numPixels)
             val sRight = computeZNCC(lumBuf, roiW, roiLeft, roiTop, (bestX + 1).coerceAtMost(maxSearchX), bestY, tpl, numPixels)
@@ -197,7 +204,7 @@ class KinoveaBarbellTracker {
             val sBottom = computeZNCC(lumBuf, roiW, roiLeft, roiTop, bestX, (bestY + 1).coerceAtMost(maxSearchY), tpl, numPixels)
 
             val denomX = (sLeft - 2f * bestScore + sRight)
-            val subX = if (abs(denomX) > 1e-4f) ((sLeft - sRight) / (2f * denomX)).coerceIn(-0.5f, 0.5f) else 0f
+            val subX = if (abs(denomX) > 1e-4f) ((sLeft - sRight) / (2f * denomX)).coerceIn(-0.3f, 0.3f) else 0f
 
             val denomY = (sTop - 2f * bestScore + sBottom)
             val subY = if (abs(denomY) > 1e-4f) ((sTop - sBottom) / (2f * denomY)).coerceIn(-0.5f, 0.5f) else 0f
@@ -208,20 +215,22 @@ class KinoveaBarbellTracker {
             val instVx = targetX - currentCenter.x
             val instVy = targetY - currentCenter.y
 
-            // Filtro de velocidad inercial con respuesta instantánea a picos de aceleración
+            // Filtro de velocidad cinemática:
+            // Eje Y (vertical): respuesta rápida (85%) para capturar aceleraciones explosivas
+            // Eje X (horizontal): amortiguación firme (35%) para mantener estabilidad sin desviaciones
             currentVelocity = Offset(
-                currentVelocity.x * 0.10f + instVx * 0.90f,
-                currentVelocity.y * 0.10f + instVy * 0.90f
+                currentVelocity.x * 0.65f + instVx.coerceIn(-10f, 10f) * 0.35f,
+                currentVelocity.y * 0.15f + instVy * 0.85f
             )
 
             resolvedCenter = Offset(targetX, targetY)
             lastConfidence = bestScore
             consecutiveLostFrames = 0
         } else {
-            // PÉRDIDA TEMPORAL: Amortiguar gradualmente (evita saltos bruscos pero frena tras 3 frames)
+            // PÉRDIDA TEMPORAL: Amortiguar gradualmente
             consecutiveLostFrames++
             currentVelocity = Offset(
-                currentVelocity.x * 0.70f,
+                currentVelocity.x * 0.50f,
                 currentVelocity.y * 0.70f
             )
             if (consecutiveLostFrames >= 3) {
@@ -238,6 +247,10 @@ class KinoveaBarbellTracker {
         return resolvedCenter
     }
 
+    /**
+     * Correlación cruzada normalizada a media cero (ZNCC de 2 pasadas) ejecutada sobre arrays
+     * en memoria continua para máxima velocidad y total invulnerabilidad a fondos claros o sombras.
+     */
     private fun computeZNCC(
         roiLum: FloatArray,
         roiW: Int,
@@ -251,27 +264,35 @@ class KinoveaBarbellTracker {
         val startX = cx - templateHalfW - roiLeft
         val startY = cy - templateHalfH - roiTop
 
-        var sumP = 0f
-        var sumSqP = 0f
-        var cross = 0f
+        // Paso 1: Media exacta del parche candidato
+        var sum = 0f
+        for (dy in 0 until templateH) {
+            val rowOffset = (startY + dy) * roiW + startX
+            for (dx in 0 until templateW) {
+                sum += roiLum[rowOffset + dx]
+            }
+        }
+        val patchMean = sum / numPixels
+
+        // Paso 2: Varianza y correlación cruzada con diferencia explícita respecto a la media
+        var patchVar = 0f
+        var crossSum = 0f
         var idx = 0
 
         for (dy in 0 until templateH) {
             val rowOffset = (startY + dy) * roiW + startX
             for (dx in 0 until templateW) {
-                val p = roiLum[rowOffset + dx]
-                sumP += p
-                sumSqP += p * p
-                cross += tpl[idx] * p
+                val lum = roiLum[rowOffset + dx]
+                val diff = lum - patchMean
+                patchVar += diff * diff
+                crossSum += tpl[idx] * diff
                 idx++
             }
         }
 
-        val meanP = sumP / numPixels
-        val varP = (sumSqP / numPixels) - (meanP * meanP)
-        if (varP < 1.0f) return 0f
-        val stdP = sqrt(varP.toDouble()).toFloat()
+        val patchStd = sqrt((patchVar / numPixels).toDouble()).toFloat()
+        if (patchStd < 1.0f) return 0f
 
-        return (cross / (numPixels * stdP)).coerceIn(-1.0f, 1.0f)
+        return (crossSum / (numPixels * patchStd)).coerceIn(-1.0f, 1.0f)
     }
 }
