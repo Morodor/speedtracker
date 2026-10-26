@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Anillo Biomecánico Exterior (Glow Cyan) -->
+    <path
+        android:strokeColor="#3300FFCC"
+        android:strokeWidth="4"
+        android:pathData="M 54,26 A 28,28 0 1,1 53.9,26" />
+
+    <!-- Arco de Alta Velocidad (Neon Cyan) -->
+    <path
+        android:strokeColor="#00FFCC"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M 32,70 A 28,28 0 1,1 76,70" />
+
+    <!-- Barra de Halterofilia / Eje Horizontal -->
+    <path
+        android:strokeColor="#CFD8DC"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 24,54 L 84,54" />
+
+    <!-- Topes / Discos de la Barra -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M 32,46 h 4 v 16 h -4 z" />
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M 72,46 h 4 v 16 h -4 z" />
+
+    <!-- Vector / Rayo de Aceleración Máxima -->
+    <path
+        android:fillColor="#00FFCC"
+        android:pathData="M 58,28 L 44,52 L 53,52 L 48,78 L 66,48 L 56,48 Z" />
+
+    <!-- Punto Focal / Mira Central -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 54,52 A 2.5,2.5 0 1,1 53.9,52" />
+</vector>

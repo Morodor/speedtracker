@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="cached_videos" path="videos/" />
+    <cache-path name="all_cache" path="." />
+    <external-cache-path name="ext_cached_videos" path="videos/" />
+    <external-cache-path name="ext_all_cache" path="." />
+    <external-files-path name="ext_files" path="." />
+</paths>
