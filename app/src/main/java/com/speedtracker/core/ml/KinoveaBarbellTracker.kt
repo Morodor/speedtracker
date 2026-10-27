@@ -20,10 +20,10 @@ class KinoveaBarbellTracker {
     private var templateW = 33
     private var templateH = 33
 
-    // Template normalizado: (T_i - mean) / std
+    // Template normalizado: (T_i - mean) / std (inmutable durante todo el levantamiento para evitar transferencias)
     private var normTemplate: FloatArray? = null
 
-    // Buffers reutilizables para evitar asignaciones de memoria y pausas de GC
+    // Buffers reutilizables en memoria continua para máxima velocidad y cero pausas de GC
     private var roiPixelsBuffer = IntArray(0)
     private var roiLumBuffer = FloatArray(0)
 
@@ -95,7 +95,7 @@ class KinoveaBarbellTracker {
 
     /**
      * Rastrea el disco en el frame actual mediante coincidencia de plantilla ZNCC con ventana
-     * de búsqueda guiada por inercia física (Kinematic Velocity Prediction) y límites biomecánicos estrictos.
+     * de búsqueda predictiva centrada en el movimiento (Kinematic Velocity Prediction).
      */
     fun trackFrame(bitmap: Bitmap): Offset {
         if (!isInitialized || normTemplate == null) {
@@ -107,34 +107,25 @@ class KinoveaBarbellTracker {
         val tpl = normTemplate!!
         val numPixels = templateW * templateH
 
-        // 1. Predicción cinemática de la barra en movimiento
-        val anchorX = currentCenter.x
-        val anchorY = currentCenter.y
+        // 1. Predicción cinemática pura basada en velocidad del fotograma previo
+        // La ventana de búsqueda VIAJA con la barra hacia arriba en el espacio
+        val predX = currentCenter.x + currentVelocity.x.coerceIn(-35f, 35f)
+        val predY = currentCenter.y + currentVelocity.y.coerceIn(-130f, 90f)
 
-        // En un levantamiento olímpico de perfil (vista lateral 90°), la trayectoria de la barra
-        // es predominantemente vertical. La velocidad horizontal está fuertemente acotada,
-        // mientras que la aceleración vertical ascendente puede alcanzar picos explosivos (>2.5 m/s).
-        val predX = anchorX + currentVelocity.x.coerceIn(-10f, 10f)
-        val predY = anchorY + currentVelocity.y.coerceIn(-140f, 90f)
+        // 2. Ventana de búsqueda adaptada centrada en la predicción de movimiento
+        val searchRadiusX = 35
+        val searchRadiusY = 55
 
-        // 2. Ventana de búsqueda adaptada dinámicamente según la aceleración vertical
-        // Permite capturar la explosión del segundo tirón del Snatch/Clean sin perder la barra
-        val isMovingUp = currentVelocity.y < -3f
-        val isFastMovement = abs(currentVelocity.y) > 8f
-        val searchRadiusX = 24
-        val searchRadiusYUp = if (isMovingUp) 160 else 110
-        val searchRadiusYDown = if (currentVelocity.y > 6f) 110 else 55
-
-        val minSearchX = (minOf(anchorX, predX) - searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
-        val maxSearchX = (maxOf(anchorX, predX) + searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
-        val minSearchY = (minOf(anchorY, predY) - searchRadiusYUp).toInt().coerceIn(templateHalfH, bH - templateHalfH - 1)
-        val maxSearchY = (maxOf(anchorY, predY) + searchRadiusYDown).toInt().coerceIn(templateHalfH, bH - templateHalfH - 1)
+        val minSearchX = (predX.toInt() - searchRadiusX).coerceIn(templateHalfW, bW - templateHalfW - 1)
+        val maxSearchX = (predX.toInt() + searchRadiusX).coerceIn(templateHalfW, bW - templateHalfW - 1)
+        val minSearchY = (predY.toInt() - searchRadiusY).coerceIn(templateHalfH, bH - templateHalfH - 1)
+        val maxSearchY = (predY.toInt() + searchRadiusY).coerceIn(templateHalfH, bH - templateHalfH - 1)
 
         // Extraer en un único pase nativo la región rectangular completa de búsqueda (ROI)
-        val roiLeft = (minSearchX - templateHalfW - 2).coerceIn(0, bW - 1)
-        val roiTop = (minSearchY - templateHalfH - 2).coerceIn(0, bH - 1)
-        val roiRight = (maxSearchX + templateHalfW + 2).coerceIn(0, bW - 1)
-        val roiBottom = (maxSearchY + templateHalfH + 2).coerceIn(0, bH - 1)
+        val roiLeft = (minSearchX - templateHalfW - 1).coerceIn(0, bW - 1)
+        val roiTop = (minSearchY - templateHalfH - 1).coerceIn(0, bH - 1)
+        val roiRight = (maxSearchX + templateHalfW + 1).coerceIn(0, bW - 1)
+        val roiBottom = (maxSearchY + templateHalfH + 1).coerceIn(0, bH - 1)
 
         val roiW = roiRight - roiLeft + 1
         val roiH = roiBottom - roiTop + 1
@@ -162,11 +153,7 @@ class KinoveaBarbellTracker {
         // Búsqueda gruesa con paso de 2 píxeles
         for (cy in minSearchY..maxSearchY step 2) {
             for (cx in minSearchX..maxSearchX step 2) {
-                val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
-                // Penalizar desviaciones horizontales del corredor vertical de la barra
-                val hDist = abs(cx - anchorX)
-                val score = rawScore - (hDist / bW.toFloat()) * 0.40f
-
+                val score = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
                 if (score > bestScore) {
                     bestScore = score
                     bestX = cx
@@ -183,10 +170,7 @@ class KinoveaBarbellTracker {
 
         for (cy in fineMinY..fineMaxY) {
             for (cx in fineMinX..fineMaxX) {
-                val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
-                val hDist = abs(cx - anchorX)
-                val score = rawScore - (hDist / bW.toFloat()) * 0.40f
-
+                val score = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
                 if (score > bestScore) {
                     bestScore = score
                     bestX = cx
@@ -195,13 +179,10 @@ class KinoveaBarbellTracker {
             }
         }
 
-        // 3. Validación y continuación física con amortiguación
+        // 3. Validación y continuación por inercia física
         val resolvedCenter: Offset
-        // Umbral adaptado: el desenfoque de movimiento vertical (motion blur) en el segundo tirón
-        // reduce la correlación del template estático. Aceptamos 0.16f en aceleración dentro del corredor vertical.
-        val acceptThreshold = if (isFastMovement) 0.16f else 0.22f
-
-        if (bestScore >= acceptThreshold) {
+        // Umbral de 0.25f para aceptar la correlación del buje incluso bajo motion blur vertical
+        if (bestScore >= 0.25f) {
             // Refinamiento subpíxel parabólico
             val sLeft = computeZNCC(lumBuf, roiW, roiLeft, roiTop, (bestX - 1).coerceAtLeast(minSearchX), bestY, tpl, numPixels)
             val sRight = computeZNCC(lumBuf, roiW, roiLeft, roiTop, (bestX + 1).coerceAtMost(maxSearchX), bestY, tpl, numPixels)
@@ -209,7 +190,7 @@ class KinoveaBarbellTracker {
             val sBottom = computeZNCC(lumBuf, roiW, roiLeft, roiTop, bestX, (bestY + 1).coerceAtMost(maxSearchY), tpl, numPixels)
 
             val denomX = (sLeft - 2f * bestScore + sRight)
-            val subX = if (abs(denomX) > 1e-4f) ((sLeft - sRight) / (2f * denomX)).coerceIn(-0.3f, 0.3f) else 0f
+            val subX = if (abs(denomX) > 1e-4f) ((sLeft - sRight) / (2f * denomX)).coerceIn(-0.5f, 0.5f) else 0f
 
             val denomY = (sTop - 2f * bestScore + sBottom)
             val subY = if (abs(denomY) > 1e-4f) ((sTop - sBottom) / (2f * denomY)).coerceIn(-0.5f, 0.5f) else 0f
@@ -220,115 +201,33 @@ class KinoveaBarbellTracker {
             val instVx = targetX - currentCenter.x
             val instVy = targetY - currentCenter.y
 
-            // Filtro de velocidad cinemática:
-            // Eje Y (vertical): respuesta rápida (80%) para capturar aceleraciones explosivas
-            // Eje X (horizontal): amortiguación firme (30%) para mantener estabilidad en el corredor
+            // Filtro de velocidad inercial con excelente respuesta a aceleraciones
             currentVelocity = Offset(
-                currentVelocity.x * 0.70f + instVx.coerceIn(-10f, 10f) * 0.30f,
-                currentVelocity.y * 0.20f + instVy.coerceIn(-140f, 90f) * 0.80f
+                currentVelocity.x * 0.30f + instVx.coerceIn(-35f, 35f) * 0.70f,
+                currentVelocity.y * 0.30f + instVy.coerceIn(-130f, 90f) * 0.70f
             )
-
-            // Adaptación de plantilla lenta (EMA 4%) en fotogramas de alta confianza (>= 0.50f)
-            // Permite ajustarse suavemente al cambio de perspectiva (desde el suelo hasta arriba de la cabeza)
-            if (bestScore >= 0.50f) {
-                adaptTemplateEMA(lumBuf, roiW, roiLeft, roiTop, bestX, bestY, numPixels, alpha = 0.04f)
-            }
 
             resolvedCenter = Offset(targetX, targetY)
             lastConfidence = bestScore
             consecutiveLostFrames = 0
         } else {
-            // PÉRDIDA TEMPORAL: Continuación balística por inercia física (Tiro parabólico / Gravedad)
-            // No matar la velocidad tras 3 frames: la barra en el aire continúa subiendo por inercia
+            // Inercia cinemática: continuar la trayectoria en el espacio sin saltos ni congelamientos
             consecutiveLostFrames++
-
-            if (currentVelocity.y < -3f) {
-                // Subida balística: la barra vuela hacia arriba desacelerando por gravedad
-                // En 30 fps, g_frame ~= 3.0 px/frame^2
-                val nextVy = (currentVelocity.y + 3.0f).coerceAtMost(0f)
-                currentVelocity = Offset(currentVelocity.x * 0.70f, nextVy)
-            } else {
-                // Descenso o reposo: amortiguación progresiva
-                currentVelocity = Offset(currentVelocity.x * 0.50f, currentVelocity.y * 0.70f)
-            }
-
-            // Solo si transcurren más de 14 frames (~450 ms) sin ver la barra, detener inercia
-            if (consecutiveLostFrames >= 14) {
-                currentVelocity = Offset.Zero
-            }
-
             val inertX = (currentCenter.x + currentVelocity.x).coerceIn(templateHalfW.toFloat(), (bW - templateHalfW).toFloat())
             val inertY = (currentCenter.y + currentVelocity.y).coerceIn(templateHalfH.toFloat(), (bH - templateHalfH).toFloat())
             resolvedCenter = Offset(inertX, inertY)
-            lastConfidence = (0.30f - consecutiveLostFrames * 0.015f).coerceAtLeast(0.05f)
+            lastConfidence = 0.25f
+
+            // Amortiguación inercial suave: nunca poner a cero abruptamente
+            // Permite volar a través del segundo tirón sin perder la barra
+            currentVelocity = Offset(
+                currentVelocity.x * 0.95f,
+                currentVelocity.y * 0.95f
+            )
         }
 
         currentCenter = resolvedCenter
         return resolvedCenter
-    }
-
-    /**
-     * Adaptación suave de plantilla (Exponential Moving Average) para actualizar la firma visual
-     * conforme cambia la perspectiva y la iluminación entre el suelo y el bloqueo sobre la cabeza.
-     */
-    private fun adaptTemplateEMA(
-        roiLum: FloatArray,
-        roiW: Int,
-        roiLeft: Int,
-        roiTop: Int,
-        cx: Int,
-        cy: Int,
-        numPixels: Int,
-        alpha: Float
-    ) {
-        val tpl = normTemplate ?: return
-        val startX = cx - templateHalfW - roiLeft
-        val startY = cy - templateHalfH - roiTop
-
-        var sum = 0f
-        for (dy in 0 until templateH) {
-            val rowOffset = (startY + dy) * roiW + startX
-            for (dx in 0 until templateW) {
-                sum += roiLum[rowOffset + dx]
-            }
-        }
-        val patchMean = sum / numPixels
-
-        var varSum = 0f
-        for (dy in 0 until templateH) {
-            val rowOffset = (startY + dy) * roiW + startX
-            for (dx in 0 until templateW) {
-                val diff = roiLum[rowOffset + dx] - patchMean
-                varSum += diff * diff
-            }
-        }
-        val patchStd = sqrt((varSum / numPixels).toDouble()).toFloat().coerceAtLeast(1.0f)
-
-        var idx = 0
-        val oneMinusAlpha = 1.0f - alpha
-        for (dy in 0 until templateH) {
-            val rowOffset = (startY + dy) * roiW + startX
-            for (dx in 0 until templateW) {
-                val normPixel = (roiLum[rowOffset + dx] - patchMean) / patchStd
-                tpl[idx] = tpl[idx] * oneMinusAlpha + normPixel * alpha
-                idx++
-            }
-        }
-
-        // Renormalizar para mantener media 0 y varianza unitaria estricta
-        var s = 0f
-        for (i in 0 until numPixels) s += tpl[i]
-        val m = s / numPixels
-        var vs = 0f
-        for (i in 0 until numPixels) {
-            val d = tpl[i] - m
-            tpl[i] = d
-            vs += d * d
-        }
-        val sd = sqrt((vs / numPixels).toDouble()).toFloat().coerceAtLeast(1.0f)
-        for (i in 0 until numPixels) {
-            tpl[i] /= sd
-        }
     }
 
     /**
