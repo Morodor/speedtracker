@@ -62,6 +62,7 @@ import com.google.mlkit.vision.pose.accurate.AccuratePoseDetectorOptions
 import com.speedtracker.core.export.VideoFrameTrackingPoint
 import com.speedtracker.core.export.VideoOverlayExporter
 import com.speedtracker.core.math.JumpMetrics
+import com.speedtracker.core.math.JumpType
 import com.speedtracker.core.math.VBTAnalyzer
 import com.speedtracker.core.math.VBTExerciseFamily
 import com.speedtracker.core.math.VBTExerciseModel
@@ -77,6 +78,12 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.math.hypot
+
+enum class InitialSelectionStep {
+    CATEGORY,
+    EXERCISE_VBT,
+    EXERCISE_JUMP
+}
 
 data class VideoRenderBounds(
     val scale: Float,
@@ -155,6 +162,9 @@ fun VideoAnalysisScreen(
     val activeUser = remember { userRepository.getActiveUser() }
 
     var currentMode by remember { mutableStateOf<String?>(null) }
+    var selectedVBTExercise by remember { mutableStateOf(VBTExerciseModel.SNATCH_FLOOR) }
+    var selectedJumpType by remember { mutableStateOf(JumpType.CMJ) }
+    var initialSelectionStep by remember { mutableStateOf(InitialSelectionStep.CATEGORY) }
     var isReadyToAnalyze by remember { mutableStateOf(false) }
     var isProcessing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
@@ -335,23 +345,35 @@ fun VideoAnalysisScreen(
                 title = {
                     Text(
                         when {
-                            currentMode == null -> "Importar Video"
+                            currentMode == null -> {
+                                when (initialSelectionStep) {
+                                    InitialSelectionStep.CATEGORY -> "Importar Video"
+                                    InitialSelectionStep.EXERCISE_VBT -> "Halterofilia / VBT"
+                                    InitialSelectionStep.EXERCISE_JUMP -> "Salto Vertical"
+                                }
+                            }
                             !isReadyToAnalyze -> {
                                 if (currentMode == "JUMP") {
-                                    "Salto Vertical (Plano Frontal)"
+                                    "Salto: ${selectedJumpType.name} (Plano Frontal)"
                                 } else {
-                                    if (isCalibrationMode) "Calibrar Disco (45 cm - Vista Lateral)" else "VBT: Vista Lateral (Disco 45 cm)"
+                                    if (isCalibrationMode) "Calibrar Disco (45 cm - Vista Lateral)" else "${selectedVBTExercise.displayName} (Disco 45 cm)"
                                 }
                             }
                             isProcessing -> "Analizando..."
-                            else -> if (currentMode == "JUMP") "Resultados Salto (Plano Frontal)" else "Resultados VBT (Vista Lateral)"
+                            else -> if (currentMode == "JUMP") "Resultados Salto (${selectedJumpType.name})" else "Resultados ${selectedVBTExercise.displayName}"
                         },
                         fontWeight = FontWeight.Bold
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onCloseClick) {
-                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.White)
+                    if (currentMode == null && initialSelectionStep != InitialSelectionStep.CATEGORY) {
+                        IconButton(onClick = { initialSelectionStep = InitialSelectionStep.CATEGORY }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Atrás", tint = Color.White)
+                        }
+                    } else {
+                        IconButton(onClick = onCloseClick) {
+                            Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.White)
+                        }
                     }
                 },
                 actions = {
@@ -405,48 +427,280 @@ fun VideoAnalysisScreen(
             contentAlignment = Alignment.Center
         ) {
             if (currentMode == null) {
-                // Selector de modo inicial
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        "¿Qué movimiento deseas analizar?",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleLarge,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        "Atleta: ${activeUser?.name ?: "Invitado"} (${activeUser?.bodyWeightKg ?: 70.0} Kg)",
-                        color = Color.Gray,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Button(
-                        onClick = { currentMode = "JUMP" },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF00FFCC),
-                            contentColor = Color.Black
-                        )
-                    ) {
-                        Icon(Icons.Default.Height, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Salto Vertical (Altura + Watts)", fontWeight = FontWeight.Bold)
+                // Selector inicial paso a paso: Categoría -> Ejercicio específico
+                when (initialSelectionStep) {
+                    InitialSelectionStep.CATEGORY -> {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                        ) {
+                            Text(
+                                "¿Qué movimiento deseas analizar?",
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Atleta: ${activeUser?.name ?: "Invitado"} (${activeUser?.bodyWeightKg ?: 70.0} Kg)",
+                                color = Color.Gray,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Spacer(modifier = Modifier.height(32.dp))
+                            Button(
+                                onClick = { initialSelectionStep = InitialSelectionStep.EXERCISE_JUMP },
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF00FFCC),
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                Icon(Icons.Default.Height, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Salto Vertical (Altura + Watts)", fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = { initialSelectionStep = InitialSelectionStep.EXERCISE_VBT },
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF00FFCC),
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                Icon(Icons.Default.FitnessCenter, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Halterofilia / VBT (Velocidad + Bar Path)", fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { currentMode = "VBT" },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF00FFCC),
-                            contentColor = Color.Black
-                        )
-                    ) {
-                        Icon(Icons.Default.FitnessCenter, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Halterofilia / VBT (Velocidad + Bar Path)", fontWeight = FontWeight.Bold)
+
+                    InitialSelectionStep.EXERCISE_VBT -> {
+                        var setupFamily by remember { mutableStateOf(selectedVBTExercise.family) }
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 4.dp)
+                        ) {
+                            Text(
+                                "¿Qué ejercicio específico vas a realizar?",
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                "Selecciona el ejercicio para calibrar las fórmulas biomecánicas y el 1RM",
+                                color = Color.Gray,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(18.dp))
+
+                            // Selector de Familia: DLP (Olímpicos) vs Ley de Hill (Fuerza)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                VBTExerciseFamily.values().forEach { family ->
+                                    val isSelected = setupFamily == family
+                                    Surface(
+                                        onClick = { setupFamily = family },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSelected) Color(0xFF00FFCC).copy(alpha = 0.22f) else Color(0xFF1E1E1E),
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (isSelected) Color(0xFF00FFCC) else Color(0xFF333333)
+                                        ),
+                                        modifier = Modifier.weight(1f).height(44.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center,
+                                            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)
+                                        ) {
+                                            Text(family.icon, fontSize = 16.sp)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                family.label,
+                                                color = if (isSelected) Color(0xFF00FFCC) else Color.LightGray,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Lista de Ejercicios en Tarjetas
+                            VBTExerciseModel.values().filter { it.family == setupFamily }.forEach { model ->
+                                val isSelected = selectedVBTExercise == model
+                                Surface(
+                                    onClick = {
+                                        selectedVBTExercise = model
+                                        currentMode = "VBT"
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isSelected) Color(0xFF162520) else Color(0xFF1E1E1E),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.5.dp,
+                                        if (isSelected) Color(0xFF00FFCC) else Color(0xFF2C2C2C)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                model.displayName,
+                                                color = if (isSelected) Color(0xFF00FFCC) else Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                if (model.usesPeakVelocity) "⚡ Métrica: Velocidad Pico (PV) • MVT ${model.mvt} m/s" else "🏋️ Métrica: Velocidad Media (VM) • MVT ${model.mvt} m/s",
+                                                color = Color.Gray,
+                                                fontSize = 11.sp
+                                            )
+                                            Text(
+                                                model.formulaDescription,
+                                                color = Color(0xFF888888),
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                        Icon(
+                                            Icons.Default.ChevronRight,
+                                            contentDescription = "Seleccionar",
+                                            tint = if (isSelected) Color(0xFF00FFCC) else Color.Gray,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            TextButton(onClick = { initialSelectionStep = InitialSelectionStep.CATEGORY }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Volver a categorías", color = Color.Gray, fontSize = 13.sp)
+                            }
+                        }
+                    }
+
+                    InitialSelectionStep.EXERCISE_JUMP -> {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 4.dp)
+                        ) {
+                            Text(
+                                "¿Qué tipo de Salto Vertical?",
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                "Configura las fórmulas de potencia Sayers, tiempo de vuelo y reactividad",
+                                color = Color.Gray,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(18.dp))
+
+                            listOf(
+                                Triple(
+                                    JumpType.CMJ,
+                                    "Salto con Contramovimiento (CMJ)",
+                                    "Inicio erguido, flexión descendente rápida y despegue explosivo inmediato.\n• Mide Altura Sayers, Potencia Pico (Watts) y W/kg."
+                                ),
+                                Triple(
+                                    JumpType.SJ,
+                                    "Squat Jump (SJ)",
+                                    "Salto concéntrico puro desde posición a 90° sostenida durante 2-3 s sin contramovimiento.\n• Evalúa fuerza explosiva concéntrica y ratio EUR."
+                                ),
+                                Triple(
+                                    JumpType.DROP_JUMP,
+                                    "Drop Jump (Caída desde Cajón)",
+                                    "Caída desde cajón, contacto mínimo con el suelo (<250 ms) y rebote reactivo vertical.\n• Mide Tiempo de Contacto, Altura y RSI (Reactive Strength Index)."
+                                )
+                            ).forEach { (jType, title, desc) ->
+                                val isSelected = selectedJumpType == jType
+                                Surface(
+                                    onClick = {
+                                        selectedJumpType = jType
+                                        VerticalJumpAnalyzer.currentJumpType = jType
+                                        currentMode = "JUMP"
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isSelected) Color(0xFF162520) else Color(0xFF1E1E1E),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.5.dp,
+                                        if (isSelected) Color(0xFF00FFCC) else Color(0xFF2C2C2C)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 5.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                title,
+                                                color = if (isSelected) Color(0xFF00FFCC) else Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                desc,
+                                                color = Color.Gray,
+                                                fontSize = 11.sp,
+                                                lineHeight = 15.sp
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Icon(
+                                            Icons.Default.ChevronRight,
+                                            contentDescription = "Seleccionar",
+                                            tint = if (isSelected) Color(0xFF00FFCC) else Color.Gray,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+                            TextButton(onClick = { initialSelectionStep = InitialSelectionStep.CATEGORY }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Volver a categorías", color = Color.Gray, fontSize = 13.sp)
+                            }
+                        }
                     }
                 }
             } else if (!isReadyToAnalyze) {
@@ -455,6 +709,42 @@ fun VideoAnalysisScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxSize()
                 ) {
+                    // Badge con el ejercicio seleccionado y opción de cambio rápido
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFF1E1E1E),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            val badgeLabel = if (currentMode == "VBT") {
+                                "⚡ ${selectedVBTExercise.displayName} (${selectedVBTExercise.family.label})"
+                            } else {
+                                "↕ Salto ${selectedJumpType.name}"
+                            }
+                            Text(
+                                badgeLabel,
+                                color = Color(0xFF00FFCC),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Cambiar",
+                                color = Color.LightGray,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.clickable {
+                                    initialSelectionStep = if (currentMode == "VBT") InitialSelectionStep.EXERCISE_VBT else InitialSelectionStep.EXERCISE_JUMP
+                                    currentMode = null
+                                }
+                            )
+                        }
+                    }
+
                     Text(
                         if (isCalibrationMode)
                             "Ajusta el círculo sobre el borde del disco (45 cm). Arrastra el centro o el tirador amarillo."
@@ -1361,8 +1651,8 @@ fun VideoAnalysisScreen(
                 }
             } else if (finalResult != null) {
                 // Resultados Completos (Módulos 2 & 3)
-                var selectedFamily by remember { mutableStateOf(VBTExerciseFamily.DLP_OLYMPIC) }
-                var selectedExerciseModel by remember { mutableStateOf(VBTExerciseModel.SNATCH_FLOOR) }
+                var selectedFamily by remember(selectedVBTExercise) { mutableStateOf(selectedVBTExercise.family) }
+                var selectedExerciseModel by remember(selectedVBTExercise) { mutableStateOf(selectedVBTExercise) }
 
                 val currentLoadKg = barbellLoadKg.toDoubleOrNull() ?: 70.0
                 val peakVelocity = finalResult ?: 0.0
