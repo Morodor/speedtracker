@@ -33,6 +33,65 @@ enum class VBTVelocityMetric {
     PEAK_VELOCITY  // PV: Estándar para balísticos y halterofilia (Snatch, Clean)
 }
 
+enum class VBTExerciseFamily(val label: String, val icon: String) {
+    DLP_OLYMPIC("DLP (Olímpicos)", "⚡"),
+    HILL_TRADITIONAL("Ley de Hill (Fuerza)", "🏋️")
+}
+
+enum class VBTExerciseModel(
+    val displayName: String,
+    val family: VBTExerciseFamily,
+    val usesPeakVelocity: Boolean,
+    val mvt: Double,
+    val formulaDescription: String
+) {
+    // DLP (Derivados del Levantamiento de Pesas) -> Métrica: Velocidad Pico (PV)
+    SNATCH_FLOOR("Snatch Suelo", VBTExerciseFamily.DLP_OLYMPIC, true, 1.65, "%1RM = 145 - 28.5 * PV"),
+    HANG_SNATCH("Hang Snatch", VBTExerciseFamily.DLP_OLYMPIC, true, 1.60, "%1RM = 142 - 27.0 * PV"),
+    POWER_SNATCH("Power Snatch", VBTExerciseFamily.DLP_OLYMPIC, true, 1.78, "%1RM = 150 - 29.0 * PV"),
+    CLEAN_FLOOR("Clean Suelo", VBTExerciseFamily.DLP_OLYMPIC, true, 1.38, "%1RM = 140 - 29.0 * PV"),
+    HANG_CLEAN("Hang Clean", VBTExerciseFamily.DLP_OLYMPIC, true, 1.35, "%1RM = 138 - 28.0 * PV"),
+    POWER_CLEAN("Power Clean", VBTExerciseFamily.DLP_OLYMPIC, true, 1.52, "%1RM = 145 - 29.5 * PV"),
+    OLYMPIC_PULL("Tirón Olímpico", VBTExerciseFamily.DLP_OLYMPIC, true, 1.45, "%1RM = 138 - 27.0 * PV"),
+    JERK_PUSH_PRESS("Jerk / Push Press", VBTExerciseFamily.DLP_OLYMPIC, true, 1.38, "%1RM = 142 - 28.0 * PV"),
+
+    // Ley de Hill (Fuerza Tradicional) -> Métrica: Velocidad Media (VM)
+    SQUAT("Sentadilla", VBTExerciseFamily.HILL_TRADITIONAL, false, 0.30, "%1RM = -59.93 * VM + 128.2"),
+    BENCH_PRESS("Press Banca", VBTExerciseFamily.HILL_TRADITIONAL, false, 0.15, "%1RM = -84.07 * VM + 115.6"),
+    DEADLIFT("Peso Muerto", VBTExerciseFamily.HILL_TRADITIONAL, false, 0.15, "%1RM = -56.34 * VM + 110.2"),
+    HIP_THRUST("Hip Thrust / Militar", VBTExerciseFamily.HILL_TRADITIONAL, false, 0.22, "%1RM = -62.50 * VM + 118.0");
+
+    /**
+     * Calcula el porcentaje del 1RM (%1RM) según la métrica correspondiente (PV para DLP, VM para Hill).
+     */
+    fun calculatePercentOneRM(peakVelocity: Double, meanVelocity: Double): Double {
+        return when (this) {
+            SNATCH_FLOOR -> (145.0 - (28.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            HANG_SNATCH -> (142.0 - (27.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            POWER_SNATCH -> (150.0 - (29.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            CLEAN_FLOOR -> (140.0 - (29.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            HANG_CLEAN -> (138.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            POWER_CLEAN -> (145.0 - (29.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            OLYMPIC_PULL -> (138.0 - (27.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            JERK_PUSH_PRESS -> (142.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
+
+            SQUAT -> ((-59.93 * meanVelocity) + 128.2).coerceIn(30.0, 95.0)
+            BENCH_PRESS -> ((-84.07 * meanVelocity) + 115.6).coerceIn(30.0, 95.0)
+            DEADLIFT -> ((-56.34 * meanVelocity) + 110.2).coerceIn(30.0, 95.0)
+            HIP_THRUST -> ((-62.50 * meanVelocity) + 118.0).coerceIn(30.0, 95.0)
+        }
+    }
+
+    /**
+     * Proyecta el 1RM estimado en Kilogramos a partir de la carga levantada y las velocidades medidas.
+     */
+    fun estimateOneRM(loadKg: Double, peakVelocity: Double, meanVelocity: Double): Double {
+        val pct = calculatePercentOneRM(peakVelocity, meanVelocity)
+        if (pct <= 0.0) return loadKg
+        return (loadKg / (pct / 100.0)).coerceAtLeast(loadKg)
+    }
+}
+
 object VBTAnalyzer {
 
     private var previousY: Float? = null

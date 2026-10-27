@@ -24,12 +24,22 @@ data class OneRMProfile(
 object OneRMCalculator {
 
     // Velocidades mínimas de levantamiento típicas (Minimal Velocity Thresholds - MVT)
-    // según estudios de González-Badillo & Sánchez-Medina (2010), Balsalobre et al.
-    val MVT_SQUAT = 0.30        // Sentadilla
-    val MVT_BENCH = 0.15        // Press de Banca
-    val MVT_DEADLIFT = 0.15     // Peso Muerto
-    val MVT_HIP_THRUST = 0.25   // Hip Thrust
-    val MVT_PULL_UP = 0.20      // Dominadas
+    // según estudios de González-Badillo & Sánchez-Medina (2010), Balsalobre et al., Suchomel et al.
+    val MVT_SQUAT = 0.30        // Sentadilla (VM)
+    val MVT_BENCH = 0.15        // Press de Banca (VM)
+    val MVT_DEADLIFT = 0.15     // Peso Muerto (VM)
+    val MVT_HIP_THRUST = 0.25   // Hip Thrust (VM)
+    val MVT_PULL_UP = 0.20      // Dominadas (VM)
+
+    // DLP (Derivados del Levantamiento de Pesas) - Velocidad Pico Mínima (PV)
+    val MVT_SNATCH_FLOOR = 1.65 // Snatch Suelo (PV)
+    val MVT_SNATCH_HANG = 1.60  // Hang Snatch (PV)
+    val MVT_POWER_SNATCH = 1.78 // Power Snatch (PV)
+    val MVT_CLEAN_FLOOR = 1.38  // Clean Suelo (PV)
+    val MVT_CLEAN_HANG = 1.35   // Hang Clean (PV)
+    val MVT_POWER_CLEAN = 1.52  // Power Clean (PV)
+    val MVT_OLYMPIC_PULL = 1.45 // Tirones Olímpicos (PV)
+    val MVT_JERK = 1.38         // Jerk / Push Press (PV)
 
     // Puntos cargados en la sesión actual
     val sessionPoints = mutableListOf<LoadVelocityPoint>()

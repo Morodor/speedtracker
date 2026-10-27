@@ -12,16 +12,24 @@ import com.speedtracker.core.ml.OlympicPlateAutoDetector
 import com.speedtracker.core.ml.KinoveaBarbellTracker
 import java.io.File
 import java.util.Locale
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -34,11 +42,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +63,8 @@ import com.speedtracker.core.export.VideoFrameTrackingPoint
 import com.speedtracker.core.export.VideoOverlayExporter
 import com.speedtracker.core.math.JumpMetrics
 import com.speedtracker.core.math.VBTAnalyzer
+import com.speedtracker.core.math.VBTExerciseFamily
+import com.speedtracker.core.math.VBTExerciseModel
 import com.speedtracker.core.math.VerticalJumpAnalyzer
 import com.speedtracker.data.UserRepository
 import com.speedtracker.presentation.camera.FramingGuideOverlay
@@ -201,7 +215,7 @@ fun VideoAnalysisScreen(
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
     var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(true) }
-    var isVideoMuted by remember { mutableStateOf(false) }
+    var isVideoMuted by remember { mutableStateOf(true) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var videoDurationMs by remember { mutableLongStateOf(0L) }
     var currentVideoPosMs by remember { mutableLongStateOf(0L) }
@@ -1186,26 +1200,45 @@ fun VideoAnalysisScreen(
                                                 colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
                                             ) { Text("-2.5", fontSize = 10.sp, color = Color.LightGray) }
 
-                                            OutlinedTextField(
-                                                value = barbellLoadKg,
-                                                onValueChange = { newVal ->
-                                                    if (newVal.isEmpty() || newVal.all { it.isDigit() || it == '.' }) {
-                                                        barbellLoadKg = newVal
-                                                    }
-                                                },
-                                                singleLine = true,
-                                                textStyle = androidx.compose.ui.text.TextStyle(
-                                                    color = Color.White,
-                                                    fontWeight = FontWeight.Bold,
-                                                    textAlign = TextAlign.Center,
-                                                    fontSize = 14.sp
-                                                ),
-                                                modifier = Modifier.weight(1.8f).height(48.dp),
-                                                colors = OutlinedTextFieldDefaults.colors(
-                                                    focusedBorderColor = Color(0xFF00FFCC),
-                                                    unfocusedBorderColor = Color(0xFF444444)
-                                                )
-                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1.8f)
+                                                    .height(38.dp)
+                                                    .background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp))
+                                                    .border(1.5.dp, Color(0xFF00FFCC), RoundedCornerShape(8.dp)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.Center,
+                                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                                ) {
+                                                    BasicTextField(
+                                                        value = barbellLoadKg,
+                                                        onValueChange = { newVal ->
+                                                            if (newVal.isEmpty() || newVal.all { it.isDigit() || it == '.' }) {
+                                                                barbellLoadKg = newVal
+                                                            }
+                                                        },
+                                                        singleLine = true,
+                                                        textStyle = androidx.compose.ui.text.TextStyle(
+                                                            color = Color.White,
+                                                            fontWeight = FontWeight.Bold,
+                                                            textAlign = TextAlign.Center,
+                                                            fontSize = 15.sp
+                                                        ),
+                                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                                        cursorBrush = SolidColor(Color(0xFF00FFCC)),
+                                                        modifier = Modifier.wrapContentWidth()
+                                                    )
+                                                    Text(
+                                                        " kg",
+                                                        color = Color(0xFF00FFCC),
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
 
                                             FilledTonalButton(
                                                 onClick = {
@@ -1328,6 +1361,9 @@ fun VideoAnalysisScreen(
                 }
             } else if (finalResult != null) {
                 // Resultados Completos (Módulos 2 & 3)
+                var selectedFamily by remember { mutableStateOf(VBTExerciseFamily.DLP_OLYMPIC) }
+                var selectedExerciseModel by remember { mutableStateOf(VBTExerciseModel.SNATCH_FLOOR) }
+
                 val currentLoadKg = barbellLoadKg.toDoubleOrNull() ?: 70.0
                 val peakVelocity = finalResult ?: 0.0
                 val meanVelocity = VBTAnalyzer.currentMeanVelocity.takeIf { it > 0.0 } ?: (peakVelocity * 0.72)
@@ -1356,430 +1392,705 @@ fun VideoAnalysisScreen(
                 val romMeters = VBTAnalyzer.currentSetReps.lastOrNull()?.romMeters ?: 0.60
                 val workJoules = meanForceN * romMeters
 
-                // Estimación del 1RM (Fórmula validada González-Badillo & Sánchez-Medina)
-                val pctOneRM = ((-59.93 * meanVelocity) + 128.2).coerceIn(30.0, 95.0)
-                val estimatedOneRM = (currentLoadKg / (pctOneRM / 100.0)).coerceAtLeast(currentLoadKg)
+                // Estimación del 1RM con modelo biomecánico específico
+                val pctOneRM = selectedExerciseModel.calculatePercentOneRM(peakVelocity, meanVelocity)
+                val estimatedOneRM = selectedExerciseModel.estimateOneRM(currentLoadKg, peakVelocity, meanVelocity)
 
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp)
-                ) {
-                    Text(
-                        "Resultados Biomecánicos",
-                        color = Color.White,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "Atleta: ${activeUser?.name ?: "Invitado"}",
-                        color = Color.Gray,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
+                val scrollState = rememberScrollState()
+                var analysisDataYOffset by remember { mutableStateOf(0) }
+                var actionsYOffset by remember { mutableStateOf(0) }
 
-                    // Vista Previa Interactiva del Video Analizado (Trayectoria Bar Path + Retícula en tiempo real)
-                    AnalysisResultVideoPreview(
-                        videoUriString = videoUriString,
-                        videoNativeWidth = videoNativeWidth,
-                        videoNativeHeight = videoNativeHeight,
-                        trimStartMs = trimStartMs,
-                        trimEndMs = trimEndMs,
-                        trackingPoints = trackingPointsResult,
-                        originBaselineY = VBTAnalyzer.originBaselineY,
-                        lowestInflectionY = VBTAnalyzer.lowestInflectionY,
-                        mode = currentMode ?: "VBT",
-                        barbellLoadKg = currentLoadKg,
-                        calibratedPlateRadius = calibratedPlateRadiusVideo,
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 14.dp)
-                    )
+                            .fillMaxSize()
+                            .verticalScroll(scrollState)
+                            .padding(horizontal = 8.dp)
+                    ) {
+                        Text(
+                            "Resultados Biomecánicos",
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Atleta: ${activeUser?.name ?: "Invitado"}",
+                            color = Color.Gray,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
 
-                    if (currentMode == "JUMP") {
-                        // Módulo 3: Salto + Potencia Watts (Sayers)
-                        val metrics = jumpMetricsResult
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text("SALTO VERTICAL", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    "${String.format("%.1f", finalResult!! * 100)} cm",
-                                    color = Color(0xFF00FFCC),
-                                    style = MaterialTheme.typography.displayMedium,
-                                    fontWeight = FontWeight.Black
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Divider(color = Color(0xFF333333))
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column {
-                                        Text("Potencia Pico (Sayers)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            "${metrics?.peakPowerWatts?.toInt() ?: "--"} W",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                    }
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text("Potencia Relativa", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            "${String.format("%.1f", metrics?.relativePowerWattsPerKg ?: 0.0)} W/kg",
-                                            color = Color(0xFF00FFCC),
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                    }
+                        // Vista Previa Interactiva del Video Analizado (Trayectoria Bar Path + Retícula en tiempo real)
+                        AnalysisResultVideoPreview(
+                            videoUriString = videoUriString,
+                            videoNativeWidth = videoNativeWidth,
+                            videoNativeHeight = videoNativeHeight,
+                            trimStartMs = trimStartMs,
+                            trimEndMs = trimEndMs,
+                            trackingPoints = trackingPointsResult,
+                            originBaselineY = VBTAnalyzer.originBaselineY,
+                            lowestInflectionY = VBTAnalyzer.lowestInflectionY,
+                            mode = currentMode ?: "VBT",
+                            barbellLoadKg = currentLoadKg,
+                            calibratedPlateRadius = calibratedPlateRadiusVideo,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        )
+
+                        // ANCHOR: DATOS ANÁLISIS
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onGloballyPositioned { coords ->
+                                    analysisDataYOffset = scrollState.value + coords.positionInParent().y.toInt()
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    "Tiempo de vuelo: ${(metrics?.flightTimeSeconds?.times(1000))?.toInt() ?: "--"} ms",
-                                    color = Color.Gray,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-                        }
-                    } else if (currentMode == "VBT") {
-                        // Módulo 2: VBT Avanzado con Carga, Potencia, Fuerza, Trabajo y 1RM
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
-                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                // Fila superior: Carga desplazada con ajuste rápido
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text("CARGA DESPLAZADA", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            "${currentLoadKg.toInt()} kg",
-                                            color = Color.White,
-                                            style = MaterialTheme.typography.titleLarge,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                if (currentMode == "JUMP") {
+                                    // Módulo 3: Salto + Potencia Watts (Sayers)
+                                    val metrics = jumpMetricsResult
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
-                                        FilledTonalIconButton(
-                                            onClick = {
-                                                val next = (currentLoadKg - 5.0).coerceAtLeast(10.0)
-                                                barbellLoadKg = next.toInt().toString()
-                                            },
-                                            modifier = Modifier.size(32.dp),
-                                            colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFF2A2A2A))
-                                        ) { Text("-5", fontSize = 11.sp, color = Color.LightGray) }
-
-                                        FilledTonalIconButton(
-                                            onClick = {
-                                                val next = (currentLoadKg + 5.0)
-                                                barbellLoadKg = next.toInt().toString()
-                                            },
-                                            modifier = Modifier.size(32.dp),
-                                            colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFF2A2A2A))
-                                        ) { Text("+5", fontSize = 11.sp, color = Color(0xFF00FFCC)) }
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text("SALTO VERTICAL", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(
+                                                "${String.format("%.1f", finalResult!! * 100)} cm",
+                                                color = Color(0xFF00FFCC),
+                                                style = MaterialTheme.typography.displayMedium,
+                                                fontWeight = FontWeight.Black
+                                            )
+                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Divider(color = Color(0xFF333333))
+                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column {
+                                                    Text("Potencia Pico (Sayers)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${metrics?.peakPowerWatts?.toInt() ?: "--"} W",
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                }
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text("Potencia Relativa", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${String.format("%.1f", metrics?.relativePowerWattsPerKg ?: 0.0)} W/kg",
+                                                        color = Color(0xFF00FFCC),
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text(
+                                                "Tiempo de vuelo: ${(metrics?.flightTimeSeconds?.times(1000))?.toInt() ?: "--"} ms",
+                                                color = Color.Gray,
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        }
                                     }
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Divider(color = Color(0xFF333333))
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Velocidades (Pico y Media)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column {
-                                        Text("Velocidad Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            "${String.format("%.2f", peakVelocity)} m/s",
-                                            color = Color(0xFF00FFCC),
-                                            style = MaterialTheme.typography.headlineMedium,
-                                            fontWeight = FontWeight.Black
-                                        )
-                                    }
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text("Velocidad Media (MV)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            "${String.format("%.2f", meanVelocity)} m/s",
-                                            color = Color(0xFF00E676),
-                                            style = MaterialTheme.typography.headlineMedium,
-                                            fontWeight = FontWeight.Black
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Divider(color = Color(0xFF333333))
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                // Métricas de Potencia (Watts) y Fuerza (Newtons)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column {
-                                        Text("Potencia Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            "${peakPowerWatts.toInt()} W",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                        Text(
-                                            "${String.format("%.1f", relativeWattsPerKg)} W/kg",
-                                            color = Color(0xFF00FFCC),
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("Fuerza Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            "${peakForceN.toInt()} N",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                        Text(
-                                            "Trabajo: ${workJoules.toInt()} J",
-                                            color = Color.Gray,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text("1RM Estimado", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            "${estimatedOneRM.toInt()} kg",
-                                            color = Color(0xFFFFD600),
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                        Text(
-                                            "~${pctOneRM.toInt()}% 1RM",
-                                            color = Color.Gray,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Divider(color = Color(0xFF333333))
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                // Desvío Horizontal (Bar Drift)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text("Desvío Horizontal (Bar Drift)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            "${String.format("%.1f", vbtDeviationResultCm ?: 0.0)} cm",
-                                            color = if ((vbtDeviationResultCm ?: 0.0) < 8.0) Color(0xFF00FFCC) else Color(0xFFFFB300),
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                    }
-                                    Text(
-                                        if ((vbtDeviationResultCm ?: 0.0) < 8.0) "✓ Trayectoria vertical limpia" else "⚠ Desvío hacia adelante",
-                                        color = if ((vbtDeviationResultCm ?: 0.0) < 8.0) Color(0xFF00FFCC) else Color(0xFFFFB300),
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-
-                                // Visualizador de Bar Path (Canvas)
-                                val pathPoints = VBTAnalyzer.barPath
-                                if (pathPoints.size > 2) {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Text("Trayectoria Estática de Barra (Bar Path):", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Box(
+                                } else if (currentMode == "VBT") {
+                                    // Selector de Familia: DLP (Olímpicos) vs Ley de Hill (Fuerza)
+                                    Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(90.dp)
-                                            .background(Color(0xFF121212), RoundedCornerShape(8.dp))
-                                            .padding(8.dp)
+                                            .padding(bottom = 8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Canvas(modifier = Modifier.fillMaxSize()) {
-                                            val minX = pathPoints.minOf { it.x }
-                                            val maxX = pathPoints.maxOf { it.x }
-                                            val minY = pathPoints.minOf { it.y }
-                                            val maxY = pathPoints.maxOf { it.y }
-
-                                            val rangeX = (maxX - minX).coerceAtLeast(1f)
-                                            val rangeY = (maxY - minY).coerceAtLeast(1f)
-
-                                            for (i in 0 until pathPoints.size - 1) {
-                                                val p1 = pathPoints[i]
-                                                val p2 = pathPoints[i + 1]
-
-                                                val x1 = ((p1.x - minX) / rangeX) * (size.width * 0.8f) + (size.width * 0.1f)
-                                                val y1 = ((p1.y - minY) / rangeY) * (size.height * 0.8f) + (size.height * 0.1f)
-
-                                                val x2 = ((p2.x - minX) / rangeX) * (size.width * 0.8f) + (size.width * 0.1f)
-                                                val y2 = ((p2.y - minY) / rangeY) * (size.height * 0.8f) + (size.height * 0.1f)
-
-                                                val color = when {
-                                                    p2.velocity < 0.6 -> Color(0xFF00E5FF)
-                                                    p2.velocity < 1.2 -> Color(0xFF00E676)
-                                                    else -> Color(0xFFFF3D00)
+                                        VBTExerciseFamily.values().forEach { family ->
+                                            val isSelected = selectedFamily == family
+                                            Surface(
+                                                onClick = {
+                                                    selectedFamily = family
+                                                    selectedExerciseModel = if (family == VBTExerciseFamily.DLP_OLYMPIC) {
+                                                        VBTExerciseModel.SNATCH_FLOOR
+                                                    } else {
+                                                        VBTExerciseModel.SQUAT
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (isSelected) Color(0xFF00FFCC).copy(alpha = 0.22f) else Color(0xFF1E1E1E),
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    1.dp,
+                                                    if (isSelected) Color(0xFF00FFCC) else Color(0xFF333333)
+                                                ),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .height(42.dp)
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.Center,
+                                                    modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)
+                                                ) {
+                                                    Text(family.icon, fontSize = 16.sp)
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        family.label,
+                                                        color = if (isSelected) Color(0xFF00FFCC) else Color.LightGray,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                        fontSize = 12.sp,
+                                                        maxLines = 1
+                                                    )
                                                 }
+                                            }
+                                        }
+                                    }
 
-                                                drawLine(
-                                                    color = color,
-                                                    start = Offset(x1, y1),
-                                                    end = Offset(x2, y2),
-                                                    strokeWidth = 3.dp.toPx(),
-                                                    cap = StrokeCap.Round
+                                    // Selector de Ejercicio Específico (Chips horizontales con scroll)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState())
+                                            .padding(bottom = 10.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        VBTExerciseModel.values().filter { it.family == selectedFamily }.forEach { model ->
+                                            val isSelected = selectedExerciseModel == model
+                                            Surface(
+                                                onClick = { selectedExerciseModel = model },
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isSelected) Color(0xFF00FFCC) else Color(0xFF262626),
+                                                border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF3A3A3A)),
+                                                modifier = Modifier.height(32.dp)
+                                            ) {
+                                                Box(
+                                                    contentAlignment = Alignment.Center,
+                                                    modifier = Modifier.padding(horizontal = 10.dp)
+                                                ) {
+                                                    Text(
+                                                        model.displayName,
+                                                        color = if (isSelected) Color.Black else Color.White,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                        fontSize = 12.sp
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Módulo 2: VBT Avanzado con Carga, Potencia, Fuerza, Trabajo y 1RM
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            // Subheader indicando métrica y fórmula activa
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(Color(0xFF141414), RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    selectedExerciseModel.displayName,
+                                                    color = Color(0xFF00FFCC),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
                                                 )
+                                                Text(
+                                                    if (selectedExerciseModel.usesPeakVelocity) "⚡ Métrica: Vel. Pico (PV)" else "🏋️ Métrica: Vel. Media (VM)",
+                                                    color = Color.LightGray,
+                                                    fontSize = 11.sp
+                                                )
+                                            }
+
+                                            Spacer(modifier = Modifier.height(10.dp))
+
+                                            // Fila superior: Carga desplazada con ajuste rápido
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column {
+                                                    Text("CARGA DESPLAZADA", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Text(
+                                                        "${currentLoadKg.toInt()} kg",
+                                                        color = Color.White,
+                                                        style = MaterialTheme.typography.titleLarge,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    FilledTonalIconButton(
+                                                        onClick = {
+                                                            val next = (currentLoadKg - 5.0).coerceAtLeast(10.0)
+                                                            barbellLoadKg = next.toInt().toString()
+                                                        },
+                                                        modifier = Modifier.size(32.dp),
+                                                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFF2A2A2A))
+                                                    ) { Text("-5", fontSize = 11.sp, color = Color.LightGray) }
+
+                                                    FilledTonalIconButton(
+                                                        onClick = {
+                                                            val next = (currentLoadKg + 5.0)
+                                                            barbellLoadKg = next.toInt().toString()
+                                                        },
+                                                        modifier = Modifier.size(32.dp),
+                                                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFF2A2A2A))
+                                                    ) { Text("+5", fontSize = 11.sp, color = Color(0xFF00FFCC)) }
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            Divider(color = Color(0xFF333333))
+                                            Spacer(modifier = Modifier.height(10.dp))
+
+                                            // Velocidades (Pico y Media)
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text("Velocidad Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                        if (selectedExerciseModel.usesPeakVelocity) {
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text("★", color = Color(0xFF00FFCC), fontSize = 12.sp)
+                                                        }
+                                                    }
+                                                    Text(
+                                                        "${String.format("%.2f", peakVelocity)} m/s",
+                                                        color = Color(0xFF00FFCC),
+                                                        style = MaterialTheme.typography.headlineMedium,
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                }
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text("Velocidad Media (MV)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                        if (!selectedExerciseModel.usesPeakVelocity) {
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text("★", color = Color(0xFF00E676), fontSize = 12.sp)
+                                                        }
+                                                    }
+                                                    Text(
+                                                        "${String.format("%.2f", meanVelocity)} m/s",
+                                                        color = Color(0xFF00E676),
+                                                        style = MaterialTheme.typography.headlineMedium,
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Divider(color = Color(0xFF333333))
+                                            Spacer(modifier = Modifier.height(12.dp))
+
+                                            // Métricas de Potencia (Watts), Fuerza (Newtons) y 1RM Estimado
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column {
+                                                    Text("Potencia Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${peakPowerWatts.toInt()} W",
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                    Text(
+                                                        "${String.format("%.1f", relativeWattsPerKg)} W/kg",
+                                                        color = Color(0xFF00FFCC),
+                                                        fontSize = 11.sp
+                                                    )
+                                                }
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Text("Fuerza Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${peakForceN.toInt()} N",
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                    Text(
+                                                        "Trabajo: ${workJoules.toInt()} J",
+                                                        color = Color.Gray,
+                                                        fontSize = 11.sp
+                                                    )
+                                                }
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text("1RM Estimado", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${estimatedOneRM.toInt()} kg",
+                                                        color = Color(0xFFFFD600),
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                    Text(
+                                                        "~${pctOneRM.toInt()}% 1RM",
+                                                        color = Color(0xFFFFD600),
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text(
+                                                "${selectedExerciseModel.formulaDescription} (MVT: ${selectedExerciseModel.mvt} m/s)",
+                                                color = Color(0xFF888888),
+                                                fontSize = 10.sp,
+                                                modifier = Modifier.fillMaxWidth(),
+                                                textAlign = TextAlign.End
+                                            )
+
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            Divider(color = Color(0xFF333333))
+                                            Spacer(modifier = Modifier.height(10.dp))
+
+                                            // Desvío Horizontal (Bar Drift)
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column {
+                                                    Text("Desvío Horizontal (Bar Drift)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${String.format("%.1f", vbtDeviationResultCm ?: 0.0)} cm",
+                                                        color = if ((vbtDeviationResultCm ?: 0.0) < 8.0) Color(0xFF00FFCC) else Color(0xFFFFB300),
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                }
+                                                Text(
+                                                    if ((vbtDeviationResultCm ?: 0.0) < 8.0) "✓ Trayectoria vertical limpia" else "⚠ Desvío hacia adelante",
+                                                    color = if ((vbtDeviationResultCm ?: 0.0) < 8.0) Color(0xFF00FFCC) else Color(0xFFFFB300),
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                            }
+
+                                            // Visualizador de Bar Path (Canvas)
+                                            val pathPoints = VBTAnalyzer.barPath
+                                            if (pathPoints.size > 2) {
+                                                Spacer(modifier = Modifier.height(12.dp))
+                                                Text("Trayectoria Estática de Barra (Bar Path):", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                                                Spacer(modifier = Modifier.height(6.dp))
+
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(90.dp)
+                                                        .background(Color(0xFF121212), RoundedCornerShape(8.dp))
+                                                        .padding(8.dp)
+                                                ) {
+                                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                                        val minX = pathPoints.minOf { it.x }
+                                                        val maxX = pathPoints.maxOf { it.x }
+                                                        val minY = pathPoints.minOf { it.y }
+                                                        val maxY = pathPoints.maxOf { it.y }
+
+                                                        val rangeX = (maxX - minX).coerceAtLeast(1f)
+                                                        val rangeY = (maxY - minY).coerceAtLeast(1f)
+
+                                                        for (i in 0 until pathPoints.size - 1) {
+                                                            val p1 = pathPoints[i]
+                                                            val p2 = pathPoints[i + 1]
+
+                                                            val x1 = ((p1.x - minX) / rangeX) * (size.width * 0.8f) + (size.width * 0.1f)
+                                                            val y1 = ((p1.y - minY) / rangeY) * (size.height * 0.8f) + (size.height * 0.1f)
+
+                                                            val x2 = ((p2.x - minX) / rangeX) * (size.width * 0.8f) + (size.width * 0.1f)
+                                                            val y2 = ((p2.y - minY) / rangeY) * (size.height * 0.8f) + (size.height * 0.1f)
+
+                                                            val color = when {
+                                                                p2.velocity < 0.6 -> Color(0xFF00E5FF)
+                                                                p2.velocity < 1.2 -> Color(0xFF00E676)
+                                                                else -> Color(0xFFFF3D00)
+                                                            }
+
+                                                            drawLine(
+                                                                color = color,
+                                                                start = Offset(x1, y1),
+                                                                end = Offset(x2, y2),
+                                                                strokeWidth = 3.dp.toPx(),
+                                                                cap = StrokeCap.Round
+                                                            )
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        // ANCHOR: ACCIONES
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onGloballyPositioned { coords ->
+                                    actionsYOffset = scrollState.value + coords.positionInParent().y.toInt()
+                                }
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (activeUser != null) {
+                                            userRepository.saveSession(
+                                                Session(
+                                                    id = UUID.randomUUID().toString(),
+                                                    userId = activeUser.id,
+                                                    activityType = if (currentMode == "VBT") "${currentMode} (${selectedExerciseModel.displayName})" else currentMode!!,
+                                                    result = finalResult!!,
+                                                    timestamp = System.currentTimeMillis(),
+                                                    powerWatts = if (currentMode == "VBT") peakPowerWatts else jumpMetricsResult?.peakPowerWatts,
+                                                    powerWattsPerKg = if (currentMode == "VBT") relativeWattsPerKg else jumpMetricsResult?.relativePowerWattsPerKg,
+                                                    horizontalDeviationCm = vbtDeviationResultCm,
+                                                    meanVelocity = if (currentMode == "VBT") meanVelocity else null,
+                                                    loadKg = if (currentMode == "VBT") currentLoadKg else null
+                                                )
+                                            )
+                                            onCloseClick()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF00FFCC),
+                                        contentColor = Color.Black
+                                    )
+                                ) {
+                                    Text("Guardar en Perfil del Atleta", fontWeight = FontWeight.Bold)
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                OutlinedButton(
+                                    onClick = {
+                                        val summary = buildString {
+                                            append("⚡ Speed Tracker - Análisis Biomecánico de Video\n")
+                                            append("Atleta: ${activeUser?.name ?: "Invitado"}\n")
+                                            if (currentMode == "VBT") {
+                                                append("Ejercicio: ${selectedExerciseModel.displayName} (${selectedExerciseModel.family.label})\n")
+                                                append("Carga en Barra: ${currentLoadKg.toInt()} kg\n")
+                                                append("Velocidad Pico: ${String.format("%.2f", peakVelocity)} m/s\n")
+                                                append("Velocidad Media: ${String.format("%.2f", meanVelocity)} m/s\n")
+                                                append("1RM Estimado: ${estimatedOneRM.toInt()} kg (@ ${pctOneRM.toInt()}% 1RM)\n")
+                                                append("Métrica Usada: ${if (selectedExerciseModel.usesPeakVelocity) "Velocidad Pico (PV)" else "Velocidad Media (VM)"}\n")
+                                                append("Fórmula: ${selectedExerciseModel.formulaDescription}\n")
+                                                append("Potencia Pico: ${peakPowerWatts.toInt()} W (${String.format("%.1f", relativeWattsPerKg)} W/kg)\n")
+                                                append("Fuerza Pico: ${peakForceN.toInt()} N\n")
+                                                append("Trabajo Mecánico: ${workJoules.toInt()} J\n")
+                                                if (vbtDeviationResultCm != null) {
+                                                    append("Desvío de Barra: ${String.format("%.1f", vbtDeviationResultCm)} cm\n")
+                                                }
+                                            } else if (currentMode == "JUMP") {
+                                                append("Altura: ${String.format("%.1f", (finalResult ?: 0.0) * 100)} cm\n")
+                                                if (jumpMetricsResult != null) {
+                                                    append("Potencia Pico: ${jumpMetricsResult?.peakPowerWatts?.toInt()} W\n")
+                                                    append("Potencia Relativa: ${String.format("%.1f", jumpMetricsResult?.relativePowerWattsPerKg ?: 0.0)} W/kg\n")
+                                                }
+                                            }
+                                        }
+
+                                        coroutineScope.launch {
+                                            isExportingVideo = true
+                                            exportProgress = 0f
+                                            try {
+                                                val exportDir = File(context.cacheDir, "videos").apply { mkdirs() }
+                                                val exportedFile = File(exportDir, "SpeedTracker_Export_${System.currentTimeMillis()}.mp4")
+                                                val metricSummary = if (currentMode == "VBT") {
+                                                    "${selectedExerciseModel.displayName} • ${currentLoadKg.toInt()} kg • 1RM: ${estimatedOneRM.toInt()}kg • VP: ${String.format("%.2f", peakVelocity)} m/s"
+                                                } else {
+                                                    "Altura: ${String.format("%.1f", (finalResult ?: 0.0) * 100)} cm"
+                                                }
+
+                                                val finalVideoFile = VideoOverlayExporter.exportVideoWithOverlay(
+                                                    context = context,
+                                                    inputUri = Uri.parse(videoUriString),
+                                                    outputFile = exportedFile,
+                                                    mode = currentMode ?: "VBT",
+                                                    trackingPoints = trackingPointsResult,
+                                                    exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical",
+                                                    athleteName = activeUser?.name ?: "Atleta",
+                                                    bestMetricSummary = metricSummary,
+                                                    originBaselineY = VBTAnalyzer.originBaselineY,
+                                                    lowestInflectionY = VBTAnalyzer.lowestInflectionY,
+                                                    calibratedPlateRadius = calibratedPlateRadiusVideo,
+                                                    startMs = trimStartMs,
+                                                    endMs = trimEndMs,
+                                                    onProgress = { p -> exportProgress = p }
+                                                )
+                                                shareVideoWithReport(context, Uri.fromFile(finalVideoFile), summary)
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                                shareVideoWithReport(context, Uri.parse(videoUriString), summary)
+                                            } finally {
+                                                isExportingVideo = false
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFF00FFCC))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Compartir Video + Informe", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                OutlinedButton(
+                                    onClick = {
+                                        isReadyToAnalyze = false
+                                        finalResult = null
+                                        progress = 0f
+                                        jumpMetricsResult = null
+                                        vbtDeviationResultCm = null
+                                        trackingPointsResult = emptyList()
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(46.dp)
+                                ) {
+                                    Text("Reintentar Ajuste", color = Color.White)
+                                }
+
+                                TextButton(onClick = onCloseClick) {
+                                    Text("Descartar y Salir", color = Color.Gray)
+                                }
+                            }
+                        }
+
+                        // Espacio al final para que la barra inferior flotante no tape los botones
+                        Spacer(modifier = Modifier.height(84.dp))
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    Button(
-                        onClick = {
-                            if (activeUser != null) {
-                                userRepository.saveSession(
-                                    Session(
-                                        id = UUID.randomUUID().toString(),
-                                        userId = activeUser.id,
-                                        activityType = currentMode!!,
-                                        result = finalResult!!,
-                                        timestamp = System.currentTimeMillis(),
-                                        powerWatts = if (currentMode == "VBT") peakPowerWatts else jumpMetricsResult?.peakPowerWatts,
-                                        powerWattsPerKg = if (currentMode == "VBT") relativeWattsPerKg else jumpMetricsResult?.relativePowerWattsPerKg,
-                                        horizontalDeviationCm = vbtDeviationResultCm,
-                                        meanVelocity = if (currentMode == "VBT") meanVelocity else null,
-                                        loadKg = if (currentMode == "VBT") currentLoadKg else null
-                                    )
-                                )
-                                onCloseClick()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        colors = ButtonDefaults.buttonColors(
+                    // Botón flotante para subir del todo a la pantalla y ver el video nuevamente
+                    AnimatedVisibility(
+                        visible = scrollState.value > 180,
+                        enter = fadeIn() + scaleIn(),
+                        exit = fadeOut() + scaleOut(),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = 74.dp)
+                    ) {
+                        FloatingActionButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    scrollState.animateScrollTo(0)
+                                }
+                            },
                             containerColor = Color(0xFF00FFCC),
-                            contentColor = Color.Black
-                        )
-                    ) {
-                        Text("Guardar en Perfil del Atleta", fontWeight = FontWeight.Bold)
+                            contentColor = Color.Black,
+                            modifier = Modifier.size(44.dp),
+                            shape = CircleShape,
+                            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.KeyboardArrowUp,
+                                contentDescription = "Subir al video",
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = {
-                            val summary = buildString {
-                                append("⚡ Speed Tracker - Análisis Biomecánico de Video\n")
-                                append("Atleta: ${activeUser?.name ?: "Invitado"}\n")
-                                if (currentMode == "VBT") {
-                                    append("Carga en Barra: ${currentLoadKg.toInt()} kg\n")
-                                    append("Velocidad Pico: ${String.format("%.2f", peakVelocity)} m/s\n")
-                                    append("Velocidad Media: ${String.format("%.2f", meanVelocity)} m/s\n")
-                                    append("Potencia Pico: ${peakPowerWatts.toInt()} W (${String.format("%.1f", relativeWattsPerKg)} W/kg)\n")
-                                    append("Fuerza Pico: ${peakForceN.toInt()} N\n")
-                                    append("Trabajo Mecánico: ${workJoules.toInt()} J\n")
-                                    append("1RM Estimado: ${estimatedOneRM.toInt()} kg (@ ${pctOneRM.toInt()}% 1RM)\n")
-                                    if (vbtDeviationResultCm != null) {
-                                        append("Desvío de Barra: ${String.format("%.1f", vbtDeviationResultCm)} cm\n")
+                    // Barra persistente con los 2 botones: "Datos Análisis" y "Acciones"
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth(),
+                        color = Color(0xF2121212),
+                        tonalElevation = 8.dp,
+                        shadowElevation = 12.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262626)),
+                        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        scrollState.animateScrollTo((analysisDataYOffset - 12).coerceAtLeast(0))
                                     }
-                                } else if (currentMode == "JUMP") {
-                                    append("Altura: ${String.format("%.1f", (finalResult ?: 0.0) * 100)} cm\n")
-                                    if (jumpMetricsResult != null) {
-                                        append("Potencia Pico: ${jumpMetricsResult?.peakPowerWatts?.toInt()} W\n")
-                                        append("Potencia Relativa: ${String.format("%.1f", jumpMetricsResult?.relativePowerWattsPerKg ?: 0.0)} W/kg\n")
-                                    }
-                                }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF1E2922),
+                                    contentColor = Color(0xFF00FFCC)
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.6f)),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.QueryStats,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = Color(0xFF00FFCC)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    "Datos Análisis",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    maxLines = 1
+                                )
                             }
 
-                            coroutineScope.launch {
-                                isExportingVideo = true
-                                exportProgress = 0f
-                                try {
-                                    val exportDir = File(context.cacheDir, "videos").apply { mkdirs() }
-                                    val exportedFile = File(exportDir, "SpeedTracker_Export_${System.currentTimeMillis()}.mp4")
-                                    val metricSummary = if (currentMode == "VBT") {
-                                        "${currentLoadKg.toInt()} kg • VP: ${String.format("%.2f", peakVelocity)} m/s • ${peakPowerWatts.toInt()} W"
-                                    } else {
-                                        "Altura: ${String.format("%.1f", (finalResult ?: 0.0) * 100)} cm"
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        scrollState.animateScrollTo((actionsYOffset - 12).coerceAtLeast(0))
                                     }
-
-                                    val finalVideoFile = VideoOverlayExporter.exportVideoWithOverlay(
-                                        context = context,
-                                        inputUri = Uri.parse(videoUriString),
-                                        outputFile = exportedFile,
-                                        mode = currentMode ?: "VBT",
-                                        trackingPoints = trackingPointsResult,
-                                        exerciseName = if (currentMode == "VBT") "Halterofilia / VBT" else "Salto Vertical",
-                                        athleteName = activeUser?.name ?: "Atleta",
-                                        bestMetricSummary = metricSummary,
-                                        originBaselineY = VBTAnalyzer.originBaselineY,
-                                        lowestInflectionY = VBTAnalyzer.lowestInflectionY,
-                                        calibratedPlateRadius = calibratedPlateRadiusVideo,
-                                        startMs = trimStartMs,
-                                        endMs = trimEndMs,
-                                        onProgress = { p -> exportProgress = p }
-                                    )
-                                    shareVideoWithReport(context, Uri.fromFile(finalVideoFile), summary)
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                    shareVideoWithReport(context, Uri.parse(videoUriString), summary)
-                                } finally {
-                                    isExportingVideo = false
-                                }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF262626),
+                                    contentColor = Color.White
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF444444)),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.TouchApp,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = Color(0xFF00FFCC)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    "Acciones",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    maxLines = 1
+                                )
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp)
-                    ) {
-                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFF00FFCC))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Compartir Video + Informe", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = {
-                            isReadyToAnalyze = false
-                            finalResult = null
-                            progress = 0f
-                            jumpMetricsResult = null
-                            vbtDeviationResultCm = null
-                            trackingPointsResult = emptyList()
-                        },
-                        modifier = Modifier.fillMaxWidth().height(46.dp)
-                    ) {
-                        Text("Reintentar Ajuste", color = Color.White)
-                    }
-
-                    TextButton(onClick = onCloseClick) {
-                        Text("Descartar y Salir", color = Color.Gray)
+                        }
                     }
                 }
             }
@@ -1855,7 +2166,7 @@ fun AnalysisResultVideoPreview(
     var previewPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
     var previewVideoViewRef by remember { mutableStateOf<VideoView?>(null) }
     var isPlaying by remember { mutableStateOf(true) }
-    var isPreviewMuted by remember { mutableStateOf(false) }
+    var isPreviewMuted by remember { mutableStateOf(true) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var currentPosMs by remember { mutableLongStateOf(trimStartMs) }
     var isUserSeeking by remember { mutableStateOf(false) }
@@ -1865,7 +2176,7 @@ fun AnalysisResultVideoPreview(
 
     val effectiveEndMs = if (trimEndMs > trimStartMs + 100L) trimEndMs else (trimStartMs + 3000L)
     val isVertical = if (videoNativeWidth > 0 && videoNativeHeight > 0) videoNativeHeight > videoNativeWidth else true
-    val previewHeight = if (isVertical) 350.dp else 240.dp
+    val previewHeight = if (isVertical) 480.dp else 280.dp
 
     fun applySpeed(speed: Float) {
         playbackSpeed = speed
@@ -2286,12 +2597,13 @@ fun AnalysisResultVideoPreview(
                                     }
                                 }
                             },
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(42.dp)
                         ) {
                             Icon(
                                 if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 contentDescription = if (isPlaying) "Pausar" else "Reproducir",
-                                tint = Color(0xFF00FFCC)
+                                tint = Color(0xFF00FFCC),
+                                modifier = Modifier.size(26.dp)
                             )
                         }
 
@@ -2306,13 +2618,13 @@ fun AnalysisResultVideoPreview(
                                     isPlaying = true
                                 }
                             },
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(38.dp)
                         ) {
                             Icon(
                                 Icons.Default.Replay,
                                 contentDescription = "Reiniciar",
                                 tint = Color.LightGray,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
 
@@ -2337,13 +2649,13 @@ fun AnalysisResultVideoPreview(
                                     }
                                 }
                             },
-                            modifier = Modifier.size(30.dp),
+                            modifier = Modifier.size(36.dp),
                             colors = IconButtonDefaults.filledTonalIconButtonColors(
                                 containerColor = Color(0xFF262626),
                                 contentColor = Color.LightGray
                             )
                         ) {
-                            Text("◀", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("◀", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2369,13 +2681,13 @@ fun AnalysisResultVideoPreview(
                                     }
                                 }
                             },
-                            modifier = Modifier.size(30.dp),
+                            modifier = Modifier.size(36.dp),
                             colors = IconButtonDefaults.filledTonalIconButtonColors(
                                 containerColor = Color(0xFF262626),
                                 contentColor = Color.LightGray
                             )
                         ) {
-                            Text("▶", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("▶", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(modifier = Modifier.width(6.dp))
@@ -2436,7 +2748,7 @@ fun AnalysisResultVideoPreview(
                             onClick = {
                                 isPreviewMuted = !isPreviewMuted
                             },
-                            modifier = Modifier.size(30.dp),
+                            modifier = Modifier.size(36.dp),
                             colors = IconButtonDefaults.filledTonalIconButtonColors(
                                 containerColor = if (isPreviewMuted) Color(0xCCFF5252) else Color(0xFF262626),
                                 contentColor = if (isPreviewMuted) Color.White else Color(0xFF00FFCC)
@@ -2445,7 +2757,7 @@ fun AnalysisResultVideoPreview(
                             Icon(
                                 if (isPreviewMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
                                 contentDescription = if (isPreviewMuted) "Activar sonido" else "Silenciar video",
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
@@ -2473,16 +2785,16 @@ fun AnalysisResultVideoPreview(
                                     shape = RoundedCornerShape(4.dp),
                                     color = if (isSelected) Color(0x3300FFCC) else Color(0xFF262626),
                                     border = if (isSelected) CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF00FFCC))) else null,
-                                    modifier = Modifier.height(24.dp)
+                                    modifier = Modifier.height(28.dp)
                                 ) {
                                     Box(
                                         contentAlignment = Alignment.Center,
-                                        modifier = Modifier.padding(horizontal = 6.dp)
+                                        modifier = Modifier.padding(horizontal = 8.dp)
                                     ) {
                                         Text(
                                             lbl,
                                             color = if (isSelected) Color(0xFF00FFCC) else Color.LightGray,
-                                            fontSize = 10.sp,
+                                            fontSize = 11.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                         )
                                     }
