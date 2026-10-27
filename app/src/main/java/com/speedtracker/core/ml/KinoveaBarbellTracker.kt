@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.sqrt
 
 /**
@@ -95,7 +96,7 @@ class KinoveaBarbellTracker {
 
     /**
      * Rastrea el disco en el frame actual mediante coincidencia de plantilla ZNCC con ventana
-     * de búsqueda predictiva centrada en el movimiento (Kinematic Velocity Prediction).
+     * de búsqueda adaptativa (amplia en velocidad, ultra-estable y compacta en bloqueo/reposo).
      */
     fun trackFrame(bitmap: Bitmap): Offset {
         if (!isInitialized || normTemplate == null) {
@@ -107,19 +108,23 @@ class KinoveaBarbellTracker {
         val tpl = normTemplate!!
         val numPixels = templateW * templateH
 
-        // 1. Predicción cinemática pura basada en velocidad del fotograma previo
-        // La ventana de búsqueda VIAJA con la barra hacia arriba en el espacio
+        // 1. Predicción cinemática pura basada en velocidad previa
+        val speed = hypot(currentVelocity.x.toDouble(), currentVelocity.y.toDouble()).toFloat()
+        val isFast = speed > 10f
+
         val predX = currentCenter.x + currentVelocity.x.coerceIn(-35f, 35f)
         val predY = currentCenter.y + currentVelocity.y.coerceIn(-130f, 90f)
 
-        // 2. Ventana de búsqueda adaptada centrada en la predicción de movimiento
-        val searchRadiusX = 35
-        val searchRadiusY = 55
+        // 2. Ventana de búsqueda adaptativa:
+        // - En aceleración (>2 m/s): amplia para no perder la barra en el aire
+        // - En bloqueo / casi detenido: compacta (20x26 px) para no salirse de foco ni saltar a vigas o fondo
+        val searchRadiusX = if (isFast) 35 else 20
+        val searchRadiusY = if (isFast) 55 else 26
 
-        val minSearchX = (predX.toInt() - searchRadiusX).coerceIn(templateHalfW, bW - templateHalfW - 1)
-        val maxSearchX = (predX.toInt() + searchRadiusX).coerceIn(templateHalfW, bW - templateHalfW - 1)
-        val minSearchY = (predY.toInt() - searchRadiusY).coerceIn(templateHalfH, bH - templateHalfH - 1)
-        val maxSearchY = (predY.toInt() + searchRadiusY).coerceIn(templateHalfH, bH - templateHalfH - 1)
+        val minSearchX = (minOf(currentCenter.x, predX) - searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
+        val maxSearchX = (maxOf(currentCenter.x, predX) + searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
+        val minSearchY = (minOf(currentCenter.y, predY) - searchRadiusY).toInt().coerceIn(templateHalfH, bH - templateHalfH - 1)
+        val maxSearchY = (maxOf(currentCenter.y, predY) + searchRadiusY).toInt().coerceIn(templateHalfH, bH - templateHalfH - 1)
 
         // Extraer en un único pase nativo la región rectangular completa de búsqueda (ROI)
         val roiLeft = (minSearchX - templateHalfW - 1).coerceIn(0, bW - 1)
@@ -149,11 +154,17 @@ class KinoveaBarbellTracker {
         var bestX = predX.toInt().coerceIn(minSearchX, maxSearchX)
         var bestY = predY.toInt().coerceIn(minSearchY, maxSearchY)
         var bestScore = -1.0f
+        val maxWindowDist = hypot(searchRadiusX.toDouble(), searchRadiusY.toDouble()).toFloat().coerceAtLeast(1f)
 
         // Búsqueda gruesa con paso de 2 píxeles
         for (cy in minSearchY..maxSearchY step 2) {
             for (cx in minSearchX..maxSearchX step 2) {
-                val score = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
+                val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
+                // Ponderación espacial: penalización suave para distancias lejanas a la predicción
+                // (evita que al desacelerar arriba salte a vigas del techo, fondos o sombras)
+                val dist = hypot((cx - predX).toDouble(), (cy - predY).toDouble()).toFloat()
+                val score = rawScore - (dist / maxWindowDist) * 0.10f
+
                 if (score > bestScore) {
                     bestScore = score
                     bestX = cx
@@ -170,7 +181,10 @@ class KinoveaBarbellTracker {
 
         for (cy in fineMinY..fineMaxY) {
             for (cx in fineMinX..fineMaxX) {
-                val score = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
+                val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
+                val dist = hypot((cx - predX).toDouble(), (cy - predY).toDouble()).toFloat()
+                val score = rawScore - (dist / maxWindowDist) * 0.10f
+
                 if (score > bestScore) {
                     bestScore = score
                     bestX = cx
@@ -181,8 +195,8 @@ class KinoveaBarbellTracker {
 
         // 3. Validación y continuación por inercia física
         val resolvedCenter: Offset
-        // Umbral de 0.25f para aceptar la correlación del buje incluso bajo motion blur vertical
-        if (bestScore >= 0.25f) {
+        // Umbral de aceptación para capturar el buje en movimiento y reposo
+        if (bestScore >= 0.22f) {
             // Refinamiento subpíxel parabólico
             val sLeft = computeZNCC(lumBuf, roiW, roiLeft, roiTop, (bestX - 1).coerceAtLeast(minSearchX), bestY, tpl, numPixels)
             val sRight = computeZNCC(lumBuf, roiW, roiLeft, roiTop, (bestX + 1).coerceAtMost(maxSearchX), bestY, tpl, numPixels)
@@ -201,28 +215,40 @@ class KinoveaBarbellTracker {
             val instVx = targetX - currentCenter.x
             val instVy = targetY - currentCenter.y
 
-            // Filtro de velocidad inercial con excelente respuesta a aceleraciones
-            currentVelocity = Offset(
-                currentVelocity.x * 0.30f + instVx.coerceIn(-35f, 35f) * 0.70f,
+            // Detección de frenado en el bloqueo (lockout / detención superior):
+            // Si la barra venía subiendo rápido y de repente frena (instVy >= -1.5f),
+            // cortar la inercia vertical ascendente para no seguir proyectando hacia el techo
+            val updatedVy = if (currentVelocity.y < -5f && instVy >= -1.5f) {
+                instVy.coerceIn(-130f, 90f) * 0.85f
+            } else {
                 currentVelocity.y * 0.30f + instVy.coerceIn(-130f, 90f) * 0.70f
-            )
+            }
+
+            val updatedVx = currentVelocity.x * 0.30f + instVx.coerceIn(-35f, 35f) * 0.70f
+
+            // Zona muerta de reposo: si el movimiento es submilimétrico (<0.7 px),
+            // clavar la velocidad en cero para mantener el disco 100% inmóvil y enfocado
+            val movementMag = hypot(instVx.toDouble(), instVy.toDouble()).toFloat()
+            currentVelocity = if (movementMag < 0.7f) {
+                Offset.Zero
+            } else {
+                Offset(updatedVx, updatedVy)
+            }
 
             resolvedCenter = Offset(targetX, targetY)
             lastConfidence = bestScore
             consecutiveLostFrames = 0
         } else {
-            // Inercia cinemática: continuar la trayectoria en el espacio sin saltos ni congelamientos
+            // Inercia cinemática suave si hay un frame oscuro o con desenfoque extremo
             consecutiveLostFrames++
             val inertX = (currentCenter.x + currentVelocity.x).coerceIn(templateHalfW.toFloat(), (bW - templateHalfW).toFloat())
             val inertY = (currentCenter.y + currentVelocity.y).coerceIn(templateHalfH.toFloat(), (bH - templateHalfH).toFloat())
             resolvedCenter = Offset(inertX, inertY)
-            lastConfidence = 0.25f
+            lastConfidence = 0.22f
 
-            // Amortiguación inercial suave: nunca poner a cero abruptamente
-            // Permite volar a través del segundo tirón sin perder la barra
             currentVelocity = Offset(
-                currentVelocity.x * 0.95f,
-                currentVelocity.y * 0.95f
+                currentVelocity.x * 0.90f,
+                currentVelocity.y * 0.90f
             )
         }
 
