@@ -40,18 +40,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -490,18 +494,18 @@ fun VideoAnalysisScreen(
                             Text(
                                 "¿Qué ejercicio específico vas a realizar?",
                                 color = Color.White,
-                                style = MaterialTheme.typography.titleLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 "Selecciona el ejercicio para calibrar las fórmulas biomecánicas y el 1RM",
                                 color = Color.Gray,
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 textAlign = TextAlign.Center
                             )
-                            Spacer(modifier = Modifier.height(18.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
 
                             // Selector de Familia: DLP (Olímpicos) vs Ley de Hill (Fuerza)
                             Row(
@@ -518,87 +522,103 @@ fun VideoAnalysisScreen(
                                             1.dp,
                                             if (isSelected) Color(0xFF00FFCC) else Color(0xFF333333)
                                         ),
-                                        modifier = Modifier.weight(1f).height(44.dp)
+                                        modifier = Modifier.weight(1f).height(38.dp)
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.Center,
                                             modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)
                                         ) {
-                                            Text(family.icon, fontSize = 16.sp)
+                                            Text(family.icon, fontSize = 15.sp)
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 family.label,
                                                 color = if (isSelected) Color(0xFF00FFCC) else Color.LightGray,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                fontSize = 12.sp
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            // Lista de Ejercicios en Tarjetas
-                            VBTExerciseModel.values().filter { it.family == setupFamily }.forEach { model ->
-                                val isSelected = selectedVBTExercise == model
-                                Surface(
-                                    onClick = {
-                                        selectedVBTExercise = model
-                                        currentMode = "VBT"
-                                    },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (isSelected) Color(0xFF162520) else Color(0xFF1E1E1E),
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.5.dp,
-                                        if (isSelected) Color(0xFF00FFCC) else Color(0xFF2C2C2C)
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                model.displayName,
-                                                color = if (isSelected) Color(0xFF00FFCC) else Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 15.sp
-                                            )
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                if (model.usesPeakVelocity) "⚡ Métrica: Velocidad Pico (PV) • MVT ${model.mvt} m/s" else "🏋️ Métrica: Velocidad Media (VM) • MVT ${model.mvt} m/s",
-                                                color = Color.Gray,
                                                 fontSize = 11.sp
                                             )
-                                            Text(
-                                                model.formulaDescription,
-                                                color = Color(0xFF888888),
-                                                fontSize = 10.sp
-                                            )
                                         }
-                                        Icon(
-                                            Icons.Default.ChevronRight,
-                                            contentDescription = "Seleccionar",
-                                            tint = if (isSelected) Color(0xFF00FFCC) else Color.Gray,
-                                            modifier = Modifier.size(22.dp)
-                                        )
                                     }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(12.dp))
-                            TextButton(onClick = { initialSelectionStep = InitialSelectionStep.CATEGORY }) {
-                                Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Lista de Ejercicios en Tarjetas: Cuadrícula compacta de 2 columnas (Todas visibles en una sola pantalla)
+                            val exercises = VBTExerciseModel.values().filter { it.family == setupFamily }
+                            exercises.chunked(2).forEach { rowPair ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    rowPair.forEach { model ->
+                                        val isSelected = selectedVBTExercise == model
+                                        Surface(
+                                            onClick = {
+                                                selectedVBTExercise = model
+                                                currentMode = "VBT"
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (isSelected) Color(0xFF162520) else Color(0xFF1E1E1E),
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.5.dp,
+                                                if (isSelected) Color(0xFF00FFCC) else Color(0xFF2C2C2C)
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(52.dp)
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Text(
+                                                    model.displayName,
+                                                    color = if (isSelected) Color(0xFF00FFCC) else Color.White,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        if (model.usesPeakVelocity) "⚡ PV • ${model.mvt} m/s" else "🏋️ VM • ${model.mvt} m/s",
+                                                        color = if (isSelected) Color(0xFF00FFCC) else Color(0xFF00E676),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                    Text(
+                                                        if (model.displayName.contains("Hang", ignoreCase = true)) "Colgante" else if (model.family == VBTExerciseFamily.DLP_OLYMPIC) "Suelo" else "Bilateral",
+                                                        color = Color.Gray,
+                                                        fontSize = 9.sp
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (rowPair.size == 1) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(
+                                onClick = { initialSelectionStep = InitialSelectionStep.CATEGORY },
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Volver a categorías", color = Color.Gray, fontSize = 13.sp)
+                                Text("Volver a categorías", color = Color.Gray, fontSize = 12.sp)
                             }
                         }
                     }
@@ -614,34 +634,34 @@ fun VideoAnalysisScreen(
                             Text(
                                 "¿Qué tipo de Salto Vertical?",
                                 color = Color.White,
-                                style = MaterialTheme.typography.titleLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 "Configura las fórmulas de potencia Sayers, tiempo de vuelo y reactividad",
                                 color = Color.Gray,
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 textAlign = TextAlign.Center
                             )
-                            Spacer(modifier = Modifier.height(18.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
                             listOf(
                                 Triple(
                                     JumpType.CMJ,
                                     "Salto con Contramovimiento (CMJ)",
-                                    "Inicio erguido, flexión descendente rápida y despegue explosivo inmediato.\n• Mide Altura Sayers, Potencia Pico (Watts) y W/kg."
+                                    "Inicio erguido, flexión y despegue explosivo • Altura Sayers y Watts pico"
                                 ),
                                 Triple(
                                     JumpType.SJ,
                                     "Squat Jump (SJ)",
-                                    "Salto concéntrico puro desde posición a 90° sostenida durante 2-3 s sin contramovimiento.\n• Evalúa fuerza explosiva concéntrica y ratio EUR."
+                                    "Salto concéntrico puro a 90° sin contramovimiento • Fuerza concéntrica y EUR"
                                 ),
                                 Triple(
                                     JumpType.DROP_JUMP,
                                     "Drop Jump (Caída desde Cajón)",
-                                    "Caída desde cajón, contacto mínimo con el suelo (<250 ms) y rebote reactivo vertical.\n• Mide Tiempo de Contacto, Altura y RSI (Reactive Strength Index)."
+                                    "Contacto reactivo mínimo (<250 ms) • Reactividad, tiempo contacto y RSI"
                                 )
                             ).forEach { (jType, title, desc) ->
                                 val isSelected = selectedJumpType == jType
@@ -651,7 +671,7 @@ fun VideoAnalysisScreen(
                                         VerticalJumpAnalyzer.currentJumpType = jType
                                         currentMode = "JUMP"
                                     },
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(10.dp),
                                     color = if (isSelected) Color(0xFF162520) else Color(0xFF1E1E1E),
                                     border = androidx.compose.foundation.BorderStroke(
                                         1.5.dp,
@@ -659,12 +679,13 @@ fun VideoAnalysisScreen(
                                     ),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 5.dp)
+                                        .height(56.dp)
+                                        .padding(vertical = 3.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                                            .fillMaxSize()
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
@@ -673,32 +694,38 @@ fun VideoAnalysisScreen(
                                                 title,
                                                 color = if (isSelected) Color(0xFF00FFCC) else Color.White,
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 15.sp
+                                                fontSize = 13.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
-                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Spacer(modifier = Modifier.height(2.dp))
                                             Text(
                                                 desc,
                                                 color = Color.Gray,
-                                                fontSize = 11.sp,
-                                                lineHeight = 15.sp
+                                                fontSize = 10.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
                                         }
-                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
                                         Icon(
                                             Icons.Default.ChevronRight,
                                             contentDescription = "Seleccionar",
                                             tint = if (isSelected) Color(0xFF00FFCC) else Color.Gray,
-                                            modifier = Modifier.size(22.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(14.dp))
-                            TextButton(onClick = { initialSelectionStep = InitialSelectionStep.CATEGORY }) {
-                                Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
+                            TextButton(
+                                onClick = { initialSelectionStep = InitialSelectionStep.CATEGORY },
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Volver a categorías", color = Color.Gray, fontSize = 13.sp)
+                                Text("Volver a categorías", color = Color.Gray, fontSize = 12.sp)
                             }
                         }
                     }
@@ -1651,7 +1678,6 @@ fun VideoAnalysisScreen(
                 }
             } else if (finalResult != null) {
                 // Resultados Completos (Módulos 2 & 3)
-                var selectedFamily by remember(selectedVBTExercise) { mutableStateOf(selectedVBTExercise.family) }
                 var selectedExerciseModel by remember(selectedVBTExercise) { mutableStateOf(selectedVBTExercise) }
 
                 val currentLoadKg = barbellLoadKg.toDoubleOrNull() ?: 70.0
@@ -1689,6 +1715,7 @@ fun VideoAnalysisScreen(
                 val scrollState = rememberScrollState()
                 var analysisDataYOffset by remember { mutableStateOf(0) }
                 var actionsYOffset by remember { mutableStateOf(0) }
+                var previewPlaybackPosMs by remember { mutableLongStateOf(trimStartMs) }
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(
@@ -1725,6 +1752,7 @@ fun VideoAnalysisScreen(
                             mode = currentMode ?: "VBT",
                             barbellLoadKg = currentLoadKg,
                             calibratedPlateRadius = calibratedPlateRadiusVideo,
+                            onCurrentPositionChange = { previewPlaybackPosMs = it },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 12.dp)
@@ -1790,82 +1818,63 @@ fun VideoAnalysisScreen(
                                             )
                                         }
                                     }
+                                    if (trackingPointsResult.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(14.dp))
+                                        val takeoffV = (jumpMetricsResult?.flightTimeSeconds ?: 0.5) * (9.81 / 2.0)
+                                        KinematicTelemetryChart(
+                                            trackingPoints = trackingPointsResult,
+                                            peakVelocity = trackingPointsResult.maxOfOrNull { it.velocityMps }?.takeIf { it > 0.1 } ?: takeoffV,
+                                            meanVelocity = takeoffV * 0.72,
+                                            currentVideoPosMs = previewPlaybackPosMs,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
                                 } else if (currentMode == "VBT") {
-                                    // Selector de Familia: DLP (Olímpicos) vs Ley de Hill (Fuerza)
-                                    Row(
+                                    // Ejercicio Seleccionado (Fijado previamente tras importar el video)
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0xFF1E1E1E),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)),
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(bottom = 8.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            .padding(bottom = 10.dp)
                                     ) {
-                                        VBTExerciseFamily.values().forEach { family ->
-                                            val isSelected = selectedFamily == family
-                                            Surface(
-                                                onClick = {
-                                                    selectedFamily = family
-                                                    selectedExerciseModel = if (family == VBTExerciseFamily.DLP_OLYMPIC) {
-                                                        VBTExerciseModel.SNATCH_FLOOR
-                                                    } else {
-                                                        VBTExerciseModel.SQUAT
-                                                    }
-                                                },
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = if (isSelected) Color(0xFF00FFCC).copy(alpha = 0.22f) else Color(0xFF1E1E1E),
-                                                border = androidx.compose.foundation.BorderStroke(
-                                                    1.dp,
-                                                    if (isSelected) Color(0xFF00FFCC) else Color(0xFF333333)
-                                                ),
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .height(42.dp)
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.Center,
-                                                    modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)
-                                                ) {
-                                                    Text(family.icon, fontSize = 16.sp)
-                                                    Spacer(modifier = Modifier.width(6.dp))
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(selectedExerciseModel.family.icon, fontSize = 20.sp)
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Column {
                                                     Text(
-                                                        family.label,
-                                                        color = if (isSelected) Color(0xFF00FFCC) else Color.LightGray,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                        fontSize = 12.sp,
-                                                        maxLines = 1
+                                                        selectedExerciseModel.displayName,
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 14.sp
+                                                    )
+                                                    Text(
+                                                        selectedExerciseModel.family.label,
+                                                        color = Color(0xFF00FFCC),
+                                                        fontSize = 11.sp
                                                     )
                                                 }
                                             }
-                                        }
-                                    }
-
-                                    // Selector de Ejercicio Específico (Chips horizontales con scroll)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState())
-                                            .padding(bottom = 10.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        VBTExerciseModel.values().filter { it.family == selectedFamily }.forEach { model ->
-                                            val isSelected = selectedExerciseModel == model
                                             Surface(
-                                                onClick = { selectedExerciseModel = model },
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = if (isSelected) Color(0xFF00FFCC) else Color(0xFF262626),
-                                                border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF3A3A3A)),
-                                                modifier = Modifier.height(32.dp)
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Color(0xFF121212),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2C2C2C))
                                             ) {
-                                                Box(
-                                                    contentAlignment = Alignment.Center,
-                                                    modifier = Modifier.padding(horizontal = 10.dp)
-                                                ) {
-                                                    Text(
-                                                        model.displayName,
-                                                        color = if (isSelected) Color.Black else Color.White,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                        fontSize = 12.sp
-                                                    )
-                                                }
+                                                Text(
+                                                    if (selectedExerciseModel.usesPeakVelocity) "⚡ Vel. Pico (PV)" else "🏋️ Vel. Media (VM)",
+                                                    color = Color.LightGray,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
                                             }
                                         }
                                     }
@@ -1877,29 +1886,6 @@ fun VideoAnalysisScreen(
                                         shape = RoundedCornerShape(12.dp)
                                     ) {
                                         Column(modifier = Modifier.padding(16.dp)) {
-                                            // Subheader indicando métrica y fórmula activa
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .background(Color(0xFF141414), RoundedCornerShape(6.dp))
-                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    selectedExerciseModel.displayName,
-                                                    color = Color(0xFF00FFCC),
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Text(
-                                                    if (selectedExerciseModel.usesPeakVelocity) "⚡ Métrica: Vel. Pico (PV)" else "🏋️ Métrica: Vel. Media (VM)",
-                                                    color = Color.LightGray,
-                                                    fontSize = 11.sp
-                                                )
-                                            }
-
-                                            Spacer(modifier = Modifier.height(10.dp))
 
                                             // Fila superior: Carga desplazada con ajuste rápido
                                             Row(
@@ -2070,59 +2056,19 @@ fun VideoAnalysisScreen(
                                                     style = MaterialTheme.typography.labelSmall
                                                 )
                                             }
-
-                                            // Visualizador de Bar Path (Canvas)
-                                            val pathPoints = VBTAnalyzer.barPath
-                                            if (pathPoints.size > 2) {
-                                                Spacer(modifier = Modifier.height(12.dp))
-                                                Text("Trayectoria Estática de Barra (Bar Path):", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
-                                                Spacer(modifier = Modifier.height(6.dp))
-
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(90.dp)
-                                                        .background(Color(0xFF121212), RoundedCornerShape(8.dp))
-                                                        .padding(8.dp)
-                                                ) {
-                                                    Canvas(modifier = Modifier.fillMaxSize()) {
-                                                        val minX = pathPoints.minOf { it.x }
-                                                        val maxX = pathPoints.maxOf { it.x }
-                                                        val minY = pathPoints.minOf { it.y }
-                                                        val maxY = pathPoints.maxOf { it.y }
-
-                                                        val rangeX = (maxX - minX).coerceAtLeast(1f)
-                                                        val rangeY = (maxY - minY).coerceAtLeast(1f)
-
-                                                        for (i in 0 until pathPoints.size - 1) {
-                                                            val p1 = pathPoints[i]
-                                                            val p2 = pathPoints[i + 1]
-
-                                                            val x1 = ((p1.x - minX) / rangeX) * (size.width * 0.8f) + (size.width * 0.1f)
-                                                            val y1 = ((p1.y - minY) / rangeY) * (size.height * 0.8f) + (size.height * 0.1f)
-
-                                                            val x2 = ((p2.x - minX) / rangeX) * (size.width * 0.8f) + (size.width * 0.1f)
-                                                            val y2 = ((p2.y - minY) / rangeY) * (size.height * 0.8f) + (size.height * 0.1f)
-
-                                                            val color = when {
-                                                                p2.velocity < 0.6 -> Color(0xFF00E5FF)
-                                                                p2.velocity < 1.2 -> Color(0xFF00E676)
-                                                                else -> Color(0xFFFF3D00)
-                                                            }
-
-                                                            drawLine(
-                                                                color = color,
-                                                                start = Offset(x1, y1),
-                                                                end = Offset(x2, y2),
-                                                                strokeWidth = 3.dp.toPx(),
-                                                                cap = StrokeCap.Round
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
                                         }
                                     }
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    // Gráfico Dinámico de Telemetría (Velocidad, Aceleración, Ondas en Cuadrícula)
+                                    KinematicTelemetryChart(
+                                        trackingPoints = trackingPointsResult,
+                                        peakVelocity = peakVelocity,
+                                        meanVelocity = meanVelocity,
+                                        currentVideoPosMs = previewPlaybackPosMs,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             }
                         }
@@ -2433,6 +2379,505 @@ fun VideoAnalysisScreen(
 }
 
 /**
+ * Estructura de datos temporal para la telemetría cinemática
+ */
+data class KinematicDataPoint(
+    val timestampMs: Long,
+    val velocityMps: Double,
+    val accelerationMps2: Double,
+    val isConcentric: Boolean
+)
+
+/**
+ * Gráfico dinámico de telemetría cinemática con cuadrícula oscura de alta precisión (estilo osciloscopio).
+ * Traza las ondas dinámicas de Velocidad (m/s) y Aceleración (m/s²) a lo largo de la repetición,
+ * con marcador de velocidad pico, línea de velocidad media (VM), línea cero de aceleración,
+ * y cursor de reproducción dinámico sincronizado en tiempo real con el video en loop superior.
+ */
+@Composable
+fun KinematicTelemetryChart(
+    trackingPoints: List<VideoFrameTrackingPoint>,
+    peakVelocity: Double,
+    meanVelocity: Double,
+    currentVideoPosMs: Long = 0L,
+    modifier: Modifier = Modifier
+) {
+    if (trackingPoints.size < 2) return
+
+    val minTimeMs = trackingPoints.first().timestampMs
+    val maxTimeMs = trackingPoints.last().timestampMs
+    val totalDurationMs = (maxTimeMs - minTimeMs).coerceAtLeast(100L)
+
+    // Modo de telemetría: 0: Velocidad (m/s), 1: Aceleración (m/s²), 2: Ambas superpuestas
+    var telemetryMode by remember { mutableIntStateOf(0) }
+
+    // Procesar datos y suavizar aceleración con filtro de media móvil de 3 puntos
+    val telemetryPoints = remember(trackingPoints) {
+        val raw = mutableListOf<KinematicDataPoint>()
+        for (i in trackingPoints.indices) {
+            val pt = trackingPoints[i]
+            val v = pt.velocityMps
+            val rawA = if (i > 0) {
+                val dt = (pt.timestampMs - trackingPoints[i - 1].timestampMs) / 1000.0
+                if (dt > 0.008) (v - trackingPoints[i - 1].velocityMps) / dt else 0.0
+            } else 0.0
+            raw.add(KinematicDataPoint(pt.timestampMs, v, rawA, pt.isConcentric))
+        }
+
+        raw.mapIndexed { idx, dp ->
+            val pA = raw.getOrNull(idx - 1)?.accelerationMps2 ?: dp.accelerationMps2
+            val nA = raw.getOrNull(idx + 1)?.accelerationMps2 ?: dp.accelerationMps2
+            val smoothedA = ((pA + dp.accelerationMps2 + nA) / 3.0).coerceIn(-15.0, 30.0)
+            dp.copy(accelerationMps2 = smoothedA)
+        }
+    }
+
+    val maxV = remember(telemetryPoints, peakVelocity) {
+        val top = maxOf(telemetryPoints.maxOfOrNull { it.velocityMps } ?: 0.0, peakVelocity)
+        (top * 1.15).coerceAtLeast(0.8)
+    }
+    val minV = 0.0
+
+    val maxA = remember(telemetryPoints) {
+        val top = telemetryPoints.maxOfOrNull { it.accelerationMps2 } ?: 5.0
+        (top * 1.15).coerceAtLeast(5.0)
+    }
+    val minA = remember(telemetryPoints) {
+        val btm = telemetryPoints.minOfOrNull { it.accelerationMps2 } ?: -4.0
+        (btm * 1.15).coerceAtMost(-3.0)
+    }
+
+    val peakAccel = remember(telemetryPoints) {
+        telemetryPoints.maxOfOrNull { it.accelerationMps2 } ?: 0.0
+    }
+
+    // Punto activo sincronizado con el cursor dinámico
+    val activePoint = remember(telemetryPoints, currentVideoPosMs) {
+        if (telemetryPoints.isEmpty()) null
+        else telemetryPoints.minByOrNull { kotlin.math.abs(it.timestampMs - currentVideoPosMs) }
+    }
+
+    val curTimeSec = ((activePoint?.timestampMs ?: currentVideoPosMs) - minTimeMs).coerceAtLeast(0L) / 1000.0
+    val curV = activePoint?.velocityMps ?: 0.0
+    val curA = activePoint?.accelerationMps2 ?: 0.0
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF14181F)),
+        shape = RoundedCornerShape(14.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262C36))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            // Cabecera: Título y Selector de Métrica
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.ShowChart,
+                        contentDescription = null,
+                        tint = Color(0xFF00FFCC),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "Telemetría Cinemática",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+
+                // Chips para alternar métricas
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("Velocidad", "Aceleración", "Ambas").forEachIndexed { idx, label ->
+                        val isSelected = telemetryMode == idx
+                        val activeColor = when (idx) {
+                            0 -> Color(0xFF00FFCC)
+                            1 -> Color(0xFFFF9100)
+                            else -> Color(0xFFE0E0E0)
+                        }
+                        Surface(
+                            onClick = { telemetryMode = idx },
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isSelected) activeColor.copy(alpha = 0.22f) else Color(0xFF1C222C),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isSelected) activeColor else Color(0xFF2D3542)
+                            ),
+                            modifier = Modifier.height(26.dp)
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 7.dp)
+                            ) {
+                                Text(
+                                    label,
+                                    color = if (isSelected) activeColor else Color.Gray,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Barra HUD con valores instantáneos dinámicos sincronizados
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF0D1015),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1F242C)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "⏱ t: ${String.format(Locale.US, "%.2f", curTimeSec)} s",
+                        color = Color.LightGray,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (telemetryMode == 0 || telemetryMode == 2) {
+                        Text(
+                            "⚡ V: ${String.format(Locale.US, "%.2f", curV)} m/s",
+                            color = Color(0xFF00FFCC),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (telemetryMode == 1 || telemetryMode == 2) {
+                        Text(
+                            "📈 A: ${String.format(Locale.US, "%+.1f", curA)} m/s²",
+                            color = Color(0xFFFF9100),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Cuadrícula y Ondas (Canvas de Telemetría Dinámica)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(155.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF090C10))
+                    .border(1.dp, Color(0xFF1E2530), RoundedCornerShape(8.dp))
+            ) {
+                Canvas(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val w = size.width
+                    val h = size.height
+
+                    val leftPad = 34.dp.toPx()
+                    val rightPad = if (telemetryMode == 2) 34.dp.toPx() else 12.dp.toPx()
+                    val topPad = 14.dp.toPx()
+                    val bottomPad = 20.dp.toPx()
+
+                    val plotW = (w - leftPad - rightPad).coerceAtLeast(10f)
+                    val plotH = (h - topPad - bottomPad).coerceAtLeast(10f)
+
+                    val textPaint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                        textSize = 9.sp.toPx()
+                        typeface = android.graphics.Typeface.MONOSPACE
+                    }
+
+                    // 1. Líneas de Cuadrícula Horizontal (4 subdivisiones)
+                    val gridDashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
+                    for (step in 0..4) {
+                        val y = topPad + (step.toFloat() / 4f) * plotH
+                        drawLine(
+                            color = Color(0xFF1B222C),
+                            start = Offset(leftPad, y),
+                            end = Offset(leftPad + plotW, y),
+                            strokeWidth = 1f,
+                            pathEffect = gridDashEffect
+                        )
+
+                        // Escala Y izquierda (Velocidad en modo 0 o 2)
+                        if (telemetryMode == 0 || telemetryMode == 2) {
+                            val vVal = maxV - (step.toFloat() / 4f) * (maxV - minV)
+                            textPaint.color = android.graphics.Color.parseColor("#00FFCC")
+                            textPaint.textAlign = android.graphics.Paint.Align.RIGHT
+                            drawContext.canvas.nativeCanvas.drawText(
+                                String.format(Locale.US, "%.1f", vVal),
+                                leftPad - 4.dp.toPx(),
+                                y + 3.dp.toPx(),
+                                textPaint
+                            )
+                        } else if (telemetryMode == 1) {
+                            val aVal = maxA - (step.toFloat() / 4f) * (maxA - minA)
+                            textPaint.color = android.graphics.Color.parseColor("#FF9100")
+                            textPaint.textAlign = android.graphics.Paint.Align.RIGHT
+                            drawContext.canvas.nativeCanvas.drawText(
+                                String.format(Locale.US, "%+.0f", aVal),
+                                leftPad - 4.dp.toPx(),
+                                y + 3.dp.toPx(),
+                                textPaint
+                            )
+                        }
+
+                        // Escala Y derecha (Aceleración en modo 2 Ambas)
+                        if (telemetryMode == 2) {
+                            val aVal = maxA - (step.toFloat() / 4f) * (maxA - minA)
+                            textPaint.color = android.graphics.Color.parseColor("#FF9100")
+                            textPaint.textAlign = android.graphics.Paint.Align.LEFT
+                            drawContext.canvas.nativeCanvas.drawText(
+                                String.format(Locale.US, "%+.0f", aVal),
+                                leftPad + plotW + 4.dp.toPx(),
+                                y + 3.dp.toPx(),
+                                textPaint
+                            )
+                        }
+                    }
+
+                    // 2. Líneas de Cuadrícula Vertical (Tiempo)
+                    for (step in 0..4) {
+                        val x = leftPad + (step.toFloat() / 4f) * plotW
+                        drawLine(
+                            color = Color(0xFF1B222C),
+                            start = Offset(x, topPad),
+                            end = Offset(x, topPad + plotH),
+                            strokeWidth = 1f,
+                            pathEffect = gridDashEffect
+                        )
+
+                        // Etiquetas de tiempo en eje X inferior
+                        val tSec = (step.toFloat() / 4f) * (totalDurationMs / 1000f)
+                        textPaint.color = android.graphics.Color.parseColor("#78909C")
+                        textPaint.textAlign = android.graphics.Paint.Align.CENTER
+                        drawContext.canvas.nativeCanvas.drawText(
+                            String.format(Locale.US, "%.1fs", tSec),
+                            x,
+                            h - 4.dp.toPx(),
+                            textPaint
+                        )
+                    }
+
+                    // 3. Línea Base Cero de Aceleración (si aplica)
+                    if ((telemetryMode == 1 || telemetryMode == 2) && minA < 0.0 && maxA > 0.0) {
+                        val zeroFrac = ((0.0 - minA) / (maxA - minA)).toFloat()
+                        val zeroY = topPad + plotH - (zeroFrac * plotH)
+                        drawLine(
+                            color = Color(0xFF555555),
+                            start = Offset(leftPad, zeroY),
+                            end = Offset(leftPad + plotW, zeroY),
+                            strokeWidth = 1.2f
+                        )
+                    }
+
+                    // 4. Línea de Referencia Velocidad Media (VM) si modo 0 o 2
+                    if (telemetryMode == 0 || telemetryMode == 2) {
+                        val vmFrac = ((meanVelocity - minV) / (maxV - minV)).coerceIn(0.0, 1.0).toFloat()
+                        val vmY = topPad + plotH - (vmFrac * plotH)
+                        drawLine(
+                            color = Color(0xFF00E676).copy(alpha = 0.7f),
+                            start = Offset(leftPad, vmY),
+                            end = Offset(leftPad + plotW, vmY),
+                            strokeWidth = 1.5f,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), 0f)
+                        )
+                        textPaint.color = android.graphics.Color.parseColor("#00E676")
+                        textPaint.textAlign = android.graphics.Paint.Align.RIGHT
+                        drawContext.canvas.nativeCanvas.drawText(
+                            "VM ${String.format(Locale.US, "%.2f", meanVelocity)}",
+                            leftPad + plotW - 4.dp.toPx(),
+                            vmY - 3.dp.toPx(),
+                            textPaint
+                        )
+                    }
+
+                    // 5. Onda de Aceleración (ámbar/naranja)
+                    if (telemetryMode == 1 || telemetryMode == 2) {
+                        val pathA = Path()
+                        val fillPathA = Path()
+
+                        telemetryPoints.forEachIndexed { i, dp ->
+                            val tFrac = ((dp.timestampMs - minTimeMs).toFloat() / totalDurationMs).coerceIn(0f, 1f)
+                            val x = leftPad + tFrac * plotW
+                            val aFrac = ((dp.accelerationMps2 - minA) / (maxA - minA)).coerceIn(0.0, 1.0).toFloat()
+                            val y = topPad + plotH - (aFrac * plotH)
+
+                            if (i == 0) {
+                                pathA.moveTo(x, y)
+                                fillPathA.moveTo(x, topPad + plotH)
+                                fillPathA.lineTo(x, y)
+                            } else {
+                                pathA.lineTo(x, y)
+                                fillPathA.lineTo(x, y)
+                            }
+
+                            if (i == telemetryPoints.size - 1) {
+                                fillPathA.lineTo(x, topPad + plotH)
+                                fillPathA.close()
+                            }
+                        }
+
+                        // Relleno degradado
+                        drawPath(
+                            fillPathA,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color(0x35FF9100), Color(0x02FF9100)),
+                                startY = topPad,
+                                endY = topPad + plotH
+                            )
+                        )
+
+                        // Trazo de la curva de aceleración
+                        drawPath(
+                            pathA,
+                            color = Color(0xFFFF9100),
+                            style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+
+                    // 6. Onda de Velocidad (cyan/neón)
+                    if (telemetryMode == 0 || telemetryMode == 2) {
+                        val pathV = Path()
+                        val fillPathV = Path()
+
+                        telemetryPoints.forEachIndexed { i, dp ->
+                            val tFrac = ((dp.timestampMs - minTimeMs).toFloat() / totalDurationMs).coerceIn(0f, 1f)
+                            val x = leftPad + tFrac * plotW
+                            val vFrac = ((dp.velocityMps - minV) / (maxV - minV)).coerceIn(0.0, 1.0).toFloat()
+                            val y = topPad + plotH - (vFrac * plotH)
+
+                            if (i == 0) {
+                                pathV.moveTo(x, y)
+                                fillPathV.moveTo(x, topPad + plotH)
+                                fillPathV.lineTo(x, y)
+                            } else {
+                                pathV.lineTo(x, y)
+                                fillPathV.lineTo(x, y)
+                            }
+
+                            if (i == telemetryPoints.size - 1) {
+                                fillPathV.lineTo(x, topPad + plotH)
+                                fillPathV.close()
+                            }
+                        }
+
+                        // Relleno degradado
+                        drawPath(
+                            fillPathV,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color(0x4000FFCC), Color(0x0200FFCC)),
+                                startY = topPad,
+                                endY = topPad + plotH
+                            )
+                        )
+
+                        // Trazo de la curva de velocidad
+                        drawPath(
+                            pathV,
+                            color = Color(0xFF00FFCC),
+                            style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+
+                    // 7. Marcador de Velocidad Pico
+                    if (telemetryMode == 0 || telemetryMode == 2) {
+                        val peakPt = telemetryPoints.maxByOrNull { it.velocityMps }
+                        if (peakPt != null && peakPt.velocityMps > 0.3) {
+                            val tFrac = ((peakPt.timestampMs - minTimeMs).toFloat() / totalDurationMs).coerceIn(0f, 1f)
+                            val px = leftPad + tFrac * plotW
+                            val vFrac = ((peakPt.velocityMps - minV) / (maxV - minV)).coerceIn(0.0, 1.0).toFloat()
+                            val py = topPad + plotH - (vFrac * plotH)
+
+                            drawCircle(Color(0xFF00FFCC).copy(alpha = 0.35f), radius = 7.dp.toPx(), center = Offset(px, py))
+                            drawCircle(Color(0xFF00FFCC), radius = 3.5.dp.toPx(), center = Offset(px, py))
+                            drawCircle(Color.White, radius = 1.5.dp.toPx(), center = Offset(px, py))
+
+                            textPaint.color = android.graphics.Color.WHITE
+                            textPaint.textAlign = android.graphics.Paint.Align.CENTER
+                            drawContext.canvas.nativeCanvas.drawText(
+                                "VP ${String.format(Locale.US, "%.2f", peakPt.velocityMps)}",
+                                px,
+                                py - 8.dp.toPx(),
+                                textPaint
+                            )
+                        }
+                    }
+
+                    // 8. Cursor Dinámico Sincronizado en Tiempo Real con la Reproducción
+                    val cursorFrac = ((currentVideoPosMs - minTimeMs).toFloat() / totalDurationMs)
+                    if (cursorFrac in 0f..1f) {
+                        val cursorX = leftPad + cursorFrac * plotW
+
+                        // Línea vertical del cabezal
+                        drawLine(
+                            color = Color.White.copy(alpha = 0.85f),
+                            start = Offset(cursorX, topPad),
+                            end = Offset(cursorX, topPad + plotH),
+                            strokeWidth = 1.8.dp.toPx()
+                        )
+
+                        // Puntos activos sobre las ondas en la posición del cursor
+                        if (telemetryMode == 0 || telemetryMode == 2) {
+                            val vFrac = ((curV - minV) / (maxV - minV)).coerceIn(0.0, 1.0).toFloat()
+                            val curY_V = topPad + plotH - (vFrac * plotH)
+                            drawCircle(Color(0xFF00FFCC), radius = 4.5.dp.toPx(), center = Offset(cursorX, curY_V))
+                            drawCircle(Color.White, radius = 2.dp.toPx(), center = Offset(cursorX, curY_V))
+                        }
+
+                        if (telemetryMode == 1 || telemetryMode == 2) {
+                            val aFrac = ((curA - minA) / (maxA - minA)).coerceIn(0.0, 1.0).toFloat()
+                            val curY_A = topPad + plotH - (aFrac * plotH)
+                            drawCircle(Color(0xFFFF9100), radius = 4.5.dp.toPx(), center = Offset(cursorX, curY_A))
+                            drawCircle(Color.White, radius = 2.dp.toPx(), center = Offset(cursorX, curY_A))
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Pie: Leyenda y Valores Pico
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).background(Color(0xFF00FFCC), CircleShape))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        "Velocidad (Pico: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s)",
+                        color = Color.LightGray,
+                        fontSize = 10.sp
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).background(Color(0xFFFF9100), CircleShape))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        "Aceleración (Pico: ${String.format(Locale.US, "%+.1f", peakAccel)} m/s²)",
+                        color = Color.LightGray,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * Reproductor interactivo de Vista Previa para la pantalla de Resultados.
  * Permite visualizar el video analizado con la trayectoria (Bar Path) trazada
  * en tiempo real con colores cinemáticos de velocidad, mira telescópica sobre el disco,
@@ -2451,6 +2896,7 @@ fun AnalysisResultVideoPreview(
     mode: String,
     barbellLoadKg: Double? = null,
     calibratedPlateRadius: Float? = null,
+    onCurrentPositionChange: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var previewPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -2460,6 +2906,10 @@ fun AnalysisResultVideoPreview(
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var currentPosMs by remember { mutableLongStateOf(trimStartMs) }
     var isUserSeeking by remember { mutableStateOf(false) }
+
+    LaunchedEffect(currentPosMs) {
+        onCurrentPositionChange(currentPosMs)
+    }
 
     var lastSyncWallClockMs by remember { mutableLongStateOf(0L) }
     var lastSyncPositionMs by remember { mutableLongStateOf(trimStartMs) }

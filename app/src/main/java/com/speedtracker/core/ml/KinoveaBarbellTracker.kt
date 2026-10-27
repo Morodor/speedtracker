@@ -108,19 +108,19 @@ class KinoveaBarbellTracker {
         val tpl = normTemplate!!
         val numPixels = templateW * templateH
 
-        // 1. Predicción cinemática basada en velocidad previa con amortiguación gravitacional al ascender
+        // 1. Predicción cinemática basada en velocidad previa con amortiguación
         val speed = hypot(currentVelocity.x.toDouble(), currentVelocity.y.toDouble()).toFloat()
-        val isFast = speed > 10f
+        val isFast = speed > 8f
 
-        val upwardDamping = if (currentVelocity.y < 0) 0.70f else 0.90f
-        val predX = currentCenter.x + currentVelocity.x.coerceIn(-25f, 25f)
-        val predY = currentCenter.y + (currentVelocity.y * upwardDamping).coerceIn(-75f, 50f)
+        // Centrado conservador: la ventana de búsqueda acompaña el movimiento sin adelantarse artificialmente
+        val predX = currentCenter.x + (currentVelocity.x * 0.4f).coerceIn(-5f, 5f)
+        val predY = currentCenter.y + (currentVelocity.y * 0.6f).coerceIn(-55f, 40f)
 
         // 2. Ventana de búsqueda adaptativa:
-        // - En aceleración (>2 m/s): adecuada para seguir el movimiento sin invadir el techo o la punta de la barra
-        // - En bloqueo / casi detenido: compacta (18x22 px) para mantener el buje central exactamente enfocado
-        val searchRadiusX = if (isFast) 28 else 18
-        val searchRadiusY = if (isFast) 38 else 22
+        // - En velocidad: rango vertical ágil para seguir la aceleración concéntrica
+        // - En reposo/bloqueo: compacta y estable
+        val searchRadiusX = if (isFast) 20 else 14
+        val searchRadiusY = if (isFast) 34 else 18
 
         val minSearchX = (minOf(currentCenter.x, predX) - searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
         val maxSearchX = (maxOf(currentCenter.x, predX) + searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
@@ -152,38 +152,19 @@ class KinoveaBarbellTracker {
             lumBuf[i] = ((p shr 16 and 0xFF) * 299 + (p shr 8 and 0xFF) * 587 + (p and 0xFF) * 114) / 1000f
         }
 
-        var bestX = predX.toInt().coerceIn(minSearchX, maxSearchX)
-        var bestY = predY.toInt().coerceIn(minSearchY, maxSearchY)
+        var bestX = currentCenter.x.toInt().coerceIn(minSearchX, maxSearchX)
+        var bestY = currentCenter.y.toInt().coerceIn(minSearchY, maxSearchY)
         var bestScore = -1.0f
 
-        // Búsqueda gruesa con paso de 2 píxeles
-        for (cy in minSearchY..maxSearchY step 2) {
-            for (cx in minSearchX..maxSearchX step 2) {
+        // Búsqueda exhaustiva a resolución completa de 1 píxel (sin omitir fotogramas ni saltar el centro)
+        for (cy in minSearchY..maxSearchY) {
+            for (cx in minSearchX..maxSearchX) {
                 val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
-                // Ponderación espacial: penalización horizontal suave para evitar desviaciones laterales,
-                // sin sesgo vertical artificial que jale el centro hacia la punta superior de la barra
-                val hDist = (abs(cx - predX) / searchRadiusX.toFloat()).coerceAtMost(2f)
-                val score = rawScore - hDist * 0.08f
 
-                if (score > bestScore) {
-                    bestScore = score
-                    bestX = cx
-                    bestY = cy
-                }
-            }
-        }
-
-        // Búsqueda fina local (paso 1 píxel) alrededor del mejor candidato
-        val fineMinX = (bestX - 2).coerceIn(minSearchX, maxSearchX)
-        val fineMaxX = (bestX + 2).coerceIn(minSearchX, maxSearchX)
-        val fineMinY = (bestY - 2).coerceIn(minSearchY, maxSearchY)
-        val fineMaxY = (bestY + 2).coerceIn(minSearchY, maxSearchY)
-
-        for (cy in fineMinY..fineMaxY) {
-            for (cx in fineMinX..fineMaxX) {
-                val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
-                val hDist = (abs(cx - predX) / searchRadiusX.toFloat()).coerceAtMost(2f)
-                val score = rawScore - hDist * 0.08f
+                // Corredor vertical sin sesgo: dentro de +-5 px de currentCenter.x no hay penalización alguna.
+                // Esto garantiza que el centro real del buje gane siempre por similitud visual pura.
+                val hDev = (abs(cx - currentCenter.x) - 5f).coerceAtLeast(0f)
+                val score = rawScore - (hDev / 20f) * 0.12f
 
                 if (score > bestScore) {
                     bestScore = score
@@ -215,21 +196,27 @@ class KinoveaBarbellTracker {
             val instVx = targetX - currentCenter.x
             val instVy = targetY - currentCenter.y
 
-            // Detección de frenado en el bloqueo (lockout / detención superior):
-            // Si la barra venía subiendo rápido y de repente frena (instVy >= -1.0f),
-            // cortar de raíz la inercia vertical ascendente para mantener la retícula en el centro del disco
-            val updatedVy = if (currentVelocity.y < -3f && instVy >= -1.0f) {
+            // Detección de detención y cambio de fase en el bloqueo (lockout):
+            // Si la barra desacelera hacia cero (instVy >= -0.8f) o se detiene,
+            // anular la inercia ascendente para mantener la retícula en el centro absoluto del disco
+            val updatedVy = if (currentVelocity.y < -2f && instVy >= -0.8f) {
+                0f
+            } else if (abs(instVy) < 0.6f) {
                 0f
             } else {
-                currentVelocity.y * 0.25f + instVy.coerceIn(-90f, 60f) * 0.75f
+                currentVelocity.y * 0.20f + instVy.coerceIn(-80f, 60f) * 0.80f
             }
 
-            val updatedVx = currentVelocity.x * 0.25f + instVx.coerceIn(-25f, 25f) * 0.75f
+            val updatedVx = if (abs(instVx) < 0.5f) {
+                0f
+            } else {
+                instVx.coerceIn(-5f, 5f) * 0.70f
+            }
 
-            // Zona muerta de reposo: si el movimiento es submilimétrico (<0.7 px),
-            // clavar la velocidad en cero para mantener el disco 100% inmóvil y enfocado
+            // Zona muerta de reposo: si el movimiento es submilimétrico (<0.6 px),
+            // clavar la velocidad en cero para mantener el disco 100% inmóvil y centrado
             val movementMag = hypot(instVx.toDouble(), instVy.toDouble()).toFloat()
-            currentVelocity = if (movementMag < 0.7f) {
+            currentVelocity = if (movementMag < 0.6f) {
                 Offset.Zero
             } else {
                 Offset(updatedVx, updatedVy)
