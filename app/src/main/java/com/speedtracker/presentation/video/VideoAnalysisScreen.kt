@@ -22,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -87,6 +88,11 @@ enum class InitialSelectionStep {
     CATEGORY,
     EXERCISE_VBT,
     EXERCISE_JUMP
+}
+
+enum class AnalysisSetupStep {
+    TRIM_VIDEO,    // Paso 1: Edición y selección del fragmento útil del levantamiento
+    CALIBRATE      // Paso 2: Calibración métrica del disco (45 cm) y carga
 }
 
 data class VideoRenderBounds(
@@ -170,6 +176,9 @@ fun VideoAnalysisScreen(
     var selectedJumpType by remember { mutableStateOf(JumpType.CMJ) }
     var initialSelectionStep by remember { mutableStateOf(InitialSelectionStep.CATEGORY) }
     var isReadyToAnalyze by remember { mutableStateOf(false) }
+    var analysisSetupStep by remember { mutableStateOf(AnalysisSetupStep.TRIM_VIDEO) }
+    var isLoopingTrimmedRange by remember { mutableStateOf(false) }
+    var resultSeekPosMs by remember { mutableStateOf<Long?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
 
@@ -197,18 +206,6 @@ fun VideoAnalysisScreen(
     var videoNativeHeight by remember { mutableIntStateOf(1920) }
     var calibratedPlateCenterVideo by remember { mutableStateOf<Offset?>(null) }
     var calibratedPlateRadiusVideo by remember { mutableFloatStateOf(0f) }
-
-    // Plantillas de Referencia de Encuadre para comparar con el video
-    var framingGuideType by remember { mutableStateOf(FramingGuideType.FLOOR_BAR) }
-    var isFramingGuideVisible by remember { mutableStateOf(false) }
-
-    LaunchedEffect(currentMode) {
-        if (currentMode == "JUMP") {
-            framingGuideType = FramingGuideType.VERTICAL_JUMP
-        } else if (currentMode == "VBT") {
-            framingGuideType = FramingGuideType.FLOOR_BAR
-        }
-    }
 
     LaunchedEffect(videoUriString) {
         withContext(Dispatchers.IO) {
@@ -327,13 +324,14 @@ fun VideoAnalysisScreen(
     }
 
     // Polling del tiempo de video y bucle dentro del rango recortado [trimStartMs, trimEndMs]
-    LaunchedEffect(videoViewRef, isPlaying, trimStartMs, trimEndMs) {
+    LaunchedEffect(videoViewRef, isPlaying, trimStartMs, trimEndMs, isLoopingTrimmedRange, analysisSetupStep) {
         while (true) {
             videoViewRef?.let { vv ->
                 if (vv.isPlaying) {
                     val cur = vv.currentPosition.toLong()
                     currentVideoPosMs = cur
-                    if (trimEndMs > trimStartMs + 200L && cur >= trimEndMs) {
+                    val shouldLoop = (isLoopingTrimmedRange || analysisSetupStep == AnalysisSetupStep.CALIBRATE)
+                    if (shouldLoop && trimEndMs > trimStartMs + 200L && cur >= trimEndMs) {
                         vv.seekTo(trimStartMs.toInt())
                         currentVideoPosMs = trimStartMs
                     }
@@ -357,10 +355,10 @@ fun VideoAnalysisScreen(
                                 }
                             }
                             !isReadyToAnalyze -> {
-                                if (currentMode == "JUMP") {
-                                    "Salto: ${selectedJumpType.name} (Plano Frontal)"
+                                if (analysisSetupStep == AnalysisSetupStep.TRIM_VIDEO) {
+                                    "Paso 1: Recortar Video"
                                 } else {
-                                    if (isCalibrationMode) "Calibrar Disco (45 cm - Vista Lateral)" else "${selectedVBTExercise.displayName} (Disco 45 cm)"
+                                    if (currentMode == "JUMP") "Paso 2: Marcas de Salto" else "Paso 2: Calibración y Carga"
                                 }
                             }
                             isProcessing -> "Analizando..."
@@ -374,6 +372,22 @@ fun VideoAnalysisScreen(
                         IconButton(onClick = { initialSelectionStep = InitialSelectionStep.CATEGORY }) {
                             Icon(Icons.Default.ArrowBack, contentDescription = "Atrás", tint = Color.White)
                         }
+                    } else if (currentMode != null && !isReadyToAnalyze) {
+                        if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
+                            IconButton(onClick = {
+                                analysisSetupStep = AnalysisSetupStep.TRIM_VIDEO
+                                isCalibrationMode = false
+                            }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "Volver a recorte", tint = Color.White)
+                            }
+                        } else {
+                            IconButton(onClick = {
+                                currentMode = null
+                                initialSelectionStep = if (currentMode == "VBT") InitialSelectionStep.EXERCISE_VBT else InitialSelectionStep.EXERCISE_JUMP
+                            }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "Cambiar ejercicio", tint = Color.White)
+                            }
+                        }
                     } else {
                         IconButton(onClick = onCloseClick) {
                             Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.White)
@@ -381,34 +395,12 @@ fun VideoAnalysisScreen(
                     }
                 },
                 actions = {
-                    if (currentMode == "VBT" && !isReadyToAnalyze) {
+                    if (currentMode == "VBT" && !isReadyToAnalyze && analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
                         TextButton(onClick = {
-                            if (isCalibrationMode) {
-                                if (circleCenter != null && screenBoxWidth > 0 && screenBoxHeight > 0) {
-                                    val bounds = calculateVideoRenderBounds(screenBoxWidth, screenBoxHeight, videoNativeWidth, videoNativeHeight)
-                                    val (nativeCenter, nativeRadius) = screenToVideoCoords(circleCenter!!, circleRadiusPx, bounds)
-                                    calibratedPlateCenterVideo = nativeCenter
-                                    calibratedPlateRadiusVideo = nativeRadius
-                                    val nativeDiameterPx = nativeRadius * 2f
-                                    val ratio = if (nativeDiameterPx > 5f) 0.45 / nativeDiameterPx.toDouble() else 0.0024
-                                    VBTAnalyzer.setCalibratedPlate(nativeCenter, nativeRadius)
-                                    VBTAnalyzer.pxToMetersRatio = ratio
-                                    customRatioMmPerPx = ratio * 1000.0
-                                    isCalibrated = true
-                                    Toast.makeText(context, "✓ Disco calibrado (45 cm). ¡Listo para analizar!", Toast.LENGTH_SHORT).show()
-                                }
-                                isCalibrationMode = false
-                            } else {
-                                scale = 1f
-                                offsetX = 0f
-                                offsetY = 0f
-                                videoViewRef?.pause()
-                                isPlaying = false
-                                isCalibrationMode = true
-                            }
+                            runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
                         }) {
                             Text(
-                                if (isCalibrationMode) "Listo" else "Calibrar",
+                                "Auto Detectar",
                                 color = Color(0xFF00FFCC),
                                 fontWeight = FontWeight.Bold
                             )
@@ -731,65 +723,76 @@ fun VideoAnalysisScreen(
                     }
                 }
             } else if (!isReadyToAnalyze) {
-                // Pantalla de Pre-visualización, Calibración (Módulos 1 & 4)
+                // Flujo Secuencial: Paso 1 (Recorte / Edición) ➔ Paso 2 (Calibración y Carga)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    // Badge con el ejercicio seleccionado y opción de cambio rápido
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFF1E1E1E),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)),
-                        modifier = Modifier.padding(bottom = 6.dp)
+                    // Indicador de Pasos Superior
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                        ) {
-                            val badgeLabel = if (currentMode == "VBT") {
-                                "⚡ ${selectedVBTExercise.displayName} (${selectedVBTExercise.family.label})"
-                            } else {
-                                "↕ Salto ${selectedJumpType.name}"
-                            }
-                            Text(
-                                badgeLabel,
-                                color = Color(0xFF00FFCC),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Cambiar",
-                                color = Color.LightGray,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.clickable {
-                                    initialSelectionStep = if (currentMode == "VBT") InitialSelectionStep.EXERCISE_VBT else InitialSelectionStep.EXERCISE_JUMP
-                                    currentMode = null
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (analysisSetupStep == AnalysisSetupStep.TRIM_VIDEO) Color(0x3300FFCC) else Color(0xFF1E1E1E),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (analysisSetupStep == AnalysisSetupStep.TRIM_VIDEO) Color(0xFF00FFCC) else Color(0xFF333333)
+                            ),
+                            modifier = Modifier.clickable {
+                                if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
+                                    analysisSetupStep = AnalysisSetupStep.TRIM_VIDEO
+                                    isCalibrationMode = false
                                 }
+                            }
+                        ) {
+                            Text(
+                                if (analysisSetupStep == AnalysisSetupStep.TRIM_VIDEO) "① Recorte de Video (Activo)" else "① Recorte de Video ✓",
+                                color = if (analysisSetupStep == AnalysisSetupStep.TRIM_VIDEO) Color(0xFF00FFCC) else Color.LightGray,
+                                fontSize = 11.sp,
+                                fontWeight = if (analysisSetupStep == AnalysisSetupStep.TRIM_VIDEO) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("➔", color = Color.Gray, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) Color(0x3300FFCC) else Color(0xFF1E1E1E),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) Color(0xFF00FFCC) else Color(0xFF333333)
+                            )
+                        ) {
+                            Text(
+                                if (currentMode == "JUMP") {
+                                    if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) "② Marcas de Salto (Activo)" else "② Marcas de Salto"
+                                } else {
+                                    if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) "② Calibración y Carga (Activo)" else "② Calibración y Carga"
+                                },
+                                color = if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) Color(0xFF00FFCC) else Color.Gray,
+                                fontSize = 11.sp,
+                                fontWeight = if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
                         }
                     }
 
-                    Text(
-                        if (isCalibrationMode)
-                            "Ajusta el círculo sobre el borde del disco (45 cm). Arrastra el centro o el tirador amarillo."
-                        else
-                            "Usa 2 dedos para zoom y encuadre. Pulsa 'Calibrar' para fijar la escala métrica (45 cm).",
-                        color = if (isCalibrationMode) Color(0xFF00FFCC) else Color.LightGray,
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
+                    // Contenedor del Video
                     BoxWithConstraints(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
                             .background(Color.Black)
-                            .pointerInput(isCalibrationMode) {
-                                if (!isCalibrationMode) {
+                            .pointerInput(analysisSetupStep) {
+                                if (analysisSetupStep == AnalysisSetupStep.TRIM_VIDEO) {
                                     detectTransformGestures { _, pan, zoom, _ ->
                                         scale = (scale * zoom).coerceIn(1f, 5f)
                                         offsetX += pan.x
@@ -806,8 +809,8 @@ fun VideoAnalysisScreen(
                             screenBoxHeight = boxH
                         }
 
-                        LaunchedEffect(boxW, boxH, isCalibrationMode) {
-                            if (boxW > 0 && boxH > 0) {
+                        LaunchedEffect(boxW, boxH, analysisSetupStep) {
+                            if (boxW > 0 && boxH > 0 && analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
                                 val bounds = calculateVideoRenderBounds(boxW, boxH, videoNativeWidth, videoNativeHeight)
                                 if (calibratedPlateCenterVideo != null && calibratedPlateRadiusVideo > 0f) {
                                     val (mappedCenter, mappedRadius) = videoToScreenCoords(
@@ -819,7 +822,7 @@ fun VideoAnalysisScreen(
                                     circleRadiusPx = mappedRadius
                                 } else if (circleCenter == null) {
                                     circleCenter = Offset(boxW / 2f, boxH / 2f)
-                                    if (isCalibrationMode && !isCalibrated && !isDetectingPlate) {
+                                    if (!isCalibrated && !isDetectingPlate) {
                                         runAutoDetectPlate(boxW, boxH)
                                     }
                                 }
@@ -873,40 +876,8 @@ fun VideoAnalysisScreen(
                                 )
                         )
 
-                        // Plantilla de referencia de encuadre en modo previsualización (Suelo, Rack, Parado, Salto)
-                        if (!isCalibrationMode && isFramingGuideVisible) {
-                            FramingGuideOverlay(
-                                selectedType = framingGuideType,
-                                isVisible = isFramingGuideVisible,
-                                onTypeSelected = { framingGuideType = it },
-                                onToggleVisibility = { isFramingGuideVisible = !isFramingGuideVisible }
-                            )
-                        } else if (!isCalibrationMode && !isCalibrated) {
-                            // Guía sutil si no está calibrado ni activada la plantilla
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(24.dp)
-                                    .border(1.5.dp, Color(0x3300FFCC))
-                            )
-                        }
-
-                        // Módulo 1: Visualización del Disco Calibrado (Halo identificador exacto y mapeado)
-                        if (isCalibrated && !isCalibrationMode && calibratedPlateCenterVideo != null && calibratedPlateRadiusVideo > 0f) {
-                            val bounds = calculateVideoRenderBounds(boxW, boxH, videoNativeWidth, videoNativeHeight)
-                            val (screenCenter, screenRadius) = videoToScreenCoords(
-                                calibratedPlateCenterVideo!!,
-                                calibratedPlateRadiusVideo,
-                                bounds
-                            )
-                            CalibratedPlateMarkerOverlay(
-                                center = screenCenter,
-                                radius = screenRadius
-                            )
-                        }
-
-                        // Calibrador Circular Interactivo (Retícula translúcida sobre el video)
-                        if (isCalibrationMode && circleCenter != null) {
+                        // En Paso 2 (CALIBRATE): Retícula circular + Pad HUD direccional
+                        if (analysisSetupStep == AnalysisSetupStep.CALIBRATE && circleCenter != null) {
                             KinoveaCircleReticleCanvas(
                                 center = circleCenter!!,
                                 radius = circleRadiusPx,
@@ -914,7 +885,6 @@ fun VideoAnalysisScreen(
                                 onRadiusChange = { circleRadiusPx = it }
                             )
 
-                            // Controles Direccionales Profesionales en el Overlay del Video (Flechas táctiles HUD)
                             CalibrationVideoDirectionalOverlay(
                                 onMove = { dx, dy ->
                                     val cur = circleCenter ?: Offset(boxW / 2f, boxH / 2f)
@@ -929,529 +899,268 @@ fun VideoAnalysisScreen(
                             )
                         }
 
-                        // Chip indicador de calibración
-                        if (isCalibrated && customRatioMmPerPx != null && !isCalibrationMode) {
+                        // Badges Superiores Flotantes (Ejercicio y Escala)
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Surface(
-                                modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .padding(12.dp),
-                                color = Color(0xCC00332A),
-                                shape = RoundedCornerShape(6.dp)
+                                shape = RoundedCornerShape(20.dp),
+                                color = Color(0xCC1E1E1E),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333))
                             ) {
-                                Text(
-                                    "✓ Disco 45 cm (${String.format("%.2f", customRatioMmPerPx)} mm/px)",
-                                    color = Color(0xFF00FFCC),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    val badgeLabel = if (currentMode == "VBT") {
+                                        "⚡ ${selectedVBTExercise.displayName}"
+                                    } else {
+                                        "↕ Salto ${selectedJumpType.name}"
+                                    }
+                                    Text(
+                                        badgeLabel,
+                                        color = Color(0xFF00FFCC),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "Cambiar",
+                                        color = Color.LightGray,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.clickable {
+                                            initialSelectionStep = if (currentMode == "VBT") InitialSelectionStep.EXERCISE_VBT else InitialSelectionStep.EXERCISE_JUMP
+                                            currentMode = null
+                                        }
+                                    )
+                                }
+                            }
+
+                            if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
+                                val currentScaleMm = if (circleRadiusPx > 5f) (450.0 / (circleRadiusPx * 2f)) else 2.4
+                                Surface(
+                                    color = Color(0xCC00332A),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.5f))
+                                ) {
+                                    Text(
+                                        "45 cm (${String.format(Locale.US, "%.2f", currentScaleMm)} mm/px)",
+                                        color = Color(0xFF00FFCC),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                    )
+                                }
                             }
                         }
 
-                        // Botones flotantes (Guía de encuadre + Reset zoom)
-                        if (!isCalibrationMode) {
-                            Row(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        // Botones Flotantes Superiores Derechos (Audio, Auto-detect en Paso 2, Reset Zoom)
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
+                                FilledTonalButton(
+                                    onClick = { runAutoDetectPlate(boxW, boxH) },
+                                    modifier = Modifier.height(34.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp),
+                                    colors = ButtonDefaults.filledTonalButtonColors(
+                                        containerColor = Color(0xFF00FFCC),
+                                        contentColor = Color.Black
+                                    )
+                                ) {
+                                    Text(
+                                        if (isDetectingPlate) "Buscando..." else "⚡ Auto Detectar",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            FilledTonalIconButton(
+                                onClick = {
+                                    isVideoMuted = !isVideoMuted
+                                    mediaPlayerRef?.let { mp ->
+                                        val vol = if (isVideoMuted) 0f else 1f
+                                        mp.setVolume(vol, vol)
+                                    }
+                                },
+                                modifier = Modifier.size(34.dp),
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = if (isVideoMuted) Color(0xCCFF5252) else Color(0x99000000),
+                                    contentColor = Color.White
+                                )
                             ) {
-                                FilledTonalIconButton(
-                                    onClick = { isFramingGuideVisible = !isFramingGuideVisible },
-                                    modifier = Modifier.size(36.dp),
-                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                        containerColor = if (isFramingGuideVisible) Color(0xFF00FFCC) else Color(0x99000000),
-                                        contentColor = if (isFramingGuideVisible) Color.Black else Color.White
-                                    )
-                                ) {
-                                    Icon(
-                                        if (isFramingGuideVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = "Guía de Encuadre",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
+                                Icon(
+                                    if (isVideoMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                    contentDescription = if (isVideoMuted) "Activar Sonido" else "Silenciar Video",
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
 
-                                FilledTonalIconButton(
-                                    onClick = {
-                                        isVideoMuted = !isVideoMuted
-                                        mediaPlayerRef?.let { mp ->
-                                            val vol = if (isVideoMuted) 0f else 1f
-                                            mp.setVolume(vol, vol)
-                                        }
-                                    },
-                                    modifier = Modifier.size(36.dp),
-                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                        containerColor = if (isVideoMuted) Color(0xCCFF5252) else Color(0x99000000),
-                                        contentColor = Color.White
-                                    )
-                                ) {
-                                    Icon(
-                                        if (isVideoMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                                        contentDescription = if (isVideoMuted) "Activar Sonido" else "Silenciar Video",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = {
-                                        scale = 1f
-                                        offsetX = 0f
-                                        offsetY = 0f
-                                    },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color(0x99000000), shape = CircleShape)
-                                ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "Centrar", tint = Color.White, modifier = Modifier.size(18.dp))
-                                }
+                            IconButton(
+                                onClick = {
+                                    scale = 1f
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                },
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .background(Color(0x99000000), shape = CircleShape)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Centrar", tint = Color.White, modifier = Modifier.size(17.dp))
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                    if (isCalibrationMode) {
-                        // Controles Dedicados de Calibración, Frame a Frame y Detección en este frame
-                        KinoveaCalibrationBottomControls(
-                            currentVideoPosMs = currentVideoPosMs,
-                            videoDurationMs = videoDurationMs,
-                            isPlaying = isPlaying,
-                            onSeekTo = { newPos: Long ->
-                                videoViewRef?.let { vv ->
-                                    vv.pause()
-                                    isPlaying = false
-                                    currentVideoPosMs = newPos
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                        try {
-                                            mediaPlayerRef?.seekTo(newPos, MediaPlayer.SEEK_CLOSEST)
-                                        } catch (e: Exception) {
-                                            vv.seekTo(newPos.toInt())
-                                        }
-                                    } else {
-                                        vv.seekTo(newPos.toInt())
-                                    }
-                                }
-                            },
-                            onStepFrame = { frameDeltaMs: Long ->
-                                videoViewRef?.let { vv ->
-                                    vv.pause()
-                                    isPlaying = false
-                                    val newPos = (currentVideoPosMs + frameDeltaMs).coerceIn(0L, vv.duration.toLong().coerceAtLeast(1L))
-                                    currentVideoPosMs = newPos
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                        try {
-                                            mediaPlayerRef?.seekTo(newPos, MediaPlayer.SEEK_CLOSEST)
-                                        } catch (e: Exception) {
-                                            vv.seekTo(newPos.toInt())
-                                        }
-                                    } else {
-                                        vv.seekTo(newPos.toInt())
-                                    }
-                                }
-                            },
-                            onTogglePlayPause = {
-                                videoViewRef?.let { vv ->
-                                    if (isPlaying) {
-                                        vv.pause()
-                                        isPlaying = false
-                                    } else {
-                                        vv.start()
-                                        isPlaying = true
-                                    }
-                                }
-                            },
-                            radius = circleRadiusPx,
-                            center = circleCenter ?: Offset(screenBoxWidth / 2f, screenBoxHeight / 2f),
-                            onRadiusChange = { circleRadiusPx = it },
-                            onCenterChange = { circleCenter = it },
-                            onCenterReset = {
-                                circleCenter = Offset(screenBoxWidth / 2f, screenBoxHeight / 2f)
-                            },
-                            onAutoDetect = {
-                                runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
-                            },
-                            isDetecting = isDetectingPlate,
-                            onConfirm = { diameterPx: Float, ratioMm: Double ->
-                                val bounds = calculateVideoRenderBounds(screenBoxWidth, screenBoxHeight, videoNativeWidth, videoNativeHeight)
-                                val (nativeCenter, nativeRadius) = screenToVideoCoords(circleCenter ?: Offset(screenBoxWidth / 2f, screenBoxHeight / 2f), circleRadiusPx, bounds)
-
-                                calibratedPlateCenterVideo = nativeCenter
-                                calibratedPlateRadiusVideo = nativeRadius
-
-                                val nativeDiameterPx = nativeRadius * 2f
-                                val ratio = if (nativeDiameterPx > 5f) 0.45 / nativeDiameterPx.toDouble() else 0.0024
-                                VBTAnalyzer.setCalibratedPlate(nativeCenter, nativeRadius)
-                                VBTAnalyzer.pxToMetersRatio = ratio
-
-                                customRatioMmPerPx = ratio * 1000.0
-                                isCalibrated = true
-                                isCalibrationMode = false
-                                Toast.makeText(context, "✓ Disco calibrado (45 cm). ¡Listo para analizar!", Toast.LENGTH_SHORT).show()
-                            },
-                            onCancel = {
-                                isCalibrationMode = false
-                            }
-                        )
-                    } else {
-                        // Módulo 4: Controles Frame a Frame (Scrubber milimétrico)
+                    // Panel de Controles según el paso actual
+                    if (analysisSetupStep == AnalysisSetupStep.TRIM_VIDEO) {
+                        // ── PASO 1: CONTROLES DE EDICIÓN Y RECORTE ──
                         Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    formatTimeMs(currentVideoPosMs),
-                                    color = Color.LightGray,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    // Paso -1 Frame (33ms)
-                                    FilledTonalIconButton(
-                                        onClick = {
-                                            videoViewRef?.let { vv ->
-                                                vv.pause()
-                                                isPlaying = false
-                                                val newPos = (vv.currentPosition - 33).coerceAtLeast(0)
-                                                vv.seekTo(newPos)
-                                                currentVideoPosMs = newPos.toLong()
-                                            }
-                                        },
-                                        modifier = Modifier.size(36.dp),
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                            containerColor = Color(0xFF333333),
-                                            contentColor = Color.White
-                                        )
-                                    ) {
-                                        Icon(Icons.Default.FastRewind, contentDescription = "-1 Frame", modifier = Modifier.size(18.dp))
-                                    }
-
-                                    // Play / Pause
-                                    FilledTonalIconButton(
-                                        onClick = {
-                                            videoViewRef?.let { vv ->
-                                                if (isPlaying) {
-                                                    vv.pause()
-                                                    isPlaying = false
-                                                } else {
-                                                    vv.start()
-                                                    isPlaying = true
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.size(36.dp),
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                            containerColor = Color(0xFF00FFCC),
-                                            contentColor = Color.Black
-                                        )
-                                    ) {
-                                        Icon(
-                                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                            contentDescription = "Play/Pausa",
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-
-                                    // Paso +1 Frame (33ms)
-                                    FilledTonalIconButton(
-                                        onClick = {
-                                            videoViewRef?.let { vv ->
-                                                vv.pause()
-                                                isPlaying = false
-                                                val newPos = (vv.currentPosition + 33).coerceAtMost(vv.duration)
-                                                vv.seekTo(newPos)
-                                                currentVideoPosMs = newPos.toLong()
-                                            }
-                                        },
-                                        modifier = Modifier.size(36.dp),
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                            containerColor = Color(0xFF333333),
-                                            contentColor = Color.White
-                                        )
-                                    ) {
-                                        Icon(Icons.Default.FastForward, contentDescription = "+1 Frame", modifier = Modifier.size(18.dp))
-                                    }
-                                }
-                                Text(
-                                    formatTimeMs(videoDurationMs),
-                                    color = Color.Gray,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-
-                            // Barra Deslizadora Continua (Scrubber)
-                            if (videoDurationMs > 0) {
-                                Slider(
-                                    value = currentVideoPosMs.toFloat().coerceIn(0f, videoDurationMs.toFloat()),
-                                    onValueChange = { newPos ->
-                                        currentVideoPosMs = newPos.toLong()
-                                        videoViewRef?.seekTo(newPos.toInt())
-                                    },
-                                    valueRange = 0f..videoDurationMs.toFloat(),
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = Color(0xFF00FFCC),
-                                        activeTrackColor = Color(0xFF00FFCC)
-                                    )
-                                )
-                            }
-
-                            // Selector de Velocidad de Reproducción (Cámara Lenta)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Cámara Lenta: ", color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                FilterChip(
-                                    selected = playbackSpeed == 0.25f,
-                                    onClick = { changePlaybackSpeed(0.25f) },
-                                    label = { Text("0.25x", style = MaterialTheme.typography.labelSmall) }
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                FilterChip(
-                                    selected = playbackSpeed == 0.5f,
-                                    onClick = { changePlaybackSpeed(0.5f) },
-                                    label = { Text("0.5x", style = MaterialTheme.typography.labelSmall) }
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                FilterChip(
-                                    selected = playbackSpeed == 1.0f,
-                                    onClick = { changePlaybackSpeed(1.0f) },
-                                    label = { Text("1.0x", style = MaterialTheme.typography.labelSmall) }
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            // Módulo de Recorte de Video (Inicio y Término para procesar solo el levantamiento)
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Color(0xFF141414),
-                                shape = RoundedCornerShape(10.dp),
-                                border = CardDefaults.outlinedCardBorder().copy(
-                                    brush = androidx.compose.ui.graphics.SolidColor(Color(0x6600FFCC))
-                                )
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                "✂️ Rango de Medición:",
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                "${formatTimeMs(trimStartMs)} ➔ ${formatTimeMs(trimEndMs)}",
-                                                color = Color(0xFF00FFCC),
-                                                fontWeight = FontWeight.Bold,
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                        }
-                                        val selSec = ((trimEndMs - trimStartMs).coerceAtLeast(0L) / 1000.0)
-                                        Text(
-                                            "${String.format("%.1f", selSec)}s (${((trimEndMs - trimStartMs) / 33L).coerceAtLeast(1L)} f)",
-                                            color = Color.LightGray,
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    // Barra gráfica de la porción activa recortada
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(16.dp)
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(Color(0xFF222222))
-                                    ) {
-                                        Canvas(modifier = Modifier.fillMaxSize()) {
-                                            if (videoDurationMs > 0) {
-                                                val startFrac = (trimStartMs.toFloat() / videoDurationMs.toFloat()).coerceIn(0f, 1f)
-                                                val endFrac = (trimEndMs.toFloat() / videoDurationMs.toFloat()).coerceIn(startFrac, 1f)
-                                                val curFrac = (currentVideoPosMs.toFloat() / videoDurationMs.toFloat()).coerceIn(0f, 1f)
-
-                                                // Zona seleccionada
-                                                val leftPx = size.width * startFrac
-                                                val widthPx = size.width * (endFrac - startFrac)
-                                                drawRect(
-                                                    color = Color(0x6600FFCC),
-                                                    topLeft = Offset(leftPx, 0f),
-                                                    size = Size(widthPx, size.height)
-                                                )
-                                                drawRect(
-                                                    color = Color(0xFF00FFCC),
-                                                    topLeft = Offset(leftPx, 0f),
-                                                    size = Size(widthPx, size.height),
-                                                    style = Stroke(width = 1.5.dp.toPx())
-                                                )
-
-                                                // Cursor actual
-                                                drawLine(
-                                                    color = Color.White,
-                                                    start = Offset(size.width * curFrac, 0f),
-                                                    end = Offset(size.width * curFrac, size.height),
-                                                    strokeWidth = 2.dp.toPx()
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    // Botones para fijar inicio y fin en el frame actual
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                trimStartMs = currentVideoPosMs.coerceAtMost(trimEndMs - 100L)
-                                            },
-                                            modifier = Modifier.weight(1f).height(36.dp),
-                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
-                                        ) {
-                                            Text("▶| Fijar Inicio", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-
-                                        OutlinedButton(
-                                            onClick = {
-                                                trimEndMs = currentVideoPosMs.coerceAtLeast(trimStartMs + 100L)
-                                            },
-                                            modifier = Modifier.weight(1f).height(36.dp),
-                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
-                                        ) {
-                                            Text("|◀ Fijar Fin", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-
-                                        IconButton(
-                                            onClick = {
-                                                trimStartMs = 0L
-                                                trimEndMs = videoDurationMs
-                                            },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = "Todo el Video", tint = Color.LightGray, modifier = Modifier.size(16.dp))
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Marcadores Manuales de Despegue / Aterrizaje (Estilo MyJump)
-                            if (currentMode == "JUMP") {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Surface(
-                                    color = Color(0x3300FFCC),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text("👟", fontSize = 14.sp)
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            "Plano Frontal: Enfoca ambos pies en la plataforma. Usa los botones ◀ / ▶ cuadro a cuadro para fijar el Despegue y Aterrizaje exactos.",
-                                            color = Color.White,
-                                            fontSize = 11.sp,
-                                            lineHeight = 14.sp
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                // Fila Tiempo y Frame-Step
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            manualTakeoffMs = currentVideoPosMs
-                                            if (manualLandingMs != null && manualLandingMs!! > manualTakeoffMs!!) {
-                                                val tof = (manualLandingMs!! - manualTakeoffMs!!) / 1000.0
-                                                manualJumpHeightCm = (0.5 * 9.81 * (tof / 2.0) * (tof / 2.0)) * 100.0
-                                            }
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            if (manualTakeoffMs != null) "Despegue: ${manualTakeoffMs}ms" else "📌 Despegue",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (manualTakeoffMs != null) Color(0xFF00FFCC) else Color.White
-                                        )
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            manualLandingMs = currentVideoPosMs
-                                            if (manualTakeoffMs != null && manualLandingMs!! > manualTakeoffMs!!) {
-                                                val tof = (manualLandingMs!! - manualTakeoffMs!!) / 1000.0
-                                                manualJumpHeightCm = (0.5 * 9.81 * (tof / 2.0) * (tof / 2.0)) * 100.0
-                                            }
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            if (manualLandingMs != null) "Aterrizaje: ${manualLandingMs}ms" else "📌 Aterrizaje",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (manualLandingMs != null) Color(0xFF00FFCC) else Color.White
-                                        )
-                                    }
-                                }
-
-                                if (manualJumpHeightCm != null) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Surface(
-                                        color = Color(0x3300FFCC),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                "🎯 Salto MyJump: ${String.format("%.1f", manualJumpHeightCm)} cm",
-                                                color = Color(0xFF00FFCC),
-                                                fontWeight = FontWeight.Bold,
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                            TextButton(
-                                                onClick = {
-                                                    finalResult = manualJumpHeightCm!! / 100.0
-                                                    jumpMetricsResult = VerticalJumpAnalyzer.calculateJumpMetrics(
-                                                        manualTakeoffMs!!,
-                                                        manualLandingMs!!,
-                                                        activeUser?.bodyWeightKg ?: 70.0
-                                                    )
-                                                    isReadyToAnalyze = true
-                                                    isProcessing = false
+                                    Text(
+                                        formatTimeMs(currentVideoPosMs),
+                                        color = Color.LightGray,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        // -1 Frame (33ms)
+                                        FilledTonalIconButton(
+                                            onClick = {
+                                                videoViewRef?.let { vv ->
+                                                    vv.pause()
+                                                    isPlaying = false
+                                                    val newPos = (vv.currentPosition - 33).coerceAtLeast(0)
+                                                    vv.seekTo(newPos)
+                                                    currentVideoPosMs = newPos.toLong()
                                                 }
-                                            ) {
-                                                Text("Aplicar", color = Color(0xFF00FFCC), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                                            }
+                                            },
+                                            modifier = Modifier.size(34.dp),
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = Color(0xFF333333),
+                                                contentColor = Color.White
+                                            )
+                                        ) {
+                                            Icon(Icons.Default.FastRewind, contentDescription = "-1 Frame", modifier = Modifier.size(16.dp))
+                                        }
+
+                                        // Play / Pause
+                                        FilledTonalIconButton(
+                                            onClick = {
+                                                videoViewRef?.let { vv ->
+                                                    if (isPlaying) {
+                                                        vv.pause()
+                                                        isPlaying = false
+                                                    } else {
+                                                        vv.start()
+                                                        isPlaying = true
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.size(34.dp),
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = Color(0xFF00FFCC),
+                                                contentColor = Color.Black
+                                            )
+                                        ) {
+                                            Icon(
+                                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                contentDescription = "Play/Pausa",
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+
+                                        // +1 Frame (33ms)
+                                        FilledTonalIconButton(
+                                            onClick = {
+                                                videoViewRef?.let { vv ->
+                                                    vv.pause()
+                                                    isPlaying = false
+                                                    val newPos = (vv.currentPosition + 33).coerceAtMost(vv.duration)
+                                                    vv.seekTo(newPos)
+                                                    currentVideoPosMs = newPos.toLong()
+                                                }
+                                            },
+                                            modifier = Modifier.size(34.dp),
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = Color(0xFF333333),
+                                                contentColor = Color.White
+                                            )
+                                        ) {
+                                            Icon(Icons.Default.FastForward, contentDescription = "+1 Frame", modifier = Modifier.size(16.dp))
                                         }
                                     }
+                                    Text(
+                                        formatTimeMs(videoDurationMs),
+                                        color = Color.Gray,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
                                 }
-                            }
 
-                            // Módulo de Carga Desplazada para Halterofilia / VBT
-                            if (currentMode == "VBT") {
-                                Spacer(modifier = Modifier.height(8.dp))
+                                // Barra Deslizadora (Scrubber)
+                                if (videoDurationMs > 0) {
+                                    Slider(
+                                        value = currentVideoPosMs.toFloat().coerceIn(0f, videoDurationMs.toFloat()),
+                                        onValueChange = { newPos ->
+                                            currentVideoPosMs = newPos.toLong()
+                                            videoViewRef?.seekTo(newPos.toInt())
+                                        },
+                                        valueRange = 0f..videoDurationMs.toFloat(),
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = Color(0xFF00FFCC),
+                                            activeTrackColor = Color(0xFF00FFCC)
+                                        )
+                                    )
+                                }
+
+                                // Selector Cámara Lenta
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Cámara Lenta: ", color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    FilterChip(
+                                        selected = playbackSpeed == 0.25f,
+                                        onClick = { changePlaybackSpeed(0.25f) },
+                                        label = { Text("0.25x", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    FilterChip(
+                                        selected = playbackSpeed == 0.5f,
+                                        onClick = { changePlaybackSpeed(0.5f) },
+                                        label = { Text("0.5x", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    FilterChip(
+                                        selected = playbackSpeed == 1.0f,
+                                        onClick = { changePlaybackSpeed(1.0f) },
+                                        label = { Text("1.0x", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Tarjeta de Rango de Medición / Recorte
                                 Surface(
                                     modifier = Modifier.fillMaxWidth(),
                                     color = Color(0xFF141414),
@@ -1468,140 +1177,382 @@ fun VideoAnalysisScreen(
                                         ) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Text(
-                                                    "🏋️ Carga de la Barra:",
+                                                    "✂️ Fragmento a Analizar:",
                                                     color = Color.White,
                                                     fontWeight = FontWeight.Bold,
                                                     style = MaterialTheme.typography.labelSmall
                                                 )
                                                 Spacer(modifier = Modifier.width(6.dp))
                                                 Text(
-                                                    "${barbellLoadKg} kg",
+                                                    "${formatTimeMs(trimStartMs)} ➔ ${formatTimeMs(trimEndMs)}",
                                                     color = Color(0xFF00FFCC),
                                                     fontWeight = FontWeight.Bold,
-                                                    style = MaterialTheme.typography.titleMedium
+                                                    style = MaterialTheme.typography.labelSmall
                                                 )
                                             }
+                                            val selSec = ((trimEndMs - trimStartMs).coerceAtLeast(0L) / 1000.0)
                                             Text(
-                                                "Calcula Watts, N y 1RM",
-                                                color = Color.Gray,
-                                                fontSize = 10.sp
+                                                "${String.format(Locale.US, "%.1f", selSec)}s (${((trimEndMs - trimStartMs) / 33L).coerceAtLeast(1L)} f)",
+                                                color = Color.LightGray,
+                                                style = MaterialTheme.typography.labelSmall
                                             )
-                                        }
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-
-                                        // Fila de Ajuste Rápido y Stepper
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            val currentLoad = barbellLoadKg.toDoubleOrNull() ?: 70.0
-                                            FilledTonalButton(
-                                                onClick = {
-                                                    val next = (currentLoad - 5.0).coerceAtLeast(10.0)
-                                                    barbellLoadKg = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
-                                                },
-                                                contentPadding = PaddingValues(0.dp),
-                                                modifier = Modifier.weight(1f).height(34.dp),
-                                                colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
-                                            ) { Text("-5", fontSize = 11.sp, color = Color.LightGray) }
-
-                                            FilledTonalButton(
-                                                onClick = {
-                                                    val next = (currentLoad - 2.5).coerceAtLeast(10.0)
-                                                    barbellLoadKg = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
-                                                },
-                                                contentPadding = PaddingValues(0.dp),
-                                                modifier = Modifier.weight(1f).height(34.dp),
-                                                colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
-                                            ) { Text("-2.5", fontSize = 10.sp, color = Color.LightGray) }
-
-                                            Box(
-                                                modifier = Modifier
-                                                    .weight(1.8f)
-                                                    .height(38.dp)
-                                                    .background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp))
-                                                    .border(1.5.dp, Color(0xFF00FFCC), RoundedCornerShape(8.dp)),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.Center,
-                                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                                ) {
-                                                    BasicTextField(
-                                                        value = barbellLoadKg,
-                                                        onValueChange = { newVal ->
-                                                            if (newVal.isEmpty() || newVal.all { it.isDigit() || it == '.' }) {
-                                                                barbellLoadKg = newVal
-                                                            }
-                                                        },
-                                                        singleLine = true,
-                                                        textStyle = androidx.compose.ui.text.TextStyle(
-                                                            color = Color.White,
-                                                            fontWeight = FontWeight.Bold,
-                                                            textAlign = TextAlign.Center,
-                                                            fontSize = 15.sp
-                                                        ),
-                                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                                        cursorBrush = SolidColor(Color(0xFF00FFCC)),
-                                                        modifier = Modifier.wrapContentWidth()
-                                                    )
-                                                    Text(
-                                                        " kg",
-                                                        color = Color(0xFF00FFCC),
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                            }
-
-                                            FilledTonalButton(
-                                                onClick = {
-                                                    val next = (currentLoad + 2.5)
-                                                    barbellLoadKg = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
-                                                },
-                                                contentPadding = PaddingValues(0.dp),
-                                                modifier = Modifier.weight(1f).height(34.dp),
-                                                colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
-                                            ) { Text("+2.5", fontSize = 10.sp, color = Color(0xFF00FFCC)) }
-
-                                            FilledTonalButton(
-                                                onClick = {
-                                                    val next = (currentLoad + 5.0)
-                                                    barbellLoadKg = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
-                                                },
-                                                contentPadding = PaddingValues(0.dp),
-                                                modifier = Modifier.weight(1f).height(34.dp),
-                                                colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
-                                            ) { Text("+5", fontSize = 11.sp, color = Color(0xFF00FFCC)) }
                                         }
 
                                         Spacer(modifier = Modifier.height(6.dp))
 
-                                        // Chips de Cargas Rápidas
+                                        // Barra Gráfica de la Región Recortada
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(16.dp)
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(Color(0xFF222222))
+                                        ) {
+                                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                                if (videoDurationMs > 0) {
+                                                    val startFrac = (trimStartMs.toFloat() / videoDurationMs.toFloat()).coerceIn(0f, 1f)
+                                                    val endFrac = (trimEndMs.toFloat() / videoDurationMs.toFloat()).coerceIn(startFrac, 1f)
+                                                    val curFrac = (currentVideoPosMs.toFloat() / videoDurationMs.toFloat()).coerceIn(0f, 1f)
+
+                                                    val leftPx = size.width * startFrac
+                                                    val widthPx = size.width * (endFrac - startFrac)
+                                                    drawRect(
+                                                        color = Color(0x6600FFCC),
+                                                        topLeft = Offset(leftPx, 0f),
+                                                        size = Size(widthPx, size.height)
+                                                    )
+                                                    drawRect(
+                                                        color = Color(0xFF00FFCC),
+                                                        topLeft = Offset(leftPx, 0f),
+                                                        size = Size(widthPx, size.height),
+                                                        style = Stroke(width = 1.5.dp.toPx())
+                                                    )
+
+                                                    drawLine(
+                                                        color = Color.White,
+                                                        start = Offset(size.width * curFrac, 0f),
+                                                        end = Offset(size.width * curFrac, size.height),
+                                                        strokeWidth = 2.dp.toPx()
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        // Botones Fijar Inicio, Fin, Probar y Reset
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            listOf("20", "40", "60", "70", "80", "100").forEach { preset ->
-                                                val isSelected = barbellLoadKg == preset
-                                                Surface(
-                                                    onClick = { barbellLoadKg = preset },
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    color = if (isSelected) Color(0x3300FFCC) else Color(0xFF222222),
-                                                    border = if (isSelected) CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF00FFCC))) else null,
-                                                    modifier = Modifier.weight(1f).height(24.dp)
-                                                ) {
-                                                    Box(contentAlignment = Alignment.Center) {
-                                                        Text(
-                                                            if (preset == "20") "Barra" else "${preset}k",
-                                                            fontSize = 9.sp,
-                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                            color = if (isSelected) Color(0xFF00FFCC) else Color.Gray
-                                                        )
+                                            OutlinedButton(
+                                                onClick = {
+                                                    trimStartMs = currentVideoPosMs.coerceAtMost(trimEndMs - 100L)
+                                                },
+                                                modifier = Modifier.weight(1f).height(34.dp),
+                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
+                                            ) {
+                                                Text("▶| Fijar Inicio", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+
+                                            OutlinedButton(
+                                                onClick = {
+                                                    trimEndMs = currentVideoPosMs.coerceAtLeast(trimStartMs + 100L)
+                                                },
+                                                modifier = Modifier.weight(1f).height(34.dp),
+                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
+                                            ) {
+                                                Text("|◀ Fijar Fin", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    isLoopingTrimmedRange = !isLoopingTrimmedRange
+                                                    if (isLoopingTrimmedRange) {
+                                                        videoViewRef?.seekTo(trimStartMs.toInt())
+                                                        currentVideoPosMs = trimStartMs
+                                                        videoViewRef?.start()
+                                                        isPlaying = true
                                                     }
+                                                },
+                                                modifier = Modifier.weight(1f).height(34.dp),
+                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                                colors = ButtonDefaults.filledTonalButtonColors(
+                                                    containerColor = if (isLoopingTrimmedRange) Color(0xFF00FFCC) else Color(0xFF2B2B2B),
+                                                    contentColor = if (isLoopingTrimmedRange) Color.Black else Color.White
+                                                )
+                                            ) {
+                                                Text(if (isLoopingTrimmedRange) "⏹ Parar" else "🔁 Probar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+
+                                            IconButton(
+                                                onClick = {
+                                                    trimStartMs = 0L
+                                                    trimEndMs = videoDurationMs
+                                                },
+                                                modifier = Modifier.size(34.dp)
+                                            ) {
+                                                Icon(Icons.Default.Refresh, contentDescription = "Todo el Video", tint = Color.LightGray, modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Marcadores Manuales de Despegue / Aterrizaje para Salto
+                                if (currentMode == "JUMP") {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                manualTakeoffMs = currentVideoPosMs
+                                                if (manualLandingMs != null && manualLandingMs!! > manualTakeoffMs!!) {
+                                                    val tof = (manualLandingMs!! - manualTakeoffMs!!) / 1000.0
+                                                    manualJumpHeightCm = (0.5 * 9.81 * (tof / 2.0) * (tof / 2.0)) * 100.0
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f).height(36.dp)
+                                        ) {
+                                            Text(
+                                                if (manualTakeoffMs != null) "Despegue: ${manualTakeoffMs}ms" else "📌 Despegue",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (manualTakeoffMs != null) Color(0xFF00FFCC) else Color.White
+                                            )
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = {
+                                                manualLandingMs = currentVideoPosMs
+                                                if (manualTakeoffMs != null && manualLandingMs!! > manualTakeoffMs!!) {
+                                                    val tof = (manualLandingMs!! - manualTakeoffMs!!) / 1000.0
+                                                    manualJumpHeightCm = (0.5 * 9.81 * (tof / 2.0) * (tof / 2.0)) * 100.0
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f).height(36.dp)
+                                        ) {
+                                            Text(
+                                                if (manualLandingMs != null) "Aterrizaje: ${manualLandingMs}ms" else "📌 Aterrizaje",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (manualLandingMs != null) Color(0xFF00FFCC) else Color.White
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Botón de Avance a Paso 2
+                        Button(
+                            onClick = {
+                                isLoopingTrimmedRange = false
+                                videoViewRef?.pause()
+                                isPlaying = false
+                                videoViewRef?.seekTo(trimStartMs.toInt())
+                                currentVideoPosMs = trimStartMs
+                                if (currentMode == "JUMP" && manualTakeoffMs != null && manualLandingMs != null && manualJumpHeightCm != null) {
+                                    finalResult = manualJumpHeightCm!! / 100.0
+                                    jumpMetricsResult = VerticalJumpAnalyzer.calculateJumpMetrics(
+                                        manualTakeoffMs!!,
+                                        manualLandingMs!!,
+                                        activeUser?.bodyWeightKg ?: 70.0
+                                    )
+                                    isReadyToAnalyze = true
+                                    isProcessing = false
+                                } else {
+                                    isCalibrationMode = true
+                                    analysisSetupStep = AnalysisSetupStep.CALIBRATE
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF00FFCC),
+                                contentColor = Color.Black
+                            )
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (currentMode == "JUMP" && manualJumpHeightCm != null)
+                                        "Calcular Salto (${String.format(Locale.US, "%.1f", manualJumpHeightCm)} cm) 🚀"
+                                    else
+                                        "Continuar a Calibración y Carga",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(Icons.Default.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    } else {
+                        // ── PASO 2: CALIBRACIÓN Y CARGA DE LA BARRA ──
+                        Text(
+                            "Ajusta el círculo sobre el borde del disco olímpico (45 cm). Arrastra el centro o usa las flechas HUD.",
+                            color = Color(0xFF00FFCC),
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Módulo de Carga Desplazada para Halterofilia / VBT
+                        if (currentMode == "VBT") {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Color(0xFF141414),
+                                shape = RoundedCornerShape(10.dp),
+                                border = CardDefaults.outlinedCardBorder().copy(
+                                    brush = androidx.compose.ui.graphics.SolidColor(Color(0x6600FFCC))
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                "🏋️ Carga de la Barra:",
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                "${barbellLoadKg} kg",
+                                                color = Color(0xFF00FFCC),
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.titleMedium
+                                            )
+                                        }
+                                        Text(
+                                            "Calcula Watts, N y 1RM",
+                                            color = Color.Gray,
+                                            fontSize = 10.sp
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    // Fila de Ajuste Rápido y Stepper
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val currentLoad = barbellLoadKg.toDoubleOrNull() ?: 70.0
+                                        FilledTonalButton(
+                                            onClick = {
+                                                val next = (currentLoad - 5.0).coerceAtLeast(10.0)
+                                                barbellLoadKg = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
+                                            },
+                                            contentPadding = PaddingValues(0.dp),
+                                            modifier = Modifier.weight(1f).height(34.dp),
+                                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
+                                        ) { Text("-5", fontSize = 11.sp, color = Color.LightGray) }
+
+                                        FilledTonalButton(
+                                            onClick = {
+                                                val next = (currentLoad - 2.5).coerceAtLeast(10.0)
+                                                barbellLoadKg = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
+                                            },
+                                            contentPadding = PaddingValues(0.dp),
+                                            modifier = Modifier.weight(1f).height(34.dp),
+                                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
+                                        ) { Text("-2.5", fontSize = 10.sp, color = Color.LightGray) }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1.8f)
+                                                .height(38.dp)
+                                                .background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp))
+                                                .border(1.5.dp, Color(0xFF00FFCC), RoundedCornerShape(8.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center,
+                                                modifier = Modifier.padding(horizontal = 4.dp)
+                                            ) {
+                                                BasicTextField(
+                                                    value = barbellLoadKg,
+                                                    onValueChange = { newVal ->
+                                                        if (newVal.isEmpty() || newVal.all { it.isDigit() || it == '.' }) {
+                                                            barbellLoadKg = newVal
+                                                        }
+                                                    },
+                                                    singleLine = true,
+                                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold,
+                                                        textAlign = TextAlign.Center,
+                                                        fontSize = 15.sp
+                                                    ),
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                                    cursorBrush = SolidColor(Color(0xFF00FFCC)),
+                                                    modifier = Modifier.wrapContentWidth()
+                                                )
+                                                Text(
+                                                    " kg",
+                                                    color = Color(0xFF00FFCC),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+
+                                        FilledTonalButton(
+                                            onClick = {
+                                                val next = (currentLoad + 2.5)
+                                                barbellLoadKg = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
+                                            },
+                                            contentPadding = PaddingValues(0.dp),
+                                            modifier = Modifier.weight(1f).height(34.dp),
+                                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
+                                        ) { Text("+2.5", fontSize = 10.sp, color = Color(0xFF00FFCC)) }
+
+                                        FilledTonalButton(
+                                            onClick = {
+                                                val next = (currentLoad + 5.0)
+                                                barbellLoadKg = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
+                                            },
+                                            contentPadding = PaddingValues(0.dp),
+                                            modifier = Modifier.weight(1f).height(34.dp),
+                                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF262626))
+                                        ) { Text("+5", fontSize = 11.sp, color = Color(0xFF00FFCC)) }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    // Chips de Cargas Rápidas
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        listOf("20", "40", "60", "70", "80", "100").forEach { preset ->
+                                            val isSelected = barbellLoadKg == preset
+                                            Surface(
+                                                onClick = { barbellLoadKg = preset },
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = if (isSelected) Color(0x3300FFCC) else Color(0xFF222222),
+                                                border = if (isSelected) CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF00FFCC))) else null,
+                                                modifier = Modifier.weight(1f).height(24.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        if (preset == "20") "Barra" else "${preset}k",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                        color = if (isSelected) Color(0xFF00FFCC) else Color.Gray
+                                                    )
                                                 }
                                             }
                                         }
@@ -1609,24 +1560,56 @@ fun VideoAnalysisScreen(
                                 }
                             }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                    Button(
-                        onClick = {
-                            videoViewRef?.pause()
-                            isReadyToAnalyze = true
-                            isProcessing = true
-                        },
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF00FFCC),
-                            contentColor = Color.Black
-                        )
-                    ) {
-                        Text("Iniciar Análisis Matemático", fontWeight = FontWeight.Bold)
-                    }
+                        // Fila de Botones: Volver a Recorte e Iniciar Análisis
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    analysisSetupStep = AnalysisSetupStep.TRIM_VIDEO
+                                    isCalibrationMode = false
+                                },
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray)
+                            ) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Volver a Recorte", fontSize = 12.sp)
+                            }
+
+                            Button(
+                                onClick = {
+                                    val bounds = calculateVideoRenderBounds(screenBoxWidth, screenBoxHeight, videoNativeWidth, videoNativeHeight)
+                                    val centerToUse = circleCenter ?: Offset(screenBoxWidth / 2f, screenBoxHeight / 2f)
+                                    val (nativeCenter, nativeRadius) = screenToVideoCoords(centerToUse, circleRadiusPx, bounds)
+                                    calibratedPlateCenterVideo = nativeCenter
+                                    calibratedPlateRadiusVideo = nativeRadius
+
+                                    val nativeDiameterPx = nativeRadius * 2f
+                                    val ratio = if (nativeDiameterPx > 5f) 0.45 / nativeDiameterPx.toDouble() else 0.0024
+                                    VBTAnalyzer.setCalibratedPlate(nativeCenter, nativeRadius)
+                                    VBTAnalyzer.pxToMetersRatio = ratio
+                                    customRatioMmPerPx = ratio * 1000.0
+                                    isCalibrated = true
+
+                                    videoViewRef?.pause()
+                                    isReadyToAnalyze = true
+                                    isProcessing = true
+                                },
+                                modifier = Modifier.weight(1.3f).height(48.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF00FFCC),
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                Text("Iniciar Análisis 🚀", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                        }
                     }
                 }
             } else if (isProcessing) {
@@ -1752,6 +1735,7 @@ fun VideoAnalysisScreen(
                             mode = currentMode ?: "VBT",
                             barbellLoadKg = currentLoadKg,
                             calibratedPlateRadius = calibratedPlateRadiusVideo,
+                            externalSeekPosMs = resultSeekPosMs,
                             onCurrentPositionChange = { previewPlaybackPosMs = it },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1826,6 +1810,7 @@ fun VideoAnalysisScreen(
                                             peakVelocity = trackingPointsResult.maxOfOrNull { it.velocityMps }?.takeIf { it > 0.1 } ?: takeoffV,
                                             meanVelocity = takeoffV * 0.72,
                                             currentVideoPosMs = previewPlaybackPosMs,
+                                            onSeekToTimestamp = { resultSeekPosMs = it },
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }
@@ -2067,6 +2052,7 @@ fun VideoAnalysisScreen(
                                         peakVelocity = peakVelocity,
                                         meanVelocity = meanVelocity,
                                         currentVideoPosMs = previewPlaybackPosMs,
+                                        onSeekToTimestamp = { resultSeekPosMs = it },
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                 }
@@ -2131,7 +2117,7 @@ fun VideoAnalysisScreen(
                                                 append("1RM Estimado: ${estimatedOneRM.toInt()} kg (@ ${pctOneRM.toInt()}% 1RM)\n")
                                                 append("Métrica Usada: ${if (selectedExerciseModel.usesPeakVelocity) "Velocidad Pico (PV)" else "Velocidad Media (VM)"}\n")
                                                 append("Fórmula: ${selectedExerciseModel.formulaDescription}\n")
-                                                append("Potencia Pico: ${peakPowerWatts.toInt()} W (${String.format("%.1f", relativeWattsPerKg)} W/kg)\n")
+                                                append("Potencia: Pico ${peakPowerWatts.toInt()} W | Media ${meanPowerWatts.toInt()} W (${String.format("%.1f", relativeWattsPerKg)} W/kg)\n")
                                                 append("Fuerza Pico: ${peakForceN.toInt()} N\n")
                                                 append("Trabajo Mecánico: ${workJoules.toInt()} J\n")
                                                 if (vbtDeviationResultCm != null) {
@@ -2389,6 +2375,46 @@ data class KinematicDataPoint(
 )
 
 /**
+ * Filtro digital bidireccional de fase cero (emulación Butterworth de 4to orden).
+ * Aplica un pase hacia adelante y otro hacia atrás con ponderaciones gaussianas/binomiales
+ * para eliminar el ruido de alta frecuencia del tracking sin introducir desfase temporal (Δφ = 0).
+ */
+fun zeroPhaseSmooth(data: List<Double>, passes: Int = 2): List<Double> {
+    if (data.size < 5) return data
+    var current = data.toDoubleArray()
+    val weights = doubleArrayOf(0.0625, 0.25, 0.375, 0.25, 0.0625)
+    val n = current.size
+    repeat(passes) {
+        val fwd = DoubleArray(n)
+        for (i in 0 until n) {
+            var sum = 0.0
+            var wSum = 0.0
+            for (k in -2..2) {
+                val idx = (i + k).coerceIn(0, n - 1)
+                val w = weights[k + 2]
+                sum += current[idx] * w
+                wSum += w
+            }
+            fwd[i] = sum / wSum
+        }
+        val bwd = DoubleArray(n)
+        for (i in n - 1 downTo 0) {
+            var sum = 0.0
+            var wSum = 0.0
+            for (k in -2..2) {
+                val idx = (i + k).coerceIn(0, n - 1)
+                val w = weights[k + 2]
+                sum += fwd[idx] * w
+                wSum += w
+            }
+            bwd[i] = sum / wSum
+        }
+        current = bwd
+    }
+    return current.toList()
+}
+
+/**
  * Gráfico dinámico de telemetría cinemática con cuadrícula oscura de alta precisión (estilo osciloscopio).
  * Traza las ondas dinámicas de Velocidad (m/s) y Aceleración (m/s²) a lo largo de la repetición,
  * con marcador de velocidad pico, línea de velocidad media (VM), línea cero de aceleración,
@@ -2400,6 +2426,7 @@ fun KinematicTelemetryChart(
     peakVelocity: Double,
     meanVelocity: Double,
     currentVideoPosMs: Long = 0L,
+    onSeekToTimestamp: ((Long) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (trackingPoints.size < 2) return
@@ -2411,25 +2438,35 @@ fun KinematicTelemetryChart(
     // Modo de telemetría: 0: Velocidad (m/s), 1: Aceleración (m/s²), 2: Ambas superpuestas
     var telemetryMode by remember { mutableIntStateOf(0) }
 
-    // Procesar datos y suavizar aceleración con filtro de media móvil de 3 puntos
+    // Procesar datos y suavizar con filtro digital de fase cero (Butterworth 4to orden emulado)
     val telemetryPoints = remember(trackingPoints) {
-        val raw = mutableListOf<KinematicDataPoint>()
-        for (i in trackingPoints.indices) {
-            val pt = trackingPoints[i]
-            val v = pt.velocityMps
-            val rawA = if (i > 0) {
-                val dt = (pt.timestampMs - trackingPoints[i - 1].timestampMs) / 1000.0
-                if (dt > 0.008) (v - trackingPoints[i - 1].velocityMps) / dt else 0.0
-            } else 0.0
-            raw.add(KinematicDataPoint(pt.timestampMs, v, rawA, pt.isConcentric))
-        }
+        val rawV = trackingPoints.map { it.velocityMps }
+        val smoothedV = zeroPhaseSmooth(rawV)
 
-        raw.mapIndexed { idx, dp ->
-            val pA = raw.getOrNull(idx - 1)?.accelerationMps2 ?: dp.accelerationMps2
-            val nA = raw.getOrNull(idx + 1)?.accelerationMps2 ?: dp.accelerationMps2
-            val smoothedA = ((pA + dp.accelerationMps2 + nA) / 3.0).coerceIn(-15.0, 30.0)
-            dp.copy(accelerationMps2 = smoothedA)
+        val rawA = mutableListOf<Double>()
+        for (i in trackingPoints.indices) {
+            val a = if (i > 0) {
+                val dt = (trackingPoints[i].timestampMs - trackingPoints[i - 1].timestampMs) / 1000.0
+                if (dt > 0.008) (smoothedV[i] - smoothedV[i - 1]) / dt else 0.0
+            } else 0.0
+            rawA.add(a.coerceIn(-25.0, 35.0))
         }
+        val smoothedA = zeroPhaseSmooth(rawA)
+
+        trackingPoints.indices.map { i ->
+            KinematicDataPoint(
+                timestampMs = trackingPoints[i].timestampMs,
+                velocityMps = smoothedV[i],
+                accelerationMps2 = smoothedA[i],
+                isConcentric = trackingPoints[i].isConcentric
+            )
+        }
+    }
+
+    // Velocidad Media Propulsiva (VMP): fase concéntrica con aceleración >= -9.81 m/s²
+    val vmp = remember(telemetryPoints) {
+        val propulsivePoints = telemetryPoints.filter { it.isConcentric && it.accelerationMps2 >= -9.81 }
+        if (propulsivePoints.isNotEmpty()) propulsivePoints.map { it.velocityMps }.average() else null
     }
 
     val maxV = remember(telemetryPoints, peakVelocity) {
@@ -2568,7 +2605,7 @@ fun KinematicTelemetryChart(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Cuadrícula y Ondas (Canvas de Telemetría Dinámica)
+            // Cuadrícula y Ondas (Canvas de Telemetría Dinámica con Touch & Drag Scrubbing)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2576,6 +2613,36 @@ fun KinematicTelemetryChart(
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF090C10))
                     .border(1.dp, Color(0xFF1E2530), RoundedCornerShape(8.dp))
+                    .pointerInput(minTimeMs, totalDurationMs) {
+                        val leftPad = 34.dp.toPx()
+                        val rightPad = if (telemetryMode == 2) 34.dp.toPx() else 12.dp.toPx()
+                        fun updateSeek(x: Float) {
+                            val plotW = (size.width - leftPad - rightPad).coerceAtLeast(10f)
+                            val frac = ((x - leftPad) / plotW).coerceIn(0f, 1f)
+                            val targetMs = (minTimeMs + frac * totalDurationMs).toLong()
+                            onSeekToTimestamp?.invoke(targetMs)
+                        }
+                        detectTapGestures { offset ->
+                            updateSeek(offset.x)
+                        }
+                    }
+                    .pointerInput(minTimeMs, totalDurationMs) {
+                        val leftPad = 34.dp.toPx()
+                        val rightPad = if (telemetryMode == 2) 34.dp.toPx() else 12.dp.toPx()
+                        fun updateSeek(x: Float) {
+                            val plotW = (size.width - leftPad - rightPad).coerceAtLeast(10f)
+                            val frac = ((x - leftPad) / plotW).coerceIn(0f, 1f)
+                            val targetMs = (minTimeMs + frac * totalDurationMs).toLong()
+                            onSeekToTimestamp?.invoke(targetMs)
+                        }
+                        detectDragGestures(
+                            onDragStart = { offset -> updateSeek(offset.x) },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                updateSeek(change.position.x)
+                            }
+                        )
+                    }
             ) {
                 Canvas(
                     modifier = Modifier.fillMaxSize()
@@ -2700,6 +2767,27 @@ fun KinematicTelemetryChart(
                             vmY - 3.dp.toPx(),
                             textPaint
                         )
+
+                        // 4.1 Línea de Referencia Velocidad Media Propulsiva (VMP)
+                        if (vmp != null) {
+                            val vmpFrac = ((vmp - minV) / (maxV - minV)).coerceIn(0.0, 1.0).toFloat()
+                            val vmpY = topPad + plotH - (vmpFrac * plotH)
+                            drawLine(
+                                color = Color(0xFF00FFCC).copy(alpha = 0.6f),
+                                start = Offset(leftPad, vmpY),
+                                end = Offset(leftPad + plotW, vmpY),
+                                strokeWidth = 1.2f,
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
+                            )
+                            textPaint.color = android.graphics.Color.parseColor("#00FFCC")
+                            textPaint.textAlign = android.graphics.Paint.Align.RIGHT
+                            drawContext.canvas.nativeCanvas.drawText(
+                                "VMP ${String.format(Locale.US, "%.2f", vmp)}",
+                                leftPad + plotW - 4.dp.toPx(),
+                                vmpY + 11.dp.toPx(),
+                                textPaint
+                            )
+                        }
                     }
 
                     // 5. Onda de Aceleración (ámbar/naranja)
@@ -2857,7 +2945,10 @@ fun KinematicTelemetryChart(
                     Box(modifier = Modifier.size(8.dp).background(Color(0xFF00FFCC), CircleShape))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        "Velocidad (Pico: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s)",
+                        if (vmp != null)
+                            "Velocidad (Pico: ${String.format(Locale.US, "%.2f", peakVelocity)} | VMP: ${String.format(Locale.US, "%.2f", vmp)} m/s)"
+                        else
+                            "Velocidad (Pico: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s)",
                         color = Color.LightGray,
                         fontSize = 10.sp
                     )
@@ -2896,6 +2987,7 @@ fun AnalysisResultVideoPreview(
     mode: String,
     barbellLoadKg: Double? = null,
     calibratedPlateRadius: Float? = null,
+    externalSeekPosMs: Long? = null,
     onCurrentPositionChange: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -2911,10 +3003,21 @@ fun AnalysisResultVideoPreview(
         onCurrentPositionChange(currentPosMs)
     }
 
+    val effectiveEndMs = if (trimEndMs > trimStartMs + 100L) trimEndMs else (trimStartMs + 3000L)
+
+    LaunchedEffect(externalSeekPosMs) {
+        externalSeekPosMs?.let { targetMs ->
+            previewVideoViewRef?.let { vv ->
+                val clamped = targetMs.coerceIn(trimStartMs, effectiveEndMs)
+                vv.seekTo(clamped.toInt())
+                currentPosMs = clamped
+            }
+        }
+    }
+
     var lastSyncWallClockMs by remember { mutableLongStateOf(0L) }
     var lastSyncPositionMs by remember { mutableLongStateOf(trimStartMs) }
 
-    val effectiveEndMs = if (trimEndMs > trimStartMs + 100L) trimEndMs else (trimStartMs + 3000L)
     val isVertical = if (videoNativeWidth > 0 && videoNativeHeight > 0) videoNativeHeight > videoNativeWidth else true
     val previewHeight = if (isVertical) 480.dp else 280.dp
 
@@ -3685,7 +3788,8 @@ suspend fun processVideo(
                                 }
 
                                 val plateCenter = activePlateCenter ?: Offset(bitmap.width * 0.5f, bitmap.height * 0.70f)
-                                val plateRadius = if (activePlateRadius != null && activePlateRadius!! > 10f) activePlateRadius!! else (minOf(bitmap.width, bitmap.height) * 0.12f)
+                                val curPlateRad = activePlateRadius
+                                val plateRadius = if (curPlateRad != null && curPlateRad > 10f) curPlateRad else (minOf(bitmap.width, bitmap.height) * 0.12f)
 
                                 VBTAnalyzer.setCalibratedPlate(plateCenter, plateRadius)
                                 barbellTracker.initialize(bitmap, plateCenter, plateRadius)
