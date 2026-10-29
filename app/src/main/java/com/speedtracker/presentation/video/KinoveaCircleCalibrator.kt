@@ -609,26 +609,4 @@ fun BoxScope.CalibrationVideoDirectionalOverlay(
             )
         }
     }
-
-    // Botón Re-centrar sutil (Esquina superior derecha)
-    Surface(
-        onClick = onReset,
-        shape = CircleShape,
-        color = Color(0xDD161616),
-        border = BorderStroke(1.dp, Color(0x6600FFCC)),
-        shadowElevation = 4.dp,
-        modifier = Modifier
-            .align(Alignment.TopEnd)
-            .padding(top = 12.dp, end = 12.dp)
-            .size(38.dp)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                Icons.Default.FilterCenterFocus,
-                contentDescription = "Re-centrar",
-                tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(20.dp)
-            )
-        }
-    }
 }

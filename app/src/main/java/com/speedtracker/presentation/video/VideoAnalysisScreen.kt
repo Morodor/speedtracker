@@ -342,20 +342,31 @@ fun VideoAnalysisScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        when {
-                            !isReadyToAnalyze -> {
-                                when (analysisSetupStep) {
-                                    AnalysisSetupStep.TRIM_VIDEO -> "Trim Video"
-                                    AnalysisSetupStep.SELECT_EXERCISE -> if (currentMode == "VBT") "Halterofilia / VBT" else "Salto Vertical"
-                                    AnalysisSetupStep.CALIBRATE -> if (currentMode == "JUMP") "Marcas de Salto" else "Calibración y Carga"
+                    Column {
+                        Text(
+                            when {
+                                !isReadyToAnalyze -> {
+                                    when (analysisSetupStep) {
+                                        AnalysisSetupStep.TRIM_VIDEO -> "Trim Video"
+                                        AnalysisSetupStep.SELECT_EXERCISE -> if (currentMode == "VBT") "Halterofilia / VBT" else "Salto Vertical"
+                                        AnalysisSetupStep.CALIBRATE -> "Calibración y Carga"
+                                    }
                                 }
-                            }
-                            isProcessing -> "Analizando..."
-                            else -> if (currentMode == "JUMP") "Resultados Salto (${selectedJumpType.name})" else "Resultados ${selectedVBTExercise.displayName}"
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
+                                isProcessing -> "Analizando..."
+                                else -> if (currentMode == "JUMP") "Resultados Salto (${selectedJumpType.name})" else "Resultados ${selectedVBTExercise.displayName}"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp
+                        )
+                        if (!isReadyToAnalyze && analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
+                            Text(
+                                if (currentMode == "VBT") "⚡ ${selectedVBTExercise.displayName}" else "↕ Salto ${selectedJumpType.name}",
+                                color = Color(0xFF00FFCC),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     if (!isReadyToAnalyze) {
@@ -534,18 +545,34 @@ fun VideoAnalysisScreen(
                                 }
                             }
 
-                            // Texto Duración del Recorte (Formato Imagen 1: "Trim video length: 4.05 (s)")
+                            // Fila de Tiempos: Tiempo Actual, Duración del Recorte y Duración Total
                             val trimDurationSec = ((trimEndMs - trimStartMs).coerceAtLeast(0L) / 1000.0)
-                            Text(
-                                text = String.format(Locale.US, "Trim video length: %.2f (s)", trimDurationSec),
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Normal,
-                                textAlign = TextAlign.Center,
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 10.dp, bottom = 4.dp)
-                            )
+                                    .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "⏱ ${formatTimeMs(currentVideoPosMs)}",
+                                    color = Color(0xFF00FFCC),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "Trim video length: %.2f (s)", trimDurationSec),
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = formatTimeMs(videoDurationMs),
+                                    color = Color.Gray,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Normal
+                                )
+                            }
 
                             // Dual RangeSlider para inicio y fin
                             val maxDur = if (videoDurationMs > 0) videoDurationMs.toFloat() else 10000f
@@ -569,6 +596,26 @@ fun VideoAnalysisScreen(
                                     .fillMaxWidth()
                                     .padding(horizontal = 8.dp)
                             )
+
+                            // Indicadores de tiempo de inicio y fin debajo del slider
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 14.dp, end = 14.dp, bottom = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Inicio: ${formatTimeMs(trimStartMs)}",
+                                    color = Color(0xFF00FFCC),
+                                    fontSize = 11.sp
+                                )
+                                Text(
+                                    text = "Fin: ${formatTimeMs(trimEndMs)}",
+                                    color = Color(0xFF00FFCC),
+                                    fontSize = 11.sp
+                                )
+                            }
 
                             // Fila de precisión: Botones frame a frame + Fijar marcas + FAB checkmark circular (Imagen 1)
                             Row(
@@ -937,10 +984,16 @@ fun VideoAnalysisScreen(
 
                     AnalysisSetupStep.CALIBRATE -> {
                         // ── PASO 3: CALIBRACIÓN MÉTRICA Y CARGA (IMAGEN 3) ──
-                        // Ejecutar auto-detección de inmediato al entrar en esta pantalla
+                        // Al ingresar a calibración, asegurar que el video inicie detenido en el primer frame y auto-detectar
                         LaunchedEffect(analysisSetupStep) {
-                            if (circleCenter == null && !isCalibrated && !isDetectingPlate) {
-                                runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
+                            if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
+                                videoViewRef?.pause()
+                                isPlaying = false
+                                videoViewRef?.seekTo(trimStartMs.toInt())
+                                currentVideoPosMs = trimStartMs
+                                if (circleCenter == null && !isCalibrated && !isDetectingPlate) {
+                                    runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
+                                }
                             }
                         }
 
@@ -950,7 +1003,7 @@ fun VideoAnalysisScreen(
                                 .padding(horizontal = 8.dp, vertical = 4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            // Contenedor de Video Centrado con Render Bounds Exactos (Elimina Desfases)
+                            // Contenedor de Video Centrado con Render Bounds Exactos
                             BoxWithConstraints(
                                 modifier = Modifier
                                     .weight(1f)
@@ -1007,10 +1060,11 @@ fun VideoAnalysisScreen(
                                                             mp.playbackParams = params
                                                         } catch (e: Exception) { }
                                                     }
+                                                    // Iniciar con el video detenido en el primer frame del recorte
                                                     seekTo(trimStartMs.toInt())
                                                     currentVideoPosMs = trimStartMs
-                                                    start()
-                                                    isPlaying = true
+                                                    pause()
+                                                    isPlaying = false
                                                 }
                                                 videoViewRef = this
                                             }
@@ -1025,7 +1079,7 @@ fun VideoAnalysisScreen(
                                             )
                                     )
 
-                                    // Retícula Circular Kinovea + Pad HUD Direccional dentro del mismo marco
+                                    // Retícula Circular Kinovea sobre el marco centrado
                                     val activeCenter = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
                                     KinoveaCircleReticleCanvas(
                                         center = activeCenter,
@@ -1034,6 +1088,7 @@ fun VideoAnalysisScreen(
                                         onRadiusChange = { circleRadiusPx = it }
                                     )
 
+                                    // Flechas HUD Direccionales aisladas (sin botones superpuestos)
                                     CalibrationVideoDirectionalOverlay(
                                         onMove = { dx, dy ->
                                             val cur = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
@@ -1047,40 +1102,7 @@ fun VideoAnalysisScreen(
                                         }
                                     )
 
-                                    // Badge Superior Izquierdo: Ejercicio Seleccionado + Cambiar
-                                    Surface(
-                                        shape = RoundedCornerShape(20.dp),
-                                        color = Color(0xCC1E1E1E),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)),
-                                        modifier = Modifier
-                                            .align(Alignment.TopStart)
-                                            .padding(8.dp)
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                        ) {
-                                            val badgeLabel = if (currentMode == "VBT") "⚡ ${selectedVBTExercise.displayName}" else "↕ Salto ${selectedJumpType.name}"
-                                            Text(
-                                                badgeLabel,
-                                                color = Color(0xFF00FFCC),
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                "Cambiar",
-                                                color = Color.LightGray,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                modifier = Modifier.clickable {
-                                                    analysisSetupStep = AnalysisSetupStep.SELECT_EXERCISE
-                                                }
-                                            )
-                                        }
-                                    }
-
-                                    // Botones Superiores Derechos: Audio y Reset Zoom (Sin superposición con Auto Detectar)
+                                    // Botones Superiores Derechos ÚNICOS: Audio y Reset Zoom (Sin superposición con ningún otro botón)
                                     Row(
                                         modifier = Modifier
                                             .align(Alignment.TopEnd)
@@ -1129,9 +1151,116 @@ fun VideoAnalysisScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 6.dp),
+                                    .padding(top = 4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
+                                // Fila de Controles de Reproducción y Cuadro a Cuadro en Calibración
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // -1 Frame
+                                        FilledTonalIconButton(
+                                            onClick = {
+                                                videoViewRef?.let { vv ->
+                                                    vv.pause()
+                                                    isPlaying = false
+                                                    val newPos = (vv.currentPosition - 33).coerceAtLeast(trimStartMs.toInt())
+                                                    vv.seekTo(newPos)
+                                                    currentVideoPosMs = newPos.toLong()
+                                                }
+                                            },
+                                            modifier = Modifier.size(34.dp),
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = Color(0xFF262626),
+                                                contentColor = Color.White
+                                            )
+                                        ) {
+                                            Icon(Icons.Default.FastRewind, contentDescription = "-1 Frame", modifier = Modifier.size(16.dp))
+                                        }
+
+                                        // Play / Pause
+                                        FilledTonalIconButton(
+                                            onClick = {
+                                                videoViewRef?.let { vv ->
+                                                    if (isPlaying) {
+                                                        vv.pause()
+                                                        isPlaying = false
+                                                    } else {
+                                                        vv.start()
+                                                        isPlaying = true
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.size(34.dp),
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = Color(0xFF00FFCC),
+                                                contentColor = Color.Black
+                                            )
+                                        ) {
+                                            Icon(
+                                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                contentDescription = "Play/Pausa",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+
+                                        // +1 Frame
+                                        FilledTonalIconButton(
+                                            onClick = {
+                                                videoViewRef?.let { vv ->
+                                                    vv.pause()
+                                                    isPlaying = false
+                                                    val maxLimit = if (trimEndMs > 0) trimEndMs.toInt() else vv.duration
+                                                    val newPos = (vv.currentPosition + 33).coerceAtMost(maxLimit)
+                                                    vv.seekTo(newPos)
+                                                    currentVideoPosMs = newPos.toLong()
+                                                }
+                                            },
+                                            modifier = Modifier.size(34.dp),
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = Color(0xFF262626),
+                                                contentColor = Color.White
+                                            )
+                                        ) {
+                                            Icon(Icons.Default.FastForward, contentDescription = "+1 Frame", modifier = Modifier.size(16.dp))
+                                        }
+
+                                        // Volver al Primer Frame del recorte
+                                        OutlinedButton(
+                                            onClick = {
+                                                videoViewRef?.let { vv ->
+                                                    vv.pause()
+                                                    isPlaying = false
+                                                    vv.seekTo(trimStartMs.toInt())
+                                                    currentVideoPosMs = trimStartMs
+                                                }
+                                            },
+                                            modifier = Modifier.height(34.dp),
+                                            contentPadding = PaddingValues(horizontal = 6.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
+                                        ) {
+                                            Text("▶| Primer Frame", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+
+                                    Text(
+                                        text = "⏱ ${formatTimeMs(currentVideoPosMs)}",
+                                        color = Color(0xFF00FFCC),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(2.dp))
+
                                 Text(
                                     "Ajusta el círculo sobre el borde del disco olímpico (45 cm). Arrastra el centro o usa las flechas HUD.",
                                     color = Color(0xFF00FFCC),
@@ -1139,7 +1268,7 @@ fun VideoAnalysisScreen(
                                     textAlign = TextAlign.Center
                                 )
 
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
 
                                 // Fila de Controles de Tamaño de Círculo [-] [Slider] [+] y Botón Auto Detectar
                                 Row(
@@ -1199,7 +1328,7 @@ fun VideoAnalysisScreen(
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
 
                                 // Módulo de Carga de la Barra para VBT
                                 if (currentMode == "VBT") {
@@ -1211,7 +1340,7 @@ fun VideoAnalysisScreen(
                                             brush = androidx.compose.ui.graphics.SolidColor(Color(0x6600FFCC))
                                         )
                                     ) {
-                                        Column(modifier = Modifier.padding(8.dp)) {
+                                        Column(modifier = Modifier.padding(6.dp)) {
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1235,7 +1364,7 @@ fun VideoAnalysisScreen(
                                                 Text("Calcula Watts, N y 1RM", color = Color.Gray, fontSize = 10.sp)
                                             }
 
-                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Spacer(modifier = Modifier.height(4.dp))
 
                                             // Fila de Ajuste Stepper con cuadro de texto y fuente ajustada
                                             Row(
@@ -1353,56 +1482,40 @@ fun VideoAnalysisScreen(
 
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                // Fila de Botones de Acción: Volver a Ejercicio e Iniciar Análisis
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                // Botón Iniciar Análisis a Pantalla Completa (Sin botón Volver abajo, ya que está la flecha arriba)
+                                Button(
+                                    onClick = {
+                                        val bounds = calculateVideoRenderBounds(screenBoxWidth, screenBoxHeight, videoNativeWidth, videoNativeHeight)
+                                        val centerToUse = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
+
+                                        val scaleX = videoNativeWidth.toFloat() / bounds.renderWidth
+                                        val scaleY = videoNativeHeight.toFloat() / bounds.renderHeight
+                                        val nativeCenter = Offset(centerToUse.x * scaleX, centerToUse.y * scaleY)
+                                        val nativeRadius = circleRadiusPx * scaleX
+
+                                        calibratedPlateCenterVideo = nativeCenter
+                                        calibratedPlateRadiusVideo = nativeRadius
+
+                                        val nativeDiameterPx = nativeRadius * 2f
+                                        val ratio = if (nativeDiameterPx > 5f) 0.45 / nativeDiameterPx.toDouble() else 0.0024
+                                        VBTAnalyzer.setCalibratedPlate(nativeCenter, nativeRadius)
+                                        VBTAnalyzer.pxToMetersRatio = ratio
+                                        customRatioMmPerPx = ratio * 1000.0
+                                        isCalibrated = true
+
+                                        videoViewRef?.pause()
+                                        isReadyToAnalyze = true
+                                        isProcessing = true
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF00FFCC),
+                                        contentColor = Color.Black
+                                    )
                                 ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            analysisSetupStep = AnalysisSetupStep.SELECT_EXERCISE
-                                        },
-                                        modifier = Modifier.weight(1f).height(46.dp),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray)
-                                    ) {
-                                        Icon(Icons.Default.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Volver a Ejercicio", fontSize = 12.sp)
-                                    }
-
-                                    Button(
-                                        onClick = {
-                                            val bounds = calculateVideoRenderBounds(screenBoxWidth, screenBoxHeight, videoNativeWidth, videoNativeHeight)
-                                            val centerToUse = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
-
-                                            val scaleX = videoNativeWidth.toFloat() / bounds.renderWidth
-                                            val scaleY = videoNativeHeight.toFloat() / bounds.renderHeight
-                                            val nativeCenter = Offset(centerToUse.x * scaleX, centerToUse.y * scaleY)
-                                            val nativeRadius = circleRadiusPx * scaleX
-
-                                            calibratedPlateCenterVideo = nativeCenter
-                                            calibratedPlateRadiusVideo = nativeRadius
-
-                                            val nativeDiameterPx = nativeRadius * 2f
-                                            val ratio = if (nativeDiameterPx > 5f) 0.45 / nativeDiameterPx.toDouble() else 0.0024
-                                            VBTAnalyzer.setCalibratedPlate(nativeCenter, nativeRadius)
-                                            VBTAnalyzer.pxToMetersRatio = ratio
-                                            customRatioMmPerPx = ratio * 1000.0
-                                            isCalibrated = true
-
-                                            videoViewRef?.pause()
-                                            isReadyToAnalyze = true
-                                            isProcessing = true
-                                        },
-                                        modifier = Modifier.weight(1.3f).height(46.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = Color(0xFF00FFCC),
-                                            contentColor = Color.Black
-                                        )
-                                    ) {
-                                        Text("Iniciar Análisis 🚀", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    }
+                                    Text("Iniciar Análisis 🚀", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
                         }
