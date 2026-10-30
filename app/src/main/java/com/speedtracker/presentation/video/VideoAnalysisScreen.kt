@@ -345,7 +345,7 @@ fun VideoAnalysisScreen(
                 title = {
                     Column {
                         Text(
-                            when {
+                            text = when {
                                 !isReadyToAnalyze -> {
                                     when (analysisSetupStep) {
                                         AnalysisSetupStep.TRIM_VIDEO -> "Trim Video"
@@ -357,7 +357,10 @@ fun VideoAnalysisScreen(
                                 else -> if (currentMode == "JUMP") "Resultados Salto (${selectedJumpType.name}) Biomecánicos" else "Resultados ${selectedVBTExercise.displayName} Biomecánicos"
                             },
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
                         )
                         if (!isReadyToAnalyze && analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
                             Text(
@@ -365,14 +368,6 @@ fun VideoAnalysisScreen(
                                 color = Color(0xFF00FFCC),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
-                            )
-                        }
-                        if (finalResult != null && isReadyToAnalyze && !isProcessing) {
-                            Text(
-                                "Atleta: ${activeUser?.name ?: "Invitado"}",
-                                color = Color.Gray,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Normal
                             )
                         }
                     }
@@ -554,32 +549,39 @@ fun VideoAnalysisScreen(
                                 }
                             }
 
-                            // Fila de Tiempos: Tiempo Actual, Duración del Recorte y Duración Total
+                            // Fila de Tiempos: Tiempo Actual, Duración del Recorte y Duración Total (Altura fija para evitar jitter)
                             val trimDurationSec = ((trimEndMs - trimStartMs).coerceAtLeast(0L) / 1000.0)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 2.dp),
+                                    .height(28.dp)
+                                    .padding(horizontal = 14.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = "⏱ ${formatTimeMs(currentVideoPosMs)}",
                                     color = Color(0xFF00FFCC),
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                                 Text(
-                                    text = String.format(Locale.US, "Trim video length: %.2f (s)", trimDurationSec),
+                                    text = "Recorte: ${String.format(Locale.US, "%.2fs", trimDurationSec)}",
                                     color = Color.White,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                                 Text(
                                     text = formatTimeMs(videoDurationMs),
                                     color = Color.Gray,
                                     fontSize = 13.sp,
-                                    fontWeight = FontWeight.Normal
+                                    fontWeight = FontWeight.Normal,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
 
@@ -622,19 +624,24 @@ fun VideoAnalysisScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(start = 14.dp, end = 14.dp, bottom = 2.dp),
+                                    .height(20.dp)
+                                    .padding(horizontal = 14.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = "Inicio: ${formatTimeMs(trimStartMs)}",
                                     color = Color(0xFF00FFCC),
-                                    fontSize = 11.sp
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                                 Text(
                                     text = "Fin: ${formatTimeMs(trimEndMs)}",
                                     color = Color(0xFF00FFCC),
-                                    fontSize = 11.sp
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
 
@@ -642,7 +649,8 @@ fun VideoAnalysisScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                                    .height(50.dp)
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -3236,6 +3244,12 @@ fun AnalysisResultVideoPreview(
                 e.printStackTrace()
             }
         }
+        previewVideoViewRef?.let { vv ->
+            if (!vv.isPlaying) {
+                vv.start()
+            }
+        }
+        isPlaying = true
     }
 
     LaunchedEffect(isPreviewMuted, previewPlayerRef) {
@@ -3257,6 +3271,9 @@ fun AnalysisResultVideoPreview(
             if (!isUserSeeking) {
                 previewVideoViewRef?.let { vv ->
                     if (vv.isPlaying) {
+                        if (!isPlaying) {
+                            isPlaying = true
+                        }
                         val now = android.os.SystemClock.elapsedRealtime()
                         val reportedPos = vv.currentPosition.toLong()
 
@@ -3851,12 +3868,12 @@ fun AnalysisResultVideoPreview(
                         }
                     }
 
-                    // Selector de velocidad (cámara lenta), botón de Gráficos Overlay y guía
+                    // Selector de velocidad (cámara lenta) y botón de Gráficos Overlay centrado
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // Controles de velocidad a la izquierda
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -3889,43 +3906,43 @@ fun AnalysisResultVideoPreview(
                                     }
                                 }
                             }
+                        }
 
-                            Spacer(modifier = Modifier.width(2.dp))
-
-                            // Botón Gráficos Overlay en el video (1/5 inferior)
+                        // Botón Gráficos centrado en el espacio restante entre 1.0x y el margen derecho
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Surface(
                                 onClick = { showTelemetryOverlay = !showTelemetryOverlay },
-                                shape = RoundedCornerShape(4.dp),
+                                shape = RoundedCornerShape(6.dp),
                                 color = if (showTelemetryOverlay) Color(0x3300FFCC) else Color(0xFF262626),
-                                border = if (showTelemetryOverlay) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC)) else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (showTelemetryOverlay) Color(0xFF00FFCC) else Color(0xFF444444)
+                                ),
                                 modifier = Modifier.height(28.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    modifier = Modifier.padding(horizontal = 6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp)
                                 ) {
                                     Icon(
                                         Icons.Default.ShowChart,
                                         contentDescription = "Gráficos en tiempo real",
                                         tint = if (showTelemetryOverlay) Color(0xFF00FFCC) else Color.LightGray,
-                                        modifier = Modifier.size(15.dp)
+                                        modifier = Modifier.size(16.dp)
                                     )
                                     Text(
                                         "Gráficos",
                                         color = if (showTelemetryOverlay) Color(0xFF00FFCC) else Color.LightGray,
                                         fontSize = 11.sp,
-                                        fontWeight = if (showTelemetryOverlay) FontWeight.Bold else FontWeight.Normal
+                                        fontWeight = if (showTelemetryOverlay) FontWeight.Bold else FontWeight.Medium
                                     )
                                 }
                             }
                         }
-
-                        Text(
-                            "◀ ▶ Fotograma",
-                            color = Color(0xFF777777),
-                            fontSize = 10.sp
-                        )
                     }
                 }
             }
