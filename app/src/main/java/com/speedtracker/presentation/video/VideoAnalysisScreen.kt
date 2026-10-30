@@ -73,6 +73,7 @@ import com.speedtracker.core.math.VBTAnalyzer
 import com.speedtracker.core.math.VBTExerciseFamily
 import com.speedtracker.core.math.VBTExerciseModel
 import com.speedtracker.core.math.VerticalJumpAnalyzer
+import com.speedtracker.core.report.BiomechanicalPdfReportGenerator
 import com.speedtracker.data.UserRepository
 import com.speedtracker.presentation.camera.FramingGuideOverlay
 import com.speedtracker.presentation.camera.FramingGuideType
@@ -159,6 +160,265 @@ fun getVideoNativeDimensions(context: Context, uri: Uri): Pair<Int, Int> {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+
+data class MetricInfo(
+    val title: String,
+    val shortName: String,
+    val definition: String,
+    val practicalValue: String,
+    val referenceRange: String
+)
+
+object MetricInfoCatalog {
+    val PV = MetricInfo(
+        title = "Velocidad Pico (PV)",
+        shortName = "PV",
+        definition = "Velocidad instantánea máxima alcanzada por la barra durante la fase de aceleración concéntrica.",
+        practicalValue = "Es la métrica de referencia en levantamientos olímpicos (Snatch, Clean) y movimientos balísticos. Refleja la capacidad del sistema neuromuscular para generar aceleración máxima en el segundo tirón.",
+        referenceRange = "> 2.00 m/s: Velocidad óptima en Snatch/Clean con cargas de potencia. 1.60 - 2.00 m/s: Cargas pesadas de entrenamiento. < 1.40 m/s: Límite de fallo técnico."
+    )
+
+    val MV = MetricInfo(
+        title = "Velocidad Media (MV)",
+        shortName = "MV",
+        definition = "Promedio de la velocidad de la barra a lo largo de toda la fase concéntrica (desde el punto de inversión inferior hasta el bloqueo final).",
+        practicalValue = "Métrica estándar para ejercicios de fuerza tradicional (Sentadilla, Press Banca, Peso Muerto). Se utiliza para dosificar la intensidad y medir la fatiga entre series por pérdida de velocidad (% Velocity Loss).",
+        referenceRange = "Sentadilla 1RM ≈ 0.30 m/s | Press Banca 1RM ≈ 0.17 m/s | Pérdida recomendada por serie: 10% a 20% para fuerza e hipertrofia sin fatiga residual excesiva."
+    )
+
+    val VMP = MetricInfo(
+        title = "Velocidad Propulsiva (VMP)",
+        shortName = "VMP",
+        definition = "Velocidad media calculada únicamente durante la fase donde la aceleración de la barra es mayor que la gravedad (a ≥ -9.81 m/s²), descartando la fase de frenado involuntario.",
+        practicalValue = "Validada por Sánchez-Medina et al. Elimina la subestimación de fuerza con cargas ligeras y medianas (<80% 1RM), donde el atleta frena voluntariamente para no soltar la barra.",
+        referenceRange = "Prácticamente igual a la velocidad media en cargas pesadas (>80% 1RM), pero considerablemente más alta y precisa en cargas submáximas y de potencia."
+    )
+
+    val CONCENTRIC_TIME = MetricInfo(
+        title = "Duración Fase Concéntrica",
+        shortName = "Tiempo Concéntrico",
+        definition = "Tiempo total (en milisegundos) que dura el ascenso de la barra, desde el despegue o punto más bajo hasta la extensión final.",
+        practicalValue = "Permite evaluar la fluidez y economía técnica. Un aumento de la duración con la misma carga es un síntoma directo de fatiga neuromuscular central.",
+        referenceRange = "Tirones y Snatch: 600 - 1800 ms según la variante desde el suelo o en suspensión."
+    )
+
+    val TIME_TO_PEAK = MetricInfo(
+        title = "Tiempo a Velocidad Pico",
+        shortName = "T. Vel. Pico",
+        definition = "Milisegundos transcurridos desde que inicia la fase concéntrica hasta que se alcanza la velocidad máxima instantánea.",
+        practicalValue = "Mide la rapidez de la transición motora (del primer al segundo tirón en halterofilia). Una transición más compacta optimiza la inercia sin desaceleraciones intermedias.",
+        referenceRange = "700 - 1100 ms en levantamientos olímpicos completos desde el suelo."
+    )
+
+    val RFD = MetricInfo(
+        title = "RFD (Tasa de Desarrollo de Fuerza)",
+        shortName = "RFD",
+        definition = "Rapidez de incremento de fuerza por unidad de tiempo (ΔFuerza / ΔTiempo), medida en Newtons por segundo (N/s).",
+        practicalValue = "Indica la capacidad de reclutamiento de unidades motoras en los primeros milisegundos. Factor clave en despegues explosivos, saltos y deportes de combate.",
+        referenceRange = "> 150 N/s: Excelente aceleración inicial en levantamientos olímpicos y saltos."
+    )
+
+    val POWER = MetricInfo(
+        title = "Potencia Mecánica (Watts & W/kg)",
+        shortName = "Potencia",
+        definition = "Tasa de trabajo mecánico producido (Fuerza × Velocidad). Se presenta en Watts absolutos y en Watts por kg de peso corporal del atleta.",
+        practicalValue = "Normalizar los Watts por kilogramo de peso corporal permite comparar objetivamente el rendimiento entre atletas de diferentes pesos y categorías.",
+        referenceRange = "Atletas recreacionales: 12 - 18 W/kg | Atletas avanzados/competitivos: 20 - 35+ W/kg en tirones y saltos."
+    )
+
+    val FORCE = MetricInfo(
+        title = "Fuerza Pico (N) & Trabajo Mecánico (J)",
+        shortName = "Fuerza & Trabajo",
+        definition = "Fuerza dinámica máxima ejercida contra la barra en Newtons (m·(a+g)) y energía mecánica total invertida en el ascenso expresada en Joules.",
+        practicalValue = "Muestra la demanda mecánica total impuesta al sistema musculoesquelético durante el levantamiento.",
+        referenceRange = "Directamente proporcional a la carga levantada y a la aceleración generada."
+    )
+
+    val ONE_RM = MetricInfo(
+        title = "1RM Estimado (%1RM)",
+        shortName = "1RM Estimado",
+        definition = "Proyección del peso máximo para una repetición basado en la velocidad de ejecución y las ecuaciones de perfil VBT (González-Badillo et al.).",
+        practicalValue = "Permite regular el entrenamiento en base al estado de fuerza diario real del atleta (autorregulación), evitando el riesgo lesivo de testear 1RM máximos reales.",
+        referenceRange = "El %1RM indica el porcentaje relativo de intensidad que representó la serie realizada."
+    )
+
+    val BAR_DRIFT = MetricInfo(
+        title = "Desvío Horizontal (Bar Drift)",
+        shortName = "Desvío de Barra",
+        definition = "Desplazamiento horizontal máximo de la barra durante el tirón vertical, calibrado según los 45 cm de referencia del disco olímpico.",
+        practicalValue = "Mide la eficiencia técnica de la trayectoria. El levantamiento óptimo minimiza el balanceo hacia adelante o atrás para aprovechar la aceleración vertical.",
+        referenceRange = "< 10 cm: Trayectoria vertical óptima / limpia. 10 - 18 cm: Desvío aceptable con leve balanceo. > 18 cm: Pérdida técnica de palanca (la barra se separa del cuerpo)."
+    )
+
+    val JUMP_HEIGHT = MetricInfo(
+        title = "Altura de Salto Vertical",
+        shortName = "Altura Salto",
+        definition = "Altura alcanzada por el centro de gravedad, calculada a partir del tiempo de vuelo con cámara de alta velocidad (h = 1/8 · g · t²).",
+        practicalValue = "Métrica fundamental para valorar la potencia neuromuscular y la fatiga neuromuscular del tren inferior (CMJ / Squat Jump).",
+        referenceRange = "> 35 cm: Nivel intermedio. > 45 cm: Nivel avanzado / atletas competitivos."
+    )
+
+    val FLIGHT_TIME = MetricInfo(
+        title = "Tiempo de Vuelo",
+        shortName = "Tiempo Vuelo",
+        definition = "Milisegundos transcurridos desde que la punta de los pies deja el suelo hasta el primer contacto en el aterrizaje.",
+        practicalValue = "Valida la consistencia cinemática del salto y la precisión de la captura del video.",
+        referenceRange = "500 - 750 ms según la altura del salto."
+    )
+}
+
+@Composable
+fun MetricLabelWithInfo(
+    label: String,
+    info: MetricInfo,
+    onInfoClick: (MetricInfo) -> Unit,
+    modifier: Modifier = Modifier,
+    isStarred: Boolean = false,
+    starColor: Color = Color(0xFF00FFCC)
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier.clickable { onInfoClick(info) }
+    ) {
+        Text(label, color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+        if (isStarred) {
+            Spacer(modifier = Modifier.width(3.dp))
+            Text("★", color = starColor, fontSize = 11.sp)
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Icon(
+            imageVector = Icons.Default.Info,
+            contentDescription = "Información sobre $label",
+            modifier = Modifier.size(13.dp),
+            tint = Color(0xFF00FFCC).copy(alpha = 0.85f)
+        )
+    }
+}
+
+@Composable
+fun BiomechanicalInterpretationCard(
+    evaluation: BiomechanicalPdfReportGenerator.BiomechanicalEvaluation,
+    peakVelocity: Double,
+    loadKg: Double,
+    relativeWattsPerKg: Double,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF131B24)),
+        shape = RoundedCornerShape(14.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.35f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = Color(0xFF00FFCC),
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    "Interpretación Biomecánica & Diagnóstico",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Surface(
+                color = Color(0xFF1C2734),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        "⚡ ${evaluation.velocityZoneTag}",
+                        color = Color(0xFF00FFCC),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        evaluation.velocityZoneDetail,
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Surface(
+                color = Color(0xFF1C2734),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        "📐 ${evaluation.driftTag}",
+                        color = if ("ÓPTIMA" in evaluation.driftTag) Color(0xFF00FFCC) else Color(0xFFFFB300),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        evaluation.driftDetail,
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Surface(
+                color = Color(0xFF16232E),
+                shape = RoundedCornerShape(8.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.4f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        evaluation.loadRecommendation,
+                        color = Color(0xFF00E5FF),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        evaluation.rfdDetail,
+                        color = Color(0xFF94A3B8),
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                "✓ Validación VBT: González-Badillo & Sánchez-Medina (2010, 2017)",
+                color = Color(0xFF64748B),
+                fontSize = 10.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoAnalysisScreen(
     videoUriString: String,
@@ -194,6 +454,9 @@ fun VideoAnalysisScreen(
     var vbtDeviationResultCm by remember { mutableStateOf<Double?>(null) }
     var barbellLoadKg by remember { mutableStateOf("70") }
     var trackingPointsResult by remember { mutableStateOf<List<VideoFrameTrackingPoint>>(emptyList()) }
+    var isGeneratingPdf by remember { mutableStateOf(false) }
+    var generatedPdfPath by remember { mutableStateOf<String?>(null) }
+    var selectedMetricInfo by remember { mutableStateOf<MetricInfo?>(null) }
     var isExportingVideo by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableFloatStateOf(0f) }
     val coroutineScope = rememberCoroutineScope()
@@ -1736,7 +1999,7 @@ fun VideoAnalysisScreen(
                                         shape = RoundedCornerShape(12.dp)
                                     ) {
                                         Column(modifier = Modifier.padding(16.dp)) {
-                                            Text("SALTO VERTICAL", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
+                                            MetricLabelWithInfo("SALTO VERTICAL", MetricInfoCatalog.JUMP_HEIGHT, { selectedMetricInfo = it })
                                             Spacer(modifier = Modifier.height(6.dp))
                                             Text(
                                                 "${String.format("%.1f", finalResult!! * 100)} cm",
@@ -1752,7 +2015,7 @@ fun VideoAnalysisScreen(
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Column {
-                                                    Text("Potencia Pico (Sayers)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo("Potencia Pico (Sayers)", MetricInfoCatalog.POWER, { selectedMetricInfo = it })
                                                     Text(
                                                         "${metrics?.peakPowerWatts?.toInt() ?: "--"} W",
                                                         color = Color.White,
@@ -1761,7 +2024,7 @@ fun VideoAnalysisScreen(
                                                     )
                                                 }
                                                 Column(horizontalAlignment = Alignment.End) {
-                                                    Text("Potencia Relativa", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo("Potencia Relativa", MetricInfoCatalog.POWER, { selectedMetricInfo = it })
                                                     Text(
                                                         "${String.format("%.1f", metrics?.relativePowerWattsPerKg ?: 0.0)} W/kg",
                                                         color = Color(0xFF00FFCC),
@@ -1771,11 +2034,23 @@ fun VideoAnalysisScreen(
                                                 }
                                             }
                                             Spacer(modifier = Modifier.height(8.dp))
-                                            Text(
-                                                "Tiempo de vuelo: ${(metrics?.flightTimeSeconds?.times(1000))?.toInt() ?: "--"} ms",
-                                                color = Color.Gray,
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.clickable { selectedMetricInfo = MetricInfoCatalog.FLIGHT_TIME }
+                                            ) {
+                                                Text(
+                                                    "Tiempo de vuelo: ${(metrics?.flightTimeSeconds?.times(1000))?.toInt() ?: "--"} ms",
+                                                    color = Color.Gray,
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.Info,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(11.dp),
+                                                    tint = Color(0xFF00FFCC).copy(alpha = 0.7f)
+                                                )
+                                            }
                                         }
                                     }
                                     if (trackingPointsResult.isNotEmpty()) {
@@ -1898,13 +2173,13 @@ fun VideoAnalysisScreen(
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Column {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text("Vel. Pico (PV)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                                        if (selectedExerciseModel.usesPeakVelocity) {
-                                                            Spacer(modifier = Modifier.width(3.dp))
-                                                            Text("★", color = Color(0xFF00FFCC), fontSize = 11.sp)
-                                                        }
-                                                    }
+                                                    MetricLabelWithInfo(
+                                                        label = "Vel. Pico (PV)",
+                                                        info = MetricInfoCatalog.PV,
+                                                        onInfoClick = { selectedMetricInfo = it },
+                                                        isStarred = selectedExerciseModel.usesPeakVelocity,
+                                                        starColor = Color(0xFF00FFCC)
+                                                    )
                                                     Text(
                                                         "${String.format(Locale.US, "%.2f", peakVelocity)}",
                                                         color = Color(0xFF00FFCC),
@@ -1915,13 +2190,13 @@ fun VideoAnalysisScreen(
                                                 }
 
                                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text("Vel. Media (MV)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                                        if (!selectedExerciseModel.usesPeakVelocity) {
-                                                            Spacer(modifier = Modifier.width(3.dp))
-                                                            Text("★", color = Color(0xFF00E676), fontSize = 11.sp)
-                                                        }
-                                                    }
+                                                    MetricLabelWithInfo(
+                                                        label = "Vel. Media (MV)",
+                                                        info = MetricInfoCatalog.MV,
+                                                        onInfoClick = { selectedMetricInfo = it },
+                                                        isStarred = !selectedExerciseModel.usesPeakVelocity,
+                                                        starColor = Color(0xFF00E676)
+                                                    )
                                                     Text(
                                                         "${String.format(Locale.US, "%.2f", meanVelocity)}",
                                                         color = Color(0xFF00E676),
@@ -1932,9 +2207,11 @@ fun VideoAnalysisScreen(
                                                 }
 
                                                 Column(horizontalAlignment = Alignment.End) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text("Propulsiva (VMP)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                                    }
+                                                    MetricLabelWithInfo(
+                                                        label = "Propulsiva (VMP)",
+                                                        info = MetricInfoCatalog.VMP,
+                                                        onInfoClick = { selectedMetricInfo = it }
+                                                    )
                                                     Text(
                                                         "${String.format(Locale.US, "%.2f", vmpVelocity)}",
                                                         color = Color(0xFF00E5FF),
@@ -1955,7 +2232,11 @@ fun VideoAnalysisScreen(
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Column {
-                                                    Text("Fase Concéntrica", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo(
+                                                        label = "Fase Concéntrica",
+                                                        info = MetricInfoCatalog.CONCENTRIC_TIME,
+                                                        onInfoClick = { selectedMetricInfo = it }
+                                                    )
                                                     Text(
                                                         "${concentricDurationMs} ms",
                                                         color = Color.White,
@@ -1970,7 +2251,11 @@ fun VideoAnalysisScreen(
                                                 }
 
                                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text("T. a Vel. Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo(
+                                                        label = "T. a Vel. Pico",
+                                                        info = MetricInfoCatalog.TIME_TO_PEAK,
+                                                        onInfoClick = { selectedMetricInfo = it }
+                                                    )
                                                     Text(
                                                         "${timeToPeakMs} ms",
                                                         color = Color(0xFF00FFCC),
@@ -1985,7 +2270,11 @@ fun VideoAnalysisScreen(
                                                 }
 
                                                 Column(horizontalAlignment = Alignment.End) {
-                                                    Text("RFD (Explosividad)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo(
+                                                        label = "RFD (Explosividad)",
+                                                        info = MetricInfoCatalog.RFD,
+                                                        onInfoClick = { selectedMetricInfo = it }
+                                                    )
                                                     Text(
                                                         "${rfdNPerSec} N/s",
                                                         color = Color(0xFFFF9100),
@@ -2010,7 +2299,11 @@ fun VideoAnalysisScreen(
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Column {
-                                                    Text("Potencia Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo(
+                                                        label = "Potencia Pico",
+                                                        info = MetricInfoCatalog.POWER,
+                                                        onInfoClick = { selectedMetricInfo = it }
+                                                    )
                                                     Text(
                                                         "${peakPowerWatts.toInt()} W",
                                                         color = Color.White,
@@ -2024,7 +2317,11 @@ fun VideoAnalysisScreen(
                                                     )
                                                 }
                                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text("Fuerza Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo(
+                                                        label = "Fuerza Pico",
+                                                        info = MetricInfoCatalog.FORCE,
+                                                        onInfoClick = { selectedMetricInfo = it }
+                                                    )
                                                     Text(
                                                         "${peakForceN.toInt()} N",
                                                         color = Color.White,
@@ -2038,7 +2335,11 @@ fun VideoAnalysisScreen(
                                                     )
                                                 }
                                                 Column(horizontalAlignment = Alignment.End) {
-                                                    Text("1RM Estimado", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo(
+                                                        label = "1RM Estimado",
+                                                        info = MetricInfoCatalog.ONE_RM,
+                                                        onInfoClick = { selectedMetricInfo = it }
+                                                    )
                                                     Text(
                                                         "${estimatedOneRM.toInt()} kg",
                                                         color = Color(0xFFFFD600),
@@ -2074,7 +2375,11 @@ fun VideoAnalysisScreen(
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Column {
-                                                    Text("Desvío Horizontal (Bar Drift)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    MetricLabelWithInfo(
+                                                        label = "Desvío Horizontal (Bar Drift)",
+                                                        info = MetricInfoCatalog.BAR_DRIFT,
+                                                        onInfoClick = { selectedMetricInfo = it }
+                                                    )
                                                     Text(
                                                         "${String.format("%.1f", vbtDeviationResultCm ?: 0.0)} cm",
                                                         color = if ((vbtDeviationResultCm ?: 0.0) < 8.0) Color(0xFF00FFCC) else Color(0xFFFFB300),
@@ -2102,6 +2407,27 @@ fun VideoAnalysisScreen(
                                         onSeekToTimestamp = { resultSeekPosMs = it },
                                         modifier = Modifier.fillMaxWidth()
                                     )
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    // Tarjeta de Interpretación Biomecánica & Diagnóstico
+                                    val evaluation = BiomechanicalPdfReportGenerator.evaluateLift(
+                                        peakVelocity = peakVelocity,
+                                        loadKg = currentLoadKg,
+                                        pctOneRM = pctOneRM,
+                                        horizontalDeviationCm = vbtDeviationResultCm,
+                                        relativeWattsPerKg = relativeWattsPerKg,
+                                        peakForceN = peakForceN,
+                                        workJoules = workJoules,
+                                        timeToPeakMs = timeToPeakMs,
+                                        rfdNPerSec = rfdNPerSec
+                                    )
+                                    BiomechanicalInterpretationCard(
+                                        evaluation = evaluation,
+                                        peakVelocity = peakVelocity,
+                                        loadKg = currentLoadKg,
+                                        relativeWattsPerKg = relativeWattsPerKg
+                                    )
                                 }
                             }
                         }
@@ -2123,25 +2449,59 @@ fun VideoAnalysisScreen(
                                 Button(
                                     onClick = {
                                         if (activeUser != null) {
-                                            userRepository.saveSession(
-                                                Session(
-                                                    id = UUID.randomUUID().toString(),
-                                                    userId = activeUser.id,
-                                                    activityType = if (currentMode == "VBT") "${currentMode} (${selectedExerciseModel.displayName})" else currentMode!!,
-                                                    result = finalResult!!,
-                                                    timestamp = System.currentTimeMillis(),
-                                                    powerWatts = if (currentMode == "VBT") peakPowerWatts else jumpMetricsResult?.peakPowerWatts,
-                                                    powerWattsPerKg = if (currentMode == "VBT") relativeWattsPerKg else jumpMetricsResult?.relativePowerWattsPerKg,
-                                                    horizontalDeviationCm = vbtDeviationResultCm,
-                                                    meanVelocity = if (currentMode == "VBT") meanVelocity else null,
-                                                    loadKg = if (currentMode == "VBT") currentLoadKg else null,
-                                                    vmpVelocity = if (currentMode == "VBT") vmpVelocity else null,
-                                                    concentricDurationMs = if (currentMode == "VBT") concentricDurationMs else null,
-                                                    timeToPeakMs = if (currentMode == "VBT") timeToPeakMs else null,
-                                                    rfdNPerSec = if (currentMode == "VBT") rfdNPerSec else null
+                                            coroutineScope.launch {
+                                                val reportPath = generatedPdfPath ?: try {
+                                                    BiomechanicalPdfReportGenerator.generateReport(
+                                                        context = context,
+                                                        videoUri = Uri.parse(videoUriString),
+                                                        athleteName = activeUser.name,
+                                                        athleteWeightKg = activeUser.bodyWeightKg,
+                                                        exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical (${selectedJumpType.name})",
+                                                        exerciseFamily = if (currentMode == "VBT") selectedExerciseModel.family.label else "Salto",
+                                                        loadKg = currentLoadKg,
+                                                        peakVelocity = peakVelocity,
+                                                        meanVelocity = meanVelocity,
+                                                        vmpVelocity = vmpVelocity,
+                                                        concentricDurationMs = concentricDurationMs,
+                                                        timeToPeakMs = timeToPeakMs,
+                                                        rfdNPerSec = rfdNPerSec,
+                                                        peakPowerWatts = peakPowerWatts,
+                                                        relativeWattsPerKg = relativeWattsPerKg,
+                                                        peakForceN = peakForceN,
+                                                        workJoules = workJoules,
+                                                        estimatedOneRM = estimatedOneRM,
+                                                        pctOneRM = pctOneRM,
+                                                        horizontalDeviationCm = vbtDeviationResultCm,
+                                                        trackingPoints = trackingPointsResult,
+                                                        trimStartMs = trimStartMs,
+                                                        trimEndMs = trimEndMs
+                                                    ).absolutePath
+                                                } catch (e: Exception) {
+                                                    null
+                                                }
+
+                                                userRepository.saveSession(
+                                                    Session(
+                                                        id = UUID.randomUUID().toString(),
+                                                        userId = activeUser.id,
+                                                        activityType = if (currentMode == "VBT") "${currentMode} (${selectedExerciseModel.displayName})" else currentMode!!,
+                                                        result = finalResult!!,
+                                                        timestamp = System.currentTimeMillis(),
+                                                        powerWatts = if (currentMode == "VBT") peakPowerWatts else jumpMetricsResult?.peakPowerWatts,
+                                                        powerWattsPerKg = if (currentMode == "VBT") relativeWattsPerKg else jumpMetricsResult?.relativePowerWattsPerKg,
+                                                        horizontalDeviationCm = vbtDeviationResultCm,
+                                                        meanVelocity = if (currentMode == "VBT") meanVelocity else null,
+                                                        loadKg = if (currentMode == "VBT") currentLoadKg else null,
+                                                        vmpVelocity = if (currentMode == "VBT") vmpVelocity else null,
+                                                        concentricDurationMs = if (currentMode == "VBT") concentricDurationMs else null,
+                                                        timeToPeakMs = if (currentMode == "VBT") timeToPeakMs else null,
+                                                        rfdNPerSec = if (currentMode == "VBT") rfdNPerSec else null,
+                                                        pdfReportPath = reportPath
+                                                    )
                                                 )
-                                            )
-                                            onCloseClick()
+                                                Toast.makeText(context, "Sesión e informe guardados en el perfil", Toast.LENGTH_SHORT).show()
+                                                onCloseClick()
+                                            }
                                         }
                                     },
                                     modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -2151,6 +2511,80 @@ fun VideoAnalysisScreen(
                                     )
                                 ) {
                                     Text("Guardar en Perfil del Atleta", fontWeight = FontWeight.Bold)
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Botón: Generar Informe PDF con Keyframes y Diagnóstico
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            isGeneratingPdf = true
+                                            try {
+                                                val reportFile = BiomechanicalPdfReportGenerator.generateReport(
+                                                    context = context,
+                                                    videoUri = Uri.parse(videoUriString),
+                                                    athleteName = activeUser?.name ?: "Atleta Invitado",
+                                                    athleteWeightKg = activeUser?.bodyWeightKg ?: 75.0,
+                                                    exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical (${selectedJumpType.name})",
+                                                    exerciseFamily = if (currentMode == "VBT") selectedExerciseModel.family.label else "Salto",
+                                                    loadKg = currentLoadKg,
+                                                    peakVelocity = peakVelocity,
+                                                    meanVelocity = meanVelocity,
+                                                    vmpVelocity = vmpVelocity,
+                                                    concentricDurationMs = concentricDurationMs,
+                                                    timeToPeakMs = timeToPeakMs,
+                                                    rfdNPerSec = rfdNPerSec,
+                                                    peakPowerWatts = peakPowerWatts,
+                                                    relativeWattsPerKg = relativeWattsPerKg,
+                                                    peakForceN = peakForceN,
+                                                    workJoules = workJoules,
+                                                    estimatedOneRM = estimatedOneRM,
+                                                    pctOneRM = pctOneRM,
+                                                    horizontalDeviationCm = vbtDeviationResultCm,
+                                                    trackingPoints = trackingPointsResult,
+                                                    trimStartMs = trimStartMs,
+                                                    trimEndMs = trimEndMs
+                                                )
+                                                generatedPdfPath = reportFile.absolutePath
+                                                Toast.makeText(context, "Informe PDF generado con éxito", Toast.LENGTH_SHORT).show()
+                                                BiomechanicalPdfReportGenerator.openOrSharePdf(context, reportFile)
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                                Toast.makeText(context, "Error al generar informe PDF: ${e.message}", Toast.LENGTH_LONG).show()
+                                            } finally {
+                                                isGeneratingPdf = false
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (generatedPdfPath != null) Color(0xFF00E676) else Color(0xFF1E293B),
+                                        contentColor = if (generatedPdfPath != null) Color.Black else Color(0xFF00FFCC)
+                                    ),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC))
+                                ) {
+                                    if (isGeneratingPdf) {
+                                        CircularProgressIndicator(
+                                            color = Color(0xFF00FFCC),
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Generando Informe PDF...", fontWeight = FontWeight.Bold)
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.PictureAsPdf,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = if (generatedPdfPath != null) Color.Black else Color(0xFF00FFCC)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            if (generatedPdfPath != null) "Ver / Compartir Informe PDF ✓" else "📄 Generar Informe PDF",
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -2382,7 +2816,102 @@ fun VideoAnalysisScreen(
         }
 
         // Diálogo de exportación y quemado de video con trayectoria
-        if (isExportingVideo) {
+        
+    // Dialog explicativo de métricas biomecánicas
+    if (selectedMetricInfo != null) {
+        val info = selectedMetricInfo!!
+        AlertDialog(
+            onDismissRequest = { selectedMetricInfo = null },
+            containerColor = Color(0xFF161F28),
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = Color(0xFF00FFCC),
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    info.title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column {
+                        Text(
+                            "¿QUÉ MIDE?",
+                            color = Color(0xFF00FFCC),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            info.definition,
+                            color = Color(0xFFE0E0E0),
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+
+                    Column {
+                        Text(
+                            "¿CÓMO INTERPRETARLO EN EL ENTRENAMIENTO?",
+                            color = Color(0xFF00E5FF),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            info.practicalValue,
+                            color = Color(0xFFE0E0E0),
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+
+                    Column {
+                        Text(
+                            "VALORES DE REFERENCIA / CONSEJO TÉCNICO",
+                            color = Color(0xFFFFD600),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            info.referenceRange,
+                            color = Color(0xFFE0E0E0),
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { selectedMetricInfo = null },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00FFCC),
+                        contentColor = Color.Black
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Entendido", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (isExportingVideo) {
             AlertDialog(
                 onDismissRequest = {},
                 title = {

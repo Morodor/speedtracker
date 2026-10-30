@@ -18,5 +18,7 @@ data class Session(
     val vmpVelocity: Double? = null,
     val concentricDurationMs: Long? = null,
     val timeToPeakMs: Long? = null,
-    val rfdNPerSec: Int? = null
+    val rfdNPerSec: Int? = null,
+    val pdfReportPath: String? = null,
+    val videoExportPath: String? = null
 )

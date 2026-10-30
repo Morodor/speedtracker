@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Height
@@ -192,6 +193,17 @@ fun HistoryScreen(
 
                                         if (details.isNotEmpty()) {
                                             Text(details, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+
+                                if (!session.pdfReportPath.isNullOrEmpty()) {
+                                    val reportFile = java.io.File(session.pdfReportPath)
+                                    if (reportFile.exists()) {
+                                        IconButton(onClick = {
+                                            com.speedtracker.core.report.BiomechanicalPdfReportGenerator.openOrSharePdf(context, reportFile)
+                                        }) {
+                                            Icon(Icons.Default.PictureAsPdf, contentDescription = "Ver Informe PDF", tint = Color(0xFF00FFCC))
                                         }
                                     }
                                 }
