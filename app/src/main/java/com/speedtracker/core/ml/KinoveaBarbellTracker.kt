@@ -28,6 +28,18 @@ class KinoveaBarbellTracker {
     private var roiPixelsBuffer = IntArray(0)
     private var roiLumBuffer = FloatArray(0)
 
+    // Radio calibrado del disco olímpico
+    var calibratedRadius: Float = 60f
+        private set
+
+    // Firma cromática del cuerpo del disco olímpico (espacio cromático normalizado r, g, b y HSV)
+    private var isChromaticPlate: Boolean = false
+    private var targetHue: Float = 0f
+    private var targetSat: Float = 0f
+    private var targetNr: Float = 0.33f
+    private var targetNg: Float = 0.33f
+    private var targetNb: Float = 0.33f
+
     // Estado cinemático del disco
     var currentCenter: Offset = Offset.Zero
         private set
@@ -42,14 +54,15 @@ class KinoveaBarbellTracker {
 
     /**
      * Inicializa el tracker capturando la firma visual del centro del disco olímpico (buje y collarín)
-     * en el frame inicial de referencia.
+     * y la firma de color del cuerpo del disco (verde, amarillo, azul, rojo o negro) en el frame de calibración.
      */
     fun initialize(bitmap: Bitmap, center: Offset, radiusPx: Float) {
         val bW = bitmap.width
         val bH = bitmap.height
+        calibratedRadius = if (radiusPx > 10f) radiusPx else 60f
 
         // El buje y collarín ocupan aproximadamente el 28% del radio del disco
-        val halfSize = (radiusPx * 0.28f).toInt().coerceIn(12, 32)
+        val halfSize = (calibratedRadius * 0.28f).toInt().coerceIn(12, 32)
         templateHalfW = halfSize
         templateHalfH = halfSize
         templateW = halfSize * 2 + 1
@@ -85,6 +98,46 @@ class KinoveaBarbellTracker {
 
         normTemplate = FloatArray(numPixels) { i ->
             (rawLuminance[i] - mean) / std
+        }
+
+        // Muestrear la firma cromática del cuerpo del disco en el anillo exterior (al 65% del radio)
+        val sampleR = calibratedRadius * 0.65f
+        val hsv = FloatArray(3)
+        var sumHue = 0f
+        var sumSat = 0f
+        var sumNr = 0f
+        var sumNg = 0f
+        var sumNb = 0f
+        var validColorSamples = 0
+
+        val numSamples = 24
+        for (i in 0 until numSamples) {
+            val angle = (i.toFloat() / numSamples.toFloat()) * (2f * Math.PI.toFloat())
+            val sx = (center.x + sampleR * kotlin.math.cos(angle)).toInt()
+            val sy = (center.y + sampleR * kotlin.math.sin(angle)).toInt()
+            if (sx in 0 until bW && sy in 0 until bH) {
+                val p = bitmap.getPixel(sx, sy)
+                Color.colorToHSV(p, hsv)
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                val sumRgb = (r + g + b + 1).toFloat()
+                sumNr += r / sumRgb
+                sumNg += g / sumRgb
+                sumNb += b / sumRgb
+                sumHue += hsv[0]
+                sumSat += hsv[1]
+                validColorSamples++
+            }
+        }
+
+        if (validColorSamples > 0) {
+            targetHue = sumHue / validColorSamples
+            targetSat = sumSat / validColorSamples
+            targetNr = sumNr / validColorSamples
+            targetNg = sumNg / validColorSamples
+            targetNb = sumNb / validColorSamples
+            isChromaticPlate = targetSat > 0.15f
         }
 
         currentCenter = Offset(cX.toFloat(), cY.toFloat())
@@ -195,8 +248,27 @@ class KinoveaBarbellTracker {
             val denomY = (sTop - 2f * bestScore + sBottom)
             val subY = if (abs(denomY) > 1e-4f) ((sTop - sBottom) / (2f * denomY)).coerceIn(-0.5f, 0.5f) else 0f
 
-            val targetX = bestX + subX
-            val targetY = bestY + subY
+            var targetX = bestX + subX
+            var targetY = bestY + subY
+
+            // Corrección de Centrado por Simetría Cromática del Disco:
+            // Si la retícula se desplaza hacia la punta superior del disco (por perspectiva o contraste de techo),
+            // la simetría cromática detecta que los puntos superiores caen en el fondo/vigas de madera y los inferiores en el disco verde.
+            // Corrige automáticamente la posición hacia el centro geométrico real del disco (buje).
+            val colorSym = evaluateColorSymmetry(bitmap, bestX, bestY)
+            if (colorSym.verticalBalance > 0.5f) {
+                // El cuerpo del disco está más abajo: empujar suavemente el centro hacia abajo al buje real
+                val vShift = colorSym.verticalBalance * (calibratedRadius * 0.08f)
+                targetY += vShift.coerceIn(0f, calibratedRadius * 0.35f)
+            } else if (colorSym.verticalBalance < -0.5f) {
+                val vShift = colorSym.verticalBalance * (calibratedRadius * 0.08f)
+                targetY += vShift.coerceIn(-calibratedRadius * 0.35f, 0f)
+            }
+
+            if (kotlin.math.abs(colorSym.horizontalBalance) > 0.5f) {
+                val hShift = colorSym.horizontalBalance * (calibratedRadius * 0.04f)
+                targetX += hShift.coerceIn(-calibratedRadius * 0.18f, calibratedRadius * 0.18f)
+            }
 
             val instVx = targetX - currentCenter.x
             val instVy = targetY - currentCenter.y
@@ -295,5 +367,83 @@ class KinoveaBarbellTracker {
         if (patchStd < 1.0f) return 0f
 
         return (crossSum / (numPixels * patchStd)).coerceIn(-1.0f, 1.0f)
+    }
+
+    /**
+     * Evalúa la simetría cromática en 8 direcciones radiales alrededor de un centro candidato (cx, cy).
+     * Permite confirmar si el centro está equilibrado dentro del disco o si está desplazado hacia algún borde.
+     */
+    data class ColorSymmetryResult(
+        val matchRatio: Float,
+        val verticalBalance: Float,
+        val horizontalBalance: Float
+    )
+
+    private fun evaluateColorSymmetry(bitmap: Bitmap, cx: Int, cy: Int): ColorSymmetryResult {
+        val bW = bitmap.width
+        val bH = bitmap.height
+        val r = calibratedRadius * 0.58f
+
+        val diag = r * 0.7071f
+        val offsetsX = floatArrayOf(r, diag, 0f, -diag, -r, -diag, 0f, diag)
+        val offsetsY = floatArrayOf(0f, -diag, -r, -diag, 0f, diag, r, diag)
+
+        var totalMatches = 0
+        var topMatches = 0
+        var bottomMatches = 0
+        var leftMatches = 0
+        var rightMatches = 0
+
+        val hsv = FloatArray(3)
+
+        for (i in 0 until 8) {
+            val px = (cx + offsetsX[i]).toInt()
+            val py = (cy + offsetsY[i]).toInt()
+
+            val isMatch: Boolean
+            if (px in 0 until bW && py in 0 until bH) {
+                val p = bitmap.getPixel(px, py)
+                if (isChromaticPlate) {
+                    val rVal = (p shr 16) and 0xFF
+                    val gVal = (p shr 8) and 0xFF
+                    val bVal = p and 0xFF
+                    val sumRgb = (rVal + gVal + bVal + 1).toFloat()
+                    val nr = rVal / sumRgb
+                    val ng = gVal / sumRgb
+                    val nb = bVal / sumRgb
+                    val dNr = nr - targetNr
+                    val dNg = ng - targetNg
+                    val dNb = nb - targetNb
+                    val distChroma = sqrt((dNr * dNr + dNg * dNg + dNb * dNb).toDouble()).toFloat()
+
+                    Color.colorToHSV(p, hsv)
+                    val diffHue = abs(hsv[0] - targetHue).let { minOf(it, 360f - it) }
+
+                    isMatch = (distChroma < 0.17f) || (diffHue < 45f && hsv[1] > (targetSat * 0.40f))
+                } else {
+                    val rVal = (p shr 16) and 0xFF
+                    val gVal = (p shr 8) and 0xFF
+                    val bVal = p and 0xFF
+                    val lum = ((rVal * 299 + gVal * 587 + bVal * 114) / 1000f)
+                    isMatch = lum < 95f
+                }
+            } else {
+                isMatch = false
+            }
+
+            if (isMatch) {
+                totalMatches++
+                if (i in 1..3) topMatches++
+                if (i in 5..7) bottomMatches++
+                if (i in 3..5) leftMatches++
+                if (i == 7 || i == 0 || i == 1) rightMatches++
+            }
+        }
+
+        val matchRatio = totalMatches / 8.0f
+        val vBal = (bottomMatches - topMatches).toFloat()
+        val hBal = (rightMatches - leftMatches).toFloat()
+
+        return ColorSymmetryResult(matchRatio, vBal, hBal)
     }
 }

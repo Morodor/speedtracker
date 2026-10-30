@@ -522,90 +522,90 @@ fun BoxScope.CalibrationVideoDirectionalOverlay(
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Flecha Arriba (Alineada al margen superior de la pantalla)
+    // Flecha Arriba (Alineada al margen superior de la pantalla - Tamaño Doble 80dp para pulgar)
     Surface(
         onClick = { onMove(0f, -6f) },
         shape = CircleShape,
-        color = Color(0xEE1A1A1A),
-        border = BorderStroke(2.dp, Color(0xFF00FFCC)),
-        shadowElevation = 8.dp,
+        color = Color(0xEE141414),
+        border = BorderStroke(2.5.dp, Color(0xFF00FFCC)),
+        shadowElevation = 12.dp,
         modifier = Modifier
             .align(Alignment.TopCenter)
-            .padding(top = 10.dp)
-            .size(56.dp)
+            .padding(top = 8.dp)
+            .size(80.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.KeyboardArrowUp,
                 contentDescription = "Mover Arriba",
                 tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(48.dp)
             )
         }
     }
 
-    // Flecha Abajo (Alineada al margen inferior de la pantalla)
+    // Flecha Abajo (Alineada al margen inferior de la pantalla - Tamaño Doble 80dp para pulgar)
     Surface(
         onClick = { onMove(0f, 6f) },
         shape = CircleShape,
-        color = Color(0xEE1A1A1A),
-        border = BorderStroke(2.dp, Color(0xFF00FFCC)),
-        shadowElevation = 8.dp,
+        color = Color(0xEE141414),
+        border = BorderStroke(2.5.dp, Color(0xFF00FFCC)),
+        shadowElevation = 12.dp,
         modifier = Modifier
             .align(Alignment.BottomCenter)
-            .padding(bottom = 10.dp)
-            .size(56.dp)
+            .padding(bottom = 8.dp)
+            .size(80.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.KeyboardArrowDown,
                 contentDescription = "Mover Abajo",
                 tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(48.dp)
             )
         }
     }
 
-    // Flecha Izquierda (Alineada al margen izquierdo de la pantalla, ideal para dedo pulgar)
+    // Flecha Izquierda (Alineada al margen izquierdo de la pantalla - Tamaño Doble 80dp para pulgar)
     Surface(
         onClick = { onMove(-6f, 0f) },
         shape = CircleShape,
-        color = Color(0xEE1A1A1A),
-        border = BorderStroke(2.dp, Color(0xFF00FFCC)),
-        shadowElevation = 8.dp,
+        color = Color(0xEE141414),
+        border = BorderStroke(2.5.dp, Color(0xFF00FFCC)),
+        shadowElevation = 12.dp,
         modifier = Modifier
             .align(Alignment.CenterStart)
-            .padding(start = 10.dp)
-            .size(56.dp)
+            .padding(start = 6.dp)
+            .size(80.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.KeyboardArrowLeft,
                 contentDescription = "Mover Izquierda",
                 tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(48.dp)
             )
         }
     }
 
-    // Flecha Derecha (Alineada al margen derecho de la pantalla, ideal para dedo pulgar)
+    // Flecha Derecha (Alineada al margen derecho de la pantalla - Tamaño Doble 80dp para pulgar)
     Surface(
         onClick = { onMove(6f, 0f) },
         shape = CircleShape,
-        color = Color(0xEE1A1A1A),
-        border = BorderStroke(2.dp, Color(0xFF00FFCC)),
-        shadowElevation = 8.dp,
+        color = Color(0xEE141414),
+        border = BorderStroke(2.5.dp, Color(0xFF00FFCC)),
+        shadowElevation = 12.dp,
         modifier = Modifier
             .align(Alignment.CenterEnd)
-            .padding(end = 10.dp)
-            .size(56.dp)
+            .padding(end = 6.dp)
+            .size(80.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.KeyboardArrowRight,
                 contentDescription = "Mover Derecha",
                 tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(48.dp)
             )
         }
     }
