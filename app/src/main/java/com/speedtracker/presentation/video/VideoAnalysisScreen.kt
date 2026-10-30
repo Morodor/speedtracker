@@ -17,6 +17,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -491,9 +495,29 @@ fun VideoAnalysisScreen(
     var videoDurationMs by remember { mutableLongStateOf(0L) }
     var currentVideoPosMs by remember { mutableLongStateOf(0L) }
 
-    // Rango de Recorte (Inicio y Término de medición)
+        // Rango de Recorte (Inicio y Término de medición)
     var trimStartMs by remember { mutableLongStateOf(0L) }
     var trimEndMs by remember { mutableLongStateOf(0L) }
+
+    // Bitmap del fotograma exacto pausado para navegación milimétrica y calibración sin desfase de I-Frames
+    var stillFrameBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var stillFrameJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    fun updateStillFrame(targetMs: Long) {
+        stillFrameJob?.cancel()
+        stillFrameJob = coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(context, Uri.parse(videoUriString))
+                val bm = retriever.getFrameAtTime(targetMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                withContext(Dispatchers.Main) {
+                    stillFrameBitmap = bm
+                }
+                retriever.release()
+            } catch (e: Exception) {
+            }
+        }
+    }
 
 
     fun changePlaybackSpeed(speed: Float) {
@@ -931,6 +955,7 @@ fun VideoAnalysisScreen(
                                                 val newPos = (currentVideoPosMs - 33L).coerceAtLeast(0L)
                                                 currentVideoPosMs = newPos
                                                 seekVideoAccurate(mediaPlayerRef, vv, newPos)
+                                                updateStillFrame(newPos)
                                             }
                                         },
                                         modifier = Modifier.size(34.dp),
@@ -949,7 +974,11 @@ fun VideoAnalysisScreen(
                                                 if (isPlaying) {
                                                     vv.pause()
                                                     isPlaying = false
+                                                    val cur = vv.currentPosition.toLong()
+                                                    currentVideoPosMs = cur
+                                                    updateStillFrame(cur)
                                                 } else {
+                                                    stillFrameBitmap = null
                                                     vv.start()
                                                     isPlaying = true
                                                 }
@@ -978,6 +1007,7 @@ fun VideoAnalysisScreen(
                                                 val newPos = (currentVideoPosMs + 33L).coerceAtMost(maxDur)
                                                 currentVideoPosMs = newPos
                                                 seekVideoAccurate(mediaPlayerRef, vv, newPos)
+                                                updateStillFrame(newPos)
                                             }
                                         },
                                         modifier = Modifier.size(34.dp),
@@ -993,6 +1023,7 @@ fun VideoAnalysisScreen(
                                     OutlinedButton(
                                         onClick = {
                                             trimStartMs = currentVideoPosMs.coerceAtMost(trimEndMs - 100L)
+                                            updateStillFrame(trimStartMs)
                                         },
                                         modifier = Modifier.height(34.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp),
@@ -1005,6 +1036,7 @@ fun VideoAnalysisScreen(
                                     OutlinedButton(
                                         onClick = {
                                             trimEndMs = currentVideoPosMs.coerceAtLeast(trimStartMs + 100L)
+                                            updateStillFrame(trimEndMs)
                                         },
                                         modifier = Modifier.height(34.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp),
@@ -1018,10 +1050,15 @@ fun VideoAnalysisScreen(
                                         onClick = {
                                             isLoopingTrimmedRange = !isLoopingTrimmedRange
                                             if (isLoopingTrimmedRange) {
-                                                videoViewRef?.seekTo(trimStartMs.toInt())
+                                                stillFrameBitmap = null
+                                                videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, trimStartMs) }
                                                 currentVideoPosMs = trimStartMs
                                                 videoViewRef?.start()
                                                 isPlaying = true
+                                            } else {
+                                                videoViewRef?.pause()
+                                                isPlaying = false
+                                                updateStillFrame(currentVideoPosMs)
                                             }
                                         },
                                         modifier = Modifier.size(34.dp),
@@ -1042,8 +1079,9 @@ fun VideoAnalysisScreen(
                                         isLoopingTrimmedRange = false
                                         videoViewRef?.pause()
                                         isPlaying = false
-                                        videoViewRef?.seekTo(trimStartMs.toInt())
                                         currentVideoPosMs = trimStartMs
+                                        videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, trimStartMs) }
+                                        updateStillFrame(trimStartMs)
                                         analysisSetupStep = AnalysisSetupStep.SELECT_EXERCISE
                                     },
                                     containerColor = Color(0xFFE0E0E0),
@@ -1283,8 +1321,9 @@ fun VideoAnalysisScreen(
                             if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
                                 videoViewRef?.pause()
                                 isPlaying = false
-                                videoViewRef?.seekTo(trimStartMs.toInt())
                                 currentVideoPosMs = trimStartMs
+                                videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, trimStartMs) }
+                                updateStillFrame(trimStartMs)
                                 if (circleCenter == null && !isCalibrated && !isDetectingPlate) {
                                     runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
                                 }
@@ -1353,10 +1392,11 @@ fun VideoAnalysisScreen(
                                                         } catch (e: Exception) { }
                                                     }
                                                     // Iniciar con el video detenido en el primer frame del recorte
-                                                    seekTo(trimStartMs.toInt())
+                                                    seekVideoAccurate(mp, this, trimStartMs)
                                                     currentVideoPosMs = trimStartMs
                                                     pause()
                                                     isPlaying = false
+                                                    updateStillFrame(trimStartMs)
                                                 }
                                                 videoViewRef = this
                                             }
@@ -1370,6 +1410,22 @@ fun VideoAnalysisScreen(
                                                 translationY = offsetY
                                             )
                                     )
+
+                                    if (!isPlaying && stillFrameBitmap != null) {
+                                        Image(
+                                            bitmap = stillFrameBitmap!!.asImageBitmap(),
+                                            contentDescription = "Frame de calibración",
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .graphicsLayer(
+                                                    scaleX = scale,
+                                                    scaleY = scale,
+                                                    translationX = offsetX,
+                                                    translationY = offsetY
+                                                ),
+                                            contentScale = ContentScale.Fit
+                                        )
+                                    }
 
                                     // Retícula Circular Kinovea sobre el marco centrado
                                     val activeCenter = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
@@ -1467,6 +1523,7 @@ fun VideoAnalysisScreen(
                                                     val newPos = (currentVideoPosMs - 33L).coerceAtLeast(trimStartMs)
                                                     currentVideoPosMs = newPos
                                                     seekVideoAccurate(mediaPlayerRef, vv, newPos)
+                                                    updateStillFrame(newPos)
                                                 }
                                             },
                                             modifier = Modifier.size(34.dp),
@@ -1485,7 +1542,11 @@ fun VideoAnalysisScreen(
                                                     if (isPlaying) {
                                                         vv.pause()
                                                         isPlaying = false
+                                                        val cur = vv.currentPosition.toLong()
+                                                        currentVideoPosMs = cur
+                                                        updateStillFrame(cur)
                                                     } else {
+                                                        stillFrameBitmap = null
                                                         vv.start()
                                                         isPlaying = true
                                                     }
@@ -1514,6 +1575,7 @@ fun VideoAnalysisScreen(
                                                     val newPos = (currentVideoPosMs + 33L).coerceAtMost(maxLimit)
                                                     currentVideoPosMs = newPos
                                                     seekVideoAccurate(mediaPlayerRef, vv, newPos)
+                                                    updateStillFrame(newPos)
                                                 }
                                             },
                                             modifier = Modifier.size(34.dp),
@@ -1533,6 +1595,7 @@ fun VideoAnalysisScreen(
                                                     isPlaying = false
                                                     currentVideoPosMs = trimStartMs
                                                     seekVideoAccurate(mediaPlayerRef, vv, trimStartMs)
+                                                    updateStillFrame(trimStartMs)
                                                 }
                                             },
                                             modifier = Modifier.height(34.dp),
@@ -4734,14 +4797,11 @@ fun AnalysisResultVideoPreview(
 
 
 fun seekVideoAccurate(mp: MediaPlayer?, vv: VideoView?, targetMs: Long) {
+    vv?.seekTo(targetMs.toInt())
     if (mp != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
         try {
             mp.seekTo(targetMs, MediaPlayer.SEEK_CLOSEST)
-        } catch (e: Exception) {
-            vv?.seekTo(targetMs.toInt())
-        }
-    } else {
-        vv?.seekTo(targetMs.toInt())
+        } catch (e: Exception) { }
     }
 }
 
