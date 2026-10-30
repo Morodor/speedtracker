@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
@@ -353,7 +354,7 @@ fun VideoAnalysisScreen(
                                     }
                                 }
                                 isProcessing -> "Analizando..."
-                                else -> if (currentMode == "JUMP") "Resultados Salto (${selectedJumpType.name})" else "Resultados ${selectedVBTExercise.displayName}"
+                                else -> if (currentMode == "JUMP") "Resultados Salto (${selectedJumpType.name}) Biomecánicos" else "Resultados ${selectedVBTExercise.displayName} Biomecánicos"
                             },
                             fontWeight = FontWeight.Bold,
                             fontSize = 17.sp
@@ -364,6 +365,14 @@ fun VideoAnalysisScreen(
                                 color = Color(0xFF00FFCC),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
+                            )
+                        }
+                        if (finalResult != null && isReadyToAnalyze && !isProcessing) {
+                            Text(
+                                "Atleta: ${activeUser?.name ?: "Invitado"}",
+                                color = Color.Gray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Normal
                             )
                         }
                     }
@@ -581,10 +590,22 @@ fun VideoAnalysisScreen(
                             RangeSlider(
                                 value = safeStart..safeEnd,
                                 onValueChange = { range ->
+                                    val changedStart = kotlin.math.abs(range.start.toLong() - trimStartMs) > 10L
                                     trimStartMs = range.start.toLong()
                                     trimEndMs = range.endInclusive.toLong()
-                                    videoViewRef?.seekTo(trimStartMs.toInt())
-                                    currentVideoPosMs = trimStartMs
+                                    val targetMs = if (changedStart) trimStartMs else trimEndMs
+                                    currentVideoPosMs = targetMs
+                                    videoViewRef?.let { vv ->
+                                        vv.pause()
+                                        isPlaying = false
+                                        seekVideoAccurate(mediaPlayerRef, vv, targetMs)
+                                    }
+                                },
+                                onValueChangeFinished = {
+                                    videoViewRef?.let { vv ->
+                                        seekVideoAccurate(mediaPlayerRef, vv, trimStartMs)
+                                        currentVideoPosMs = trimStartMs
+                                    }
                                 },
                                 valueRange = 0f..maxDur,
                                 colors = SliderDefaults.colors(
@@ -636,9 +657,9 @@ fun VideoAnalysisScreen(
                                             videoViewRef?.let { vv ->
                                                 vv.pause()
                                                 isPlaying = false
-                                                val newPos = (vv.currentPosition - 33).coerceAtLeast(0)
-                                                vv.seekTo(newPos)
-                                                currentVideoPosMs = newPos.toLong()
+                                                val newPos = (currentVideoPosMs - 33L).coerceAtLeast(0L)
+                                                currentVideoPosMs = newPos
+                                                seekVideoAccurate(mediaPlayerRef, vv, newPos)
                                             }
                                         },
                                         modifier = Modifier.size(34.dp),
@@ -682,9 +703,10 @@ fun VideoAnalysisScreen(
                                             videoViewRef?.let { vv ->
                                                 vv.pause()
                                                 isPlaying = false
-                                                val newPos = (vv.currentPosition + 33).coerceAtMost(vv.duration)
-                                                vv.seekTo(newPos)
-                                                currentVideoPosMs = newPos.toLong()
+                                                val maxDur = if (videoDurationMs > 0) videoDurationMs else vv.duration.toLong()
+                                                val newPos = (currentVideoPosMs + 33L).coerceAtMost(maxDur)
+                                                currentVideoPosMs = newPos
+                                                seekVideoAccurate(mediaPlayerRef, vv, newPos)
                                             }
                                         },
                                         modifier = Modifier.size(34.dp),
@@ -1172,9 +1194,9 @@ fun VideoAnalysisScreen(
                                                 videoViewRef?.let { vv ->
                                                     vv.pause()
                                                     isPlaying = false
-                                                    val newPos = (vv.currentPosition - 33).coerceAtLeast(trimStartMs.toInt())
-                                                    vv.seekTo(newPos)
-                                                    currentVideoPosMs = newPos.toLong()
+                                                    val newPos = (currentVideoPosMs - 33L).coerceAtLeast(trimStartMs)
+                                                    currentVideoPosMs = newPos
+                                                    seekVideoAccurate(mediaPlayerRef, vv, newPos)
                                                 }
                                             },
                                             modifier = Modifier.size(34.dp),
@@ -1218,10 +1240,10 @@ fun VideoAnalysisScreen(
                                                 videoViewRef?.let { vv ->
                                                     vv.pause()
                                                     isPlaying = false
-                                                    val maxLimit = if (trimEndMs > 0) trimEndMs.toInt() else vv.duration
-                                                    val newPos = (vv.currentPosition + 33).coerceAtMost(maxLimit)
-                                                    vv.seekTo(newPos)
-                                                    currentVideoPosMs = newPos.toLong()
+                                                    val maxLimit = if (trimEndMs > 0) trimEndMs else (if (videoDurationMs > 0) videoDurationMs else vv.duration.toLong())
+                                                    val newPos = (currentVideoPosMs + 33L).coerceAtMost(maxLimit)
+                                                    currentVideoPosMs = newPos
+                                                    seekVideoAccurate(mediaPlayerRef, vv, newPos)
                                                 }
                                             },
                                             modifier = Modifier.size(34.dp),
@@ -1239,8 +1261,8 @@ fun VideoAnalysisScreen(
                                                 videoViewRef?.let { vv ->
                                                     vv.pause()
                                                     isPlaying = false
-                                                    vv.seekTo(trimStartMs.toInt())
                                                     currentVideoPosMs = trimStartMs
+                                                    seekVideoAccurate(mediaPlayerRef, vv, trimStartMs)
                                                 }
                                             },
                                             modifier = Modifier.height(34.dp),
@@ -1617,19 +1639,7 @@ fun VideoAnalysisScreen(
                             .verticalScroll(scrollState)
                             .padding(horizontal = 8.dp)
                     ) {
-                        Text(
-                            "Resultados Biomecánicos",
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Atleta: ${activeUser?.name ?: "Invitado"}",
-                            color = Color.Gray,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
+
 
                         // Vista Previa Interactiva del Video Analizado (Trayectoria Bar Path + Retícula en tiempo real)
                         AnalysisResultVideoPreview(
@@ -2161,7 +2171,12 @@ fun VideoAnalysisScreen(
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
-                                        scrollState.animateScrollTo((analysisDataYOffset - 12).coerceAtLeast(0))
+                                        val targetY = if (scrollState.value > (analysisDataYOffset + 40)) {
+                                            (analysisDataYOffset - 8).coerceAtLeast(0)
+                                        } else {
+                                            0
+                                        }
+                                        scrollState.animateScrollTo(targetY)
                                     }
                                 },
                                 modifier = Modifier
@@ -2183,7 +2198,7 @@ fun VideoAnalysisScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    "Datos Análisis",
+                                    "Datos Analizados",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     maxLines = 1
@@ -2193,7 +2208,7 @@ fun VideoAnalysisScreen(
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
-                                        scrollState.animateScrollTo((actionsYOffset - 12).coerceAtLeast(0))
+                                        scrollState.animateScrollTo(scrollState.maxValue)
                                     }
                                 },
                                 modifier = Modifier
@@ -2878,6 +2893,153 @@ fun KinematicTelemetryChart(
 }
 
 /**
+ * Overlay de telemetría de gráficos en tiempo real sincronizado con el video.
+ * Ocupa exactamente 1/5 del espacio inferior del video.
+ * Traza las curvas de Velocidad (m/s) en cian y Aceleración (m/s²) en naranja,
+ * con un cursor blanco vertical que avanza frame a frame según la reproducción.
+ */
+@Composable
+fun RealtimeTelemetryOverlayChart(
+    trackingPoints: List<VideoFrameTrackingPoint>,
+    currentVideoPosMs: Long,
+    trimStartMs: Long,
+    effectiveEndMs: Long,
+    modifier: Modifier = Modifier
+) {
+    if (trackingPoints.size < 2) return
+
+    val minTimeMs = trackingPoints.first().timestampMs
+    val maxTimeMs = trackingPoints.last().timestampMs
+    val totalDurationMs = (maxTimeMs - minTimeMs).coerceAtLeast(100L)
+
+    val telemetryPoints = remember(trackingPoints) {
+        val rawV = trackingPoints.map { it.velocityMps }
+        val smoothedV = zeroPhaseSmooth(rawV)
+
+        val rawA = mutableListOf<Double>()
+        for (i in trackingPoints.indices) {
+            val a = if (i > 0) {
+                val dt = (trackingPoints[i].timestampMs - trackingPoints[i - 1].timestampMs) / 1000.0
+                if (dt > 0.008) (smoothedV[i] - smoothedV[i - 1]) / dt else 0.0
+            } else 0.0
+            rawA.add(a.coerceIn(-25.0, 35.0))
+        }
+        val smoothedA = zeroPhaseSmooth(rawA)
+
+        trackingPoints.indices.map { i ->
+            KinematicDataPoint(
+                timestampMs = trackingPoints[i].timestampMs,
+                velocityMps = smoothedV[i],
+                accelerationMps2 = smoothedA[i],
+                isConcentric = trackingPoints[i].isConcentric
+            )
+        }
+    }
+
+    val maxV = remember(telemetryPoints) {
+        (telemetryPoints.maxOfOrNull { it.velocityMps } ?: 1.0).coerceAtLeast(0.5) * 1.15
+    }
+    val maxA = remember(telemetryPoints) {
+        (telemetryPoints.maxOfOrNull { it.accelerationMps2 } ?: 5.0).coerceAtLeast(4.0) * 1.15
+    }
+    val minA = remember(telemetryPoints) {
+        (telemetryPoints.minOfOrNull { it.accelerationMps2 } ?: -4.0).coerceAtMost(-3.0) * 1.15
+    }
+
+    val elapsedInTrim = (currentVideoPosMs - trimStartMs).coerceAtLeast(0L)
+    val activePoint = remember(telemetryPoints, elapsedInTrim) {
+        telemetryPoints.minByOrNull { kotlin.math.abs(it.timestampMs - elapsedInTrim) }
+    }
+
+    Box(modifier = modifier) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 6.dp, vertical = 3.dp)
+        ) {
+            val w = size.width
+            val h = size.height
+            if (w <= 0f || h <= 0f) return@Canvas
+
+            // Línea cero de aceleración (de referencia)
+            val zeroAY = (h - ((0.0 - minA) / (maxA - minA) * h).toFloat()).coerceIn(0f, h)
+            drawLine(
+                color = Color(0x33FFFFFF),
+                start = Offset(0f, zeroAY),
+                end = Offset(w, zeroAY),
+                strokeWidth = 1f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+            )
+
+            // Curva de Aceleración (Naranja)
+            val aPath = Path()
+            telemetryPoints.forEachIndexed { idx, pt ->
+                val x = ((pt.timestampMs - minTimeMs).toFloat() / totalDurationMs.toFloat()) * w
+                val normA = ((pt.accelerationMps2 - minA) / (maxA - minA)).toFloat().coerceIn(0f, 1f)
+                val y = h - (normA * h)
+                if (idx == 0) aPath.moveTo(x, y) else aPath.lineTo(x, y)
+            }
+            drawPath(
+                path = aPath,
+                color = Color(0xFFFF9100).copy(alpha = 0.85f),
+                style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+
+            // Curva de Velocidad (Cian)
+            val vPath = Path()
+            telemetryPoints.forEachIndexed { idx, pt ->
+                val x = ((pt.timestampMs - minTimeMs).toFloat() / totalDurationMs.toFloat()) * w
+                val normV = (pt.velocityMps / maxV).toFloat().coerceIn(0f, 1f)
+                val y = h - (normV * h)
+                if (idx == 0) vPath.moveTo(x, y) else vPath.lineTo(x, y)
+            }
+            drawPath(
+                path = vPath,
+                color = Color(0xFF00FFCC),
+                style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+
+            // Cursor vertical dinámico sincronizado en tiempo real con el video
+            val cursorFrac = (elapsedInTrim.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
+            val cursorX = cursorFrac * w
+            drawLine(
+                color = Color.White,
+                start = Offset(cursorX, 0f),
+                end = Offset(cursorX, h),
+                strokeWidth = 2.dp.toPx()
+            )
+            val dotY = (h - (((activePoint?.velocityMps ?: 0.0) / maxV).toFloat().coerceIn(0f, 1f) * h))
+            drawCircle(
+                color = Color(0xFF00FFCC),
+                radius = 3.dp.toPx(),
+                center = Offset(cursorX, dotY)
+            )
+        }
+
+        // Indicador HUD superior en tiempo real
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 8.dp, top = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "⚡ V: ${String.format(Locale.US, "%.2f", activePoint?.velocityMps ?: 0.0)} m/s",
+                color = Color(0xFF00FFCC),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "📈 A: ${String.format(Locale.US, "%+.1f", activePoint?.accelerationMps2 ?: 0.0)} m/s²",
+                color = Color(0xFFFF9100),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+/**
  * Reproductor interactivo de Vista Previa para la pantalla de Resultados.
  * Permite visualizar el video analizado con la trayectoria (Bar Path) trazada
  * en tiempo real con colores cinemáticos de velocidad, mira telescópica sobre el disco,
@@ -2907,6 +3069,7 @@ fun AnalysisResultVideoPreview(
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var currentPosMs by remember { mutableLongStateOf(trimStartMs) }
     var isUserSeeking by remember { mutableStateOf(false) }
+    var showTelemetryOverlay by remember { mutableStateOf(false) }
 
     LaunchedEffect(currentPosMs) {
         onCurrentPositionChange(currentPosMs)
@@ -3240,81 +3403,6 @@ fun AnalysisResultVideoPreview(
                         }
                     }
 
-                    // HUD Superior Izquierdo: Telemetría instantánea
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(10.dp),
-                        color = Color(0xDD111111),
-                        shape = RoundedCornerShape(8.dp),
-                        border = CardDefaults.outlinedCardBorder().copy(
-                            brush = androidx.compose.ui.graphics.SolidColor(Color(0x6600FFCC))
-                        )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            val elapsedInTrimMs = (currentPosMs - trimStartMs).coerceAtLeast(0L)
-                            val activePt = trackingPoints.filter { it.timestampMs <= elapsedInTrimMs }.lastOrNull()
-                            if (mode == "VBT") {
-                                val vel = activePt?.velocityMps ?: 0.0
-                                val load = barbellLoadKg ?: 70.0
-                                val instPower = (vel * load * 9.81).toInt()
-                                val loadText = if (barbellLoadKg != null) "${load.toInt()} kg • " else ""
-                                Text(
-                                    "⚡ $loadText${String.format("%.2f", vel)} m/s • $instPower W",
-                                    color = Color(0xFF00FFCC),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
-                                if (activePt?.isConcentric == true) {
-                                    Text("• CONCÉNTRICA", color = Color(0xFF00E676), fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                                } else if (activePt?.isEccentric == true) {
-                                    Text("• EXCÉNTRICA", color = Color(0xFFFFD600), fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                                }
-                            } else {
-                                Text(
-                                    "🎯 VISTA PREVIA SALTO",
-                                    color = Color(0xFF00FFCC),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
-                            }
-                        }
-                    }
-
-                    // Badge Superior Derecho: Estado
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(10.dp),
-                        color = Color(0xDD00221A),
-                        shape = RoundedCornerShape(6.dp),
-                        border = CardDefaults.outlinedCardBorder().copy(
-                            brush = androidx.compose.ui.graphics.SolidColor(Color(0x9900FFCC))
-                        )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .background(Color(0xFF00FFCC), CircleShape)
-                            )
-                            Text(
-                                "VISTA PREVIA",
-                                color = Color(0xFF00FFCC),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
                     // Icono central sutil cuando está en pausa
                     if (!isPlaying) {
                         Surface(
@@ -3333,6 +3421,135 @@ fun AnalysisResultVideoPreview(
                                 )
                             }
                         }
+                    }
+                }
+
+                // HUD Superior Izquierdo: Telemetría instantánea alineada al costado izquierdo (compacta, nunca se agranda)
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp),
+                    color = Color(0xDD111111),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x6600FFCC))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val elapsedInTrimMs = (currentPosMs - trimStartMs).coerceAtLeast(0L)
+                        val activePt = trackingPoints.filter { it.timestampMs <= elapsedInTrimMs }.lastOrNull()
+                        if (mode == "VBT") {
+                            val vel = activePt?.velocityMps ?: 0.0
+                            val load = barbellLoadKg ?: 70.0
+                            val instPower = (vel * load * 9.81).toInt()
+                            val loadText = if (barbellLoadKg != null) "${load.toInt()} kg • " else ""
+                            Text(
+                                "⚡ $loadText${String.format(Locale.US, "%.2f", vel)} m/s • $instPower W",
+                                color = Color(0xFF00FFCC),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                            if (activePt?.isConcentric == true) {
+                                Surface(
+                                    color = Color(0x3300E676),
+                                    shape = RoundedCornerShape(4.dp),
+                                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color(0xFF00E676))
+                                ) {
+                                    Text(
+                                        "CON",
+                                        color = Color(0xFF00E676),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 9.sp,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            } else if (activePt?.isEccentric == true) {
+                                Surface(
+                                    color = Color(0x33FFD600),
+                                    shape = RoundedCornerShape(4.dp),
+                                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color(0xFFFFD600))
+                                ) {
+                                    Text(
+                                        "EXC",
+                                        color = Color(0xFFFFD600),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 9.sp,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        } else {
+                            Text(
+                                "🎯 VISTA PREVIA SALTO",
+                                color = Color(0xFF00FFCC),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+
+                // Badge Superior Derecho: Estado alineado al costado derecho
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+                    color = Color(0xDD00221A),
+                    shape = RoundedCornerShape(6.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x9900FFCC))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(Color(0xFF00FFCC), CircleShape)
+                        )
+                        Text(
+                            "VISTA PREVIA",
+                            color = Color(0xFF00FFCC),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+
+                // Overlay de Gráficos de Velocidad y Aceleración en tiempo real (1/5 del alto del video en la parte inferior)
+                if (showTelemetryOverlay && trackingPoints.size > 1) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(previewHeight * 0.20f)
+                            .align(Alignment.BottomCenter)
+                            .background(Color(0xD90A0D14))
+                            .border(
+                                width = 1.dp,
+                                color = Color(0x5500FFCC),
+                                shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
+                            )
+                    ) {
+                        RealtimeTelemetryOverlayChart(
+                            trackingPoints = trackingPoints,
+                            currentVideoPosMs = currentPosMs,
+                            trimStartMs = trimStartMs,
+                            effectiveEndMs = effectiveEndMs,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
             }
@@ -3400,15 +3617,7 @@ fun AnalysisResultVideoPreview(
                                     currentPosMs = stepPos
                                     lastSyncPositionMs = stepPos
                                     lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                        try {
-                                            previewPlayerRef?.seekTo(stepPos, MediaPlayer.SEEK_CLOSEST)
-                                        } catch (e: Exception) {
-                                            vv.seekTo(stepPos.toInt())
-                                        }
-                                    } else {
-                                        vv.seekTo(stepPos.toInt())
-                                    }
+                                    seekVideoAccurate(previewPlayerRef, vv, stepPos)
                                 }
                             },
                             modifier = Modifier.size(36.dp),
@@ -3432,15 +3641,7 @@ fun AnalysisResultVideoPreview(
                                     currentPosMs = stepPos
                                     lastSyncPositionMs = stepPos
                                     lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                        try {
-                                            previewPlayerRef?.seekTo(stepPos, MediaPlayer.SEEK_CLOSEST)
-                                        } catch (e: Exception) {
-                                            vv.seekTo(stepPos.toInt())
-                                        }
-                                    } else {
-                                        vv.seekTo(stepPos.toInt())
-                                    }
+                                    seekVideoAccurate(previewPlayerRef, vv, stepPos)
                                 }
                             },
                             modifier = Modifier.size(36.dp),
@@ -3457,6 +3658,7 @@ fun AnalysisResultVideoPreview(
                         val rangeMin = trimStartMs.toFloat()
                         val rangeMax = if (effectiveEndMs > trimStartMs) effectiveEndMs.toFloat() else (trimStartMs + 1000f)
                         val sliderVal = currentPosMs.toFloat().coerceIn(rangeMin, rangeMax)
+                        var lastSeekRequestedMs by remember { mutableLongStateOf(0L) }
 
                         Slider(
                             value = sliderVal,
@@ -3465,20 +3667,17 @@ fun AnalysisResultVideoPreview(
                                 currentPosMs = newPos.toLong()
                                 lastSyncPositionMs = currentPosMs
                                 lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
-                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                    try {
-                                        previewPlayerRef?.seekTo(currentPosMs, MediaPlayer.SEEK_CLOSEST)
-                                    } catch (e: Exception) {
-                                        previewVideoViewRef?.seekTo(currentPosMs.toInt())
-                                    }
-                                } else {
-                                    previewVideoViewRef?.seekTo(currentPosMs.toInt())
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                if (now - lastSeekRequestedMs >= 35L) {
+                                    lastSeekRequestedMs = now
+                                    seekVideoAccurate(previewPlayerRef, previewVideoViewRef, currentPosMs)
                                 }
                             },
                             onValueChangeFinished = {
                                 isUserSeeking = false
                                 lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
                                 lastSyncPositionMs = currentPosMs
+                                seekVideoAccurate(previewPlayerRef, previewVideoViewRef, currentPosMs)
                                 if (isPlaying) {
                                     previewVideoViewRef?.start()
                                 }
@@ -3524,7 +3723,7 @@ fun AnalysisResultVideoPreview(
                         }
                     }
 
-                    // Selector de velocidad (cámara lenta) y guía
+                    // Selector de velocidad (cámara lenta), botón de Gráficos Overlay y guía
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -3562,10 +3761,40 @@ fun AnalysisResultVideoPreview(
                                     }
                                 }
                             }
+
+                            Spacer(modifier = Modifier.width(2.dp))
+
+                            // Botón Gráficos Overlay en el video (1/5 inferior)
+                            Surface(
+                                onClick = { showTelemetryOverlay = !showTelemetryOverlay },
+                                shape = RoundedCornerShape(4.dp),
+                                color = if (showTelemetryOverlay) Color(0x3300FFCC) else Color(0xFF262626),
+                                border = if (showTelemetryOverlay) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC)) else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.padding(horizontal = 6.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.ShowChart,
+                                        contentDescription = "Gráficos en tiempo real",
+                                        tint = if (showTelemetryOverlay) Color(0xFF00FFCC) else Color.LightGray,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        "Gráficos",
+                                        color = if (showTelemetryOverlay) Color(0xFF00FFCC) else Color.LightGray,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (showTelemetryOverlay) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
                         }
 
                         Text(
-                            "◀ ▶ Ajusta fotograma a fotograma",
+                            "◀ ▶ Fotograma",
                             color = Color(0xFF777777),
                             fontSize = 10.sp
                         )
@@ -3573,6 +3802,19 @@ fun AnalysisResultVideoPreview(
                 }
             }
         }
+    }
+}
+
+
+fun seekVideoAccurate(mp: MediaPlayer?, vv: VideoView?, targetMs: Long) {
+    if (mp != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        try {
+            mp.seekTo(targetMs, MediaPlayer.SEEK_CLOSEST)
+        } catch (e: Exception) {
+            vv?.seekTo(targetMs.toInt())
+        }
+    } else {
+        vv?.seekTo(targetMs.toInt())
     }
 }
 
