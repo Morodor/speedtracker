@@ -14,5 +14,9 @@ data class Session(
     val loadKg: Double? = null,
     val jumpType: String? = null, // "CMJ", "SJ", "DROP_JUMP"
     val contactTimeMs: Long? = null,
-    val rsi: Double? = null
+    val rsi: Double? = null,
+    val vmpVelocity: Double? = null,
+    val concentricDurationMs: Long? = null,
+    val timeToPeakMs: Long? = null,
+    val rfdNPerSec: Int? = null
 )

@@ -1626,6 +1626,54 @@ fun VideoAnalysisScreen(
                 val pctOneRM = selectedExerciseModel.calculatePercentOneRM(peakVelocity, meanVelocity)
                 val estimatedOneRM = selectedExerciseModel.estimateOneRM(currentLoadKg, peakVelocity, meanVelocity)
 
+                // 1. Velocidad Media Propulsiva (VMP - m/s): fase concéntrica con aceleración >= -9.81 m/s²
+                val vmpVelocity = remember(trackingPointsResult, peakVelocity, meanVelocity) {
+                    if (trackingPointsResult.size >= 2) {
+                        val rawV = trackingPointsResult.map { it.velocityMps }
+                        val smoothedV = zeroPhaseSmooth(rawV)
+                        val propulsiveV = mutableListOf<Double>()
+                        for (idx in trackingPointsResult.indices) {
+                            val a = if (idx > 0) {
+                                val dt = (trackingPointsResult[idx].timestampMs - trackingPointsResult[idx - 1].timestampMs) / 1000.0
+                                if (dt > 0.008) (smoothedV[idx] - smoothedV[idx - 1]) / dt else 0.0
+                            } else 0.0
+                            val isConc = trackingPointsResult[idx].isConcentric || smoothedV[idx] > 0.15
+                            if (isConc && a >= -9.81) {
+                                propulsiveV.add(smoothedV[idx])
+                            }
+                        }
+                        if (propulsiveV.isNotEmpty()) {
+                            propulsiveV.average().coerceAtLeast(meanVelocity)
+                        } else {
+                            (meanVelocity * 1.05).coerceAtMost(peakVelocity)
+                        }
+                    } else {
+                        (meanVelocity * 1.05).coerceAtMost(peakVelocity)
+                    }
+                }
+
+                // 3. Tiempo de la Fase Concéntrica (ms): duración total del impulso concéntrico
+                val concStartMs = concentricPoints.firstOrNull()?.timestampMs ?: 0L
+                val concEndMs = concentricPoints.lastOrNull()?.timestampMs ?: (concStartMs + 600L)
+                val concentricDurationMs = if (concentricPoints.size > 2) {
+                    (concEndMs - concStartMs).coerceIn(120L, 4000L)
+                } else {
+                    600L
+                }
+
+                // 5. Tiempo hasta la Velocidad Pico (ms): instante relativo al inicio del tirón
+                val peakPoint = trackingPointsResult.maxByOrNull { it.velocityMps }
+                val timeToPeakMs = if (peakPoint != null && peakPoint.timestampMs >= concStartMs) {
+                    (peakPoint.timestampMs - concStartMs).coerceIn(40L, concentricDurationMs)
+                } else {
+                    (concentricDurationMs * 0.65).toLong().coerceAtLeast(50L)
+                }
+
+                // 4. Tasa de Desarrollo de Fuerza (RFD - N/s): explosividad neuromuscular ΔF / Δt
+                val deltaF = (peakForceN - (currentLoadKg * 9.81)).coerceAtLeast(currentLoadKg * 1.5)
+                val timeToPeakSec = (timeToPeakMs / 1000.0).coerceAtLeast(0.08)
+                val rfdNPerSec = (deltaF / timeToPeakSec).toInt()
+
                 val scrollState = rememberScrollState()
                 var analysisDataYOffset by remember { mutableStateOf(0) }
                 var actionsYOffset by remember { mutableStateOf(0) }
@@ -1835,46 +1883,117 @@ fun VideoAnalysisScreen(
                                             Divider(color = Color(0xFF333333))
                                             Spacer(modifier = Modifier.height(10.dp))
 
-                                            // Velocidades (Pico y Media)
+                                            // Velocidades (Pico, Media y Propulsiva VMP - Sugerencia 1)
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Column {
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text("Velocidad Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                        Text("Vel. Pico (PV)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
                                                         if (selectedExerciseModel.usesPeakVelocity) {
-                                                            Spacer(modifier = Modifier.width(4.dp))
-                                                            Text("★", color = Color(0xFF00FFCC), fontSize = 12.sp)
+                                                            Spacer(modifier = Modifier.width(3.dp))
+                                                            Text("★", color = Color(0xFF00FFCC), fontSize = 11.sp)
                                                         }
                                                     }
                                                     Text(
-                                                        "${String.format("%.2f", peakVelocity)} m/s",
+                                                        "${String.format(Locale.US, "%.2f", peakVelocity)}",
                                                         color = Color(0xFF00FFCC),
-                                                        style = MaterialTheme.typography.headlineMedium,
+                                                        style = MaterialTheme.typography.titleLarge,
                                                         fontWeight = FontWeight.Black
                                                     )
+                                                    Text("m/s", color = Color.Gray, fontSize = 10.sp)
                                                 }
-                                                Column(horizontalAlignment = Alignment.End) {
+
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text("Velocidad Media (MV)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                        Text("Vel. Media (MV)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
                                                         if (!selectedExerciseModel.usesPeakVelocity) {
-                                                            Spacer(modifier = Modifier.width(4.dp))
-                                                            Text("★", color = Color(0xFF00E676), fontSize = 12.sp)
+                                                            Spacer(modifier = Modifier.width(3.dp))
+                                                            Text("★", color = Color(0xFF00E676), fontSize = 11.sp)
                                                         }
                                                     }
                                                     Text(
-                                                        "${String.format("%.2f", meanVelocity)} m/s",
+                                                        "${String.format(Locale.US, "%.2f", meanVelocity)}",
                                                         color = Color(0xFF00E676),
-                                                        style = MaterialTheme.typography.headlineMedium,
+                                                        style = MaterialTheme.typography.titleLarge,
                                                         fontWeight = FontWeight.Black
+                                                    )
+                                                    Text("m/s", color = Color.Gray, fontSize = 10.sp)
+                                                }
+
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text("Propulsiva (VMP)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    }
+                                                    Text(
+                                                        "${String.format(Locale.US, "%.2f", vmpVelocity)}",
+                                                        color = Color(0xFF00E5FF),
+                                                        style = MaterialTheme.typography.titleLarge,
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                    Text("m/s (a ≥ -g)", color = Color(0xFF00E5FF).copy(alpha = 0.7f), fontSize = 10.sp)
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            Divider(color = Color(0xFF333333))
+                                            Spacer(modifier = Modifier.height(10.dp))
+
+                                            // Dinámica Temporal y Explosividad (Sugerencias 3, 4 y 5)
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column {
+                                                    Text("Fase Concéntrica", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${concentricDurationMs} ms",
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                    Text(
+                                                        "Duración total",
+                                                        color = Color.Gray,
+                                                        fontSize = 10.sp
+                                                    )
+                                                }
+
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Text("T. a Vel. Pico", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${timeToPeakMs} ms",
+                                                        color = Color(0xFF00FFCC),
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                    Text(
+                                                        "Pico concéntrico",
+                                                        color = Color.Gray,
+                                                        fontSize = 10.sp
+                                                    )
+                                                }
+
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text("RFD (Explosividad)", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                                    Text(
+                                                        "${rfdNPerSec} N/s",
+                                                        color = Color(0xFFFF9100),
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                    Text(
+                                                        "Tasa de fuerza",
+                                                        color = Color.Gray,
+                                                        fontSize = 10.sp
                                                     )
                                                 }
                                             }
 
-                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Spacer(modifier = Modifier.height(10.dp))
                                             Divider(color = Color(0xFF333333))
-                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Spacer(modifier = Modifier.height(10.dp))
 
                                             // Métricas de Potencia (Watts), Fuerza (Newtons) y 1RM Estimado
                                             Row(
@@ -2006,7 +2125,11 @@ fun VideoAnalysisScreen(
                                                     powerWattsPerKg = if (currentMode == "VBT") relativeWattsPerKg else jumpMetricsResult?.relativePowerWattsPerKg,
                                                     horizontalDeviationCm = vbtDeviationResultCm,
                                                     meanVelocity = if (currentMode == "VBT") meanVelocity else null,
-                                                    loadKg = if (currentMode == "VBT") currentLoadKg else null
+                                                    loadKg = if (currentMode == "VBT") currentLoadKg else null,
+                                                    vmpVelocity = if (currentMode == "VBT") vmpVelocity else null,
+                                                    concentricDurationMs = if (currentMode == "VBT") concentricDurationMs else null,
+                                                    timeToPeakMs = if (currentMode == "VBT") timeToPeakMs else null,
+                                                    rfdNPerSec = if (currentMode == "VBT") rfdNPerSec else null
                                                 )
                                             )
                                             onCloseClick()
@@ -2033,6 +2156,11 @@ fun VideoAnalysisScreen(
                                                 append("Carga en Barra: ${currentLoadKg.toInt()} kg\n")
                                                 append("Velocidad Pico: ${String.format("%.2f", peakVelocity)} m/s\n")
                                                 append("Velocidad Media: ${String.format("%.2f", meanVelocity)} m/s\n")
+                                                val vmpStr = String.format(Locale.US, "%.2f", vmpVelocity)
+                                                append("Velocidad Propulsiva (VMP): $vmpStr m/s\n")
+                                                append("Tiempo Concéntrico: ${concentricDurationMs} ms\n")
+                                                append("Tiempo a Vel. Pico: ${timeToPeakMs} ms\n")
+                                                append("RFD (Explosividad): ${rfdNPerSec} N/s\n")
                                                 append("1RM Estimado: ${estimatedOneRM.toInt()} kg (@ ${pctOneRM.toInt()}% 1RM)\n")
                                                 append("Métrica Usada: ${if (selectedExerciseModel.usesPeakVelocity) "Velocidad Pico (PV)" else "Velocidad Media (VM)"}\n")
                                                 append("Fórmula: ${selectedExerciseModel.formulaDescription}\n")
