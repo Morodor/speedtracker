@@ -1292,12 +1292,10 @@ fun VideoAnalysisScreen(
                         }
 
                         Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.fillMaxSize(),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            // Contenedor de Video Centrado con Render Bounds Exactos
+                            // Contenedor de Video Centrado con Render Bounds Exactos (Sin márgenes exteriores que desplacen las flechas)
                             BoxWithConstraints(
                                 modifier = Modifier
                                     .weight(1f)
@@ -1441,11 +1439,11 @@ fun VideoAnalysisScreen(
                                 )
                             }
 
-                            // Panel Inferior de Controles
+                            // Panel Inferior de Controles (con padding horizontal para los controles)
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 4.dp),
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 // Fila de Controles de Reproducción y Cuadro a Cuadro en Calibración
@@ -2971,6 +2969,46 @@ data class KinematicDataPoint(
  * Aplica un pase hacia adelante y otro hacia atrás con ponderaciones gaussianas/binomiales
  * para eliminar el ruido de alta frecuencia del tracking sin introducir desfase temporal (Δφ = 0).
  */
+/**
+ * Filtro pasabajas gaussiano binomial de 7 coeficientes y fase cero (Forward-Backward, passes = 3).
+ * Elimina por completo el temblor o ruido digital de cuantización sin introducir retardo temporal (Δt = 0),
+ * preservando fielmente los picos fisiológicos de velocidad del levantamiento.
+ */
+fun zeroPhaseSmooth7Tap(data: List<Double>, passes: Int = 3): List<Double> {
+    if (data.size < 7) return data
+    var current = data.toDoubleArray()
+    val weights = doubleArrayOf(0.04, 0.12, 0.22, 0.24, 0.22, 0.12, 0.04)
+    val n = current.size
+    repeat(passes) {
+        val fwd = DoubleArray(n)
+        for (i in 0 until n) {
+            var sum = 0.0
+            var wSum = 0.0
+            for (k in -3..3) {
+                val idx = (i + k).coerceIn(0, n - 1)
+                val w = weights[k + 3]
+                sum += current[idx] * w
+                wSum += w
+            }
+            fwd[i] = sum / wSum
+        }
+        val bwd = DoubleArray(n)
+        for (i in n - 1 downTo 0) {
+            var sum = 0.0
+            var wSum = 0.0
+            for (k in -3..3) {
+                val idx = (i + k).coerceIn(0, n - 1)
+                val w = weights[k + 3]
+                sum += fwd[idx] * w
+                wSum += w
+            }
+            bwd[i] = sum / wSum
+        }
+        current = bwd
+    }
+    return current.toList()
+}
+
 fun zeroPhaseSmooth(data: List<Double>, passes: Int = 2): List<Double> {
     if (data.size < 5) return data
     var current = data.toDoubleArray()
@@ -3566,6 +3604,14 @@ fun KinematicTelemetryChart(
  * Traza las curvas de Velocidad (m/s) en cian y Aceleración (m/s²) en naranja,
  * con un cursor blanco vertical que avanza frame a frame según la reproducción.
  */
+/**
+ * Overlay de Telemetría Dinámica en Tiempo Real (1/5 del alto del video).
+ * Muestra la curva de Velocidad Biomecánica limpia, con degradado suave,
+ * hito de Velocidad Pico (VP), línea de Velocidad Media (VM), sombreado
+ * de Fase Concéntrica y cursor vertical sincronizado fotograma a fotograma.
+ * Incluye un filtro pasabajas de fase cero de 7 coeficientes y toggle para
+ * superponer la aceleración sin saturar la vista.
+ */
 @Composable
 fun RealtimeTelemetryOverlayChart(
     trackingPoints: List<VideoFrameTrackingPoint>,
@@ -3580,9 +3626,12 @@ fun RealtimeTelemetryOverlayChart(
     val maxTimeMs = trackingPoints.last().timestampMs
     val totalDurationMs = (maxTimeMs - minTimeMs).coerceAtLeast(100L)
 
+    var showAcceleration by remember { mutableStateOf(false) }
+
+    // Suavizado avanzado de fase cero de 7-tap con 3 pasadas (elimina todo temblor o ruido digital)
     val telemetryPoints = remember(trackingPoints) {
         val rawV = trackingPoints.map { it.velocityMps }
-        val smoothedV = zeroPhaseSmooth(rawV)
+        val smoothedV = zeroPhaseSmooth7Tap(rawV, passes = 3)
 
         val rawA = mutableListOf<Double>()
         for (i in trackingPoints.indices) {
@@ -3592,7 +3641,7 @@ fun RealtimeTelemetryOverlayChart(
             } else 0.0
             rawA.add(a.coerceIn(-25.0, 35.0))
         }
-        val smoothedA = zeroPhaseSmooth(rawA)
+        val smoothedA = zeroPhaseSmooth7Tap(rawA, passes = 3)
 
         trackingPoints.indices.map { i ->
             KinematicDataPoint(
@@ -3604,9 +3653,21 @@ fun RealtimeTelemetryOverlayChart(
         }
     }
 
-    val maxV = remember(telemetryPoints) {
-        (telemetryPoints.maxOfOrNull { it.velocityMps } ?: 1.0).coerceAtLeast(0.5) * 1.15
+    // Métricas clave para destacar
+    val peakPoint = remember(telemetryPoints) {
+        telemetryPoints.maxByOrNull { it.velocityMps }
     }
+    val peakV = peakPoint?.velocityMps ?: 1.0
+
+    val meanV = remember(telemetryPoints) {
+        val conc = telemetryPoints.filter { it.isConcentric }
+        if (conc.isNotEmpty()) conc.map { it.velocityMps }.average() else (peakV * 0.55)
+    }
+
+    val maxV = remember(telemetryPoints) {
+        (peakV * 1.18).coerceAtLeast(0.6)
+    }
+
     val maxA = remember(telemetryPoints) {
         (telemetryPoints.maxOfOrNull { it.accelerationMps2 } ?: 5.0).coerceAtLeast(4.0) * 1.15
     }
@@ -3614,95 +3675,222 @@ fun RealtimeTelemetryOverlayChart(
         (telemetryPoints.minOfOrNull { it.accelerationMps2 } ?: -4.0).coerceAtMost(-3.0) * 1.15
     }
 
+    // Rango concéntrico para sombreado de fondo
+    val concentricRange = remember(telemetryPoints) {
+        val concPoints = telemetryPoints.filter { it.isConcentric }
+        if (concPoints.size >= 2) {
+            Pair(concPoints.first().timestampMs, concPoints.last().timestampMs)
+        } else null
+    }
+
     val elapsedInTrim = (currentVideoPosMs - trimStartMs).coerceAtLeast(0L)
     val activePoint = remember(telemetryPoints, elapsedInTrim) {
         telemetryPoints.minByOrNull { kotlin.math.abs(it.timestampMs - elapsedInTrim) }
     }
 
-    Box(modifier = modifier) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 3.dp)
-        ) {
-            val w = size.width
-            val h = size.height
-            if (w <= 0f || h <= 0f) return@Canvas
-
-            // Línea cero de aceleración (de referencia)
-            val zeroAY = (h - ((0.0 - minA) / (maxA - minA) * h).toFloat()).coerceIn(0f, h)
-            drawLine(
-                color = Color(0x33FFFFFF),
-                start = Offset(0f, zeroAY),
-                end = Offset(w, zeroAY),
-                strokeWidth = 1f,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
-            )
-
-            // Curva de Aceleración (Naranja)
-            val aPath = Path()
-            telemetryPoints.forEachIndexed { idx, pt ->
-                val x = ((pt.timestampMs - minTimeMs).toFloat() / totalDurationMs.toFloat()) * w
-                val normA = ((pt.accelerationMps2 - minA) / (maxA - minA)).toFloat().coerceIn(0f, 1f)
-                val y = h - (normA * h)
-                if (idx == 0) aPath.moveTo(x, y) else aPath.lineTo(x, y)
-            }
-            drawPath(
-                path = aPath,
-                color = Color(0xFFFF9100).copy(alpha = 0.85f),
-                style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-            )
-
-            // Curva de Velocidad (Cian)
-            val vPath = Path()
-            telemetryPoints.forEachIndexed { idx, pt ->
-                val x = ((pt.timestampMs - minTimeMs).toFloat() / totalDurationMs.toFloat()) * w
-                val normV = (pt.velocityMps / maxV).toFloat().coerceIn(0f, 1f)
-                val y = h - (normV * h)
-                if (idx == 0) vPath.moveTo(x, y) else vPath.lineTo(x, y)
-            }
-            drawPath(
-                path = vPath,
-                color = Color(0xFF00FFCC),
-                style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-            )
-
-            // Cursor vertical dinámico sincronizado en tiempo real con el video
-            val cursorFrac = (elapsedInTrim.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
-            val cursorX = cursorFrac * w
-            drawLine(
-                color = Color.White,
-                start = Offset(cursorX, 0f),
-                end = Offset(cursorX, h),
-                strokeWidth = 2.dp.toPx()
-            )
-            val dotY = (h - (((activePoint?.velocityMps ?: 0.0) / maxV).toFloat().coerceIn(0f, 1f) * h))
-            drawCircle(
-                color = Color(0xFF00FFCC),
-                radius = 3.dp.toPx(),
-                center = Offset(cursorX, dotY)
-            )
-        }
-
-        // Indicador HUD superior en tiempo real
+    Column(modifier = modifier) {
+        // 1. Barra HUD Superior Compacta: Métricas más importantes + Toggle Aceleración
         Row(
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 8.dp, top = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                "⚡ V: ${String.format(Locale.US, "%.2f", activePoint?.velocityMps ?: 0.0)} m/s",
-                color = Color(0xFF00FFCC),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                "📈 A: ${String.format(Locale.US, "%+.1f", activePoint?.accelerationMps2 ?: 0.0)} m/s²",
-                color = Color(0xFFFF9100),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Velocidad instantánea en el cursor
+                Text(
+                    "⚡ V: ${String.format(Locale.US, "%.2f", activePoint?.velocityMps ?: 0.0)} m/s",
+                    color = Color(0xFF00FFCC),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                // Velocidad Pico de referencia
+                Text(
+                    "★ Pico: ${String.format(Locale.US, "%.2f", peakV)}",
+                    color = Color(0xFFFFD600),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                // Badge de Fase
+                val isConc = activePoint?.isConcentric == true
+                Surface(
+                    color = if (isConc) Color(0x3300FFCC) else Color(0x22FFFFFF),
+                    shape = RoundedCornerShape(3.dp),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, if (isConc) Color(0xFF00FFCC) else Color(0x44FFFFFF))
+                ) {
+                    Text(
+                        if (isConc) "CONCÉNTRICA" else "INERCIAL",
+                        color = if (isConc) Color(0xFF00FFCC) else Color.LightGray,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+
+                if (showAcceleration) {
+                    Text(
+                        "📈 A: ${String.format(Locale.US, "%+.1f", activePoint?.accelerationMps2 ?: 0.0)} m/s²",
+                        color = Color(0xFFFF9100),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Chip para encender/apagar aceleración sin saturar la vista
+            Surface(
+                onClick = { showAcceleration = !showAcceleration },
+                shape = RoundedCornerShape(4.dp),
+                color = if (showAcceleration) Color(0xFF332000) else Color(0x22FFFFFF),
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (showAcceleration) Color(0xFFFF9100) else Color(0x44FFFFFF))
+            ) {
+                Text(
+                    if (showAcceleration) "Acel ✓" else "+ Acel",
+                    color = if (showAcceleration) Color(0xFFFF9100) else Color.LightGray,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+        }
+
+        // 2. Gráfico Limpio con Curva de Velocidad, Gradiente, VM, VP y Cursor
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                val w = size.width
+                val h = size.height
+                if (w <= 0f || h <= 0f) return@Canvas
+
+                // Sombreado de fondo en Fase Concéntrica (delimita la fase de tirón propulsivo)
+                if (concentricRange != null) {
+                    val startX = ((concentricRange.first - minTimeMs).toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f) * w
+                    val endX = ((concentricRange.second - minTimeMs).toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f) * w
+                    val rangeW = (endX - startX).coerceAtLeast(2f)
+                    drawRect(
+                        color = Color(0x1800FFCC),
+                        topLeft = Offset(startX, 0f),
+                        size = Size(rangeW, h)
+                    )
+                }
+
+                // Línea discontinua de Velocidad Media (VM)
+                val vmY = (h - ((meanV / maxV).toFloat().coerceIn(0f, 1f) * h))
+                drawLine(
+                    color = Color(0x4400FFCC),
+                    start = Offset(0f, vmY),
+                    end = Offset(w, vmY),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+                )
+
+                // Si está activada la aceleración, trazar su línea cero y curva filtrada
+                if (showAcceleration) {
+                    val zeroAY = (h - ((0.0 - minA) / (maxA - minA) * h).toFloat()).coerceIn(0f, h)
+                    drawLine(
+                        color = Color(0x33FFFFFF),
+                        start = Offset(0f, zeroAY),
+                        end = Offset(w, zeroAY),
+                        strokeWidth = 1f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
+                    )
+
+                    val aPath = Path()
+                    telemetryPoints.forEachIndexed { idx, pt ->
+                        val x = ((pt.timestampMs - minTimeMs).toFloat() / totalDurationMs.toFloat()) * w
+                        val normA = ((pt.accelerationMps2 - minA) / (maxA - minA)).toFloat().coerceIn(0f, 1f)
+                        val y = h - (normA * h)
+                        if (idx == 0) aPath.moveTo(x, y) else aPath.lineTo(x, y)
+                    }
+                    drawPath(
+                        path = aPath,
+                        color = Color(0xFFFF9100).copy(alpha = 0.85f),
+                        style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                }
+
+                // Curva de Velocidad (Protagonista: Trazado en cian neón con degradado)
+                val vPath = Path()
+                val vFillPath = Path()
+                telemetryPoints.forEachIndexed { idx, pt ->
+                    val x = ((pt.timestampMs - minTimeMs).toFloat() / totalDurationMs.toFloat()) * w
+                    val normV = (pt.velocityMps / maxV).toFloat().coerceIn(0f, 1f)
+                    val y = h - (normV * h)
+                    if (idx == 0) {
+                        vPath.moveTo(x, y)
+                        vFillPath.moveTo(x, h)
+                        vFillPath.lineTo(x, y)
+                    } else {
+                        vPath.lineTo(x, y)
+                        vFillPath.lineTo(x, y)
+                    }
+                    if (idx == telemetryPoints.size - 1) {
+                        vFillPath.lineTo(x, h)
+                        vFillPath.close()
+                    }
+                }
+
+                // Relleno degradado sutil y moderno
+                drawPath(
+                    path = vFillPath,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color(0x4000FFCC), Color(0x0200FFCC)),
+                        startY = 0f,
+                        endY = h
+                    )
+                )
+
+                // Trazo nítido de la velocidad
+                drawPath(
+                    path = vPath,
+                    color = Color(0xFF00FFCC),
+                    style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+
+                // Marcador visual de Velocidad Pico (VP)
+                if (peakPoint != null && peakV > 0.2) {
+                    val px = ((peakPoint.timestampMs - minTimeMs).toFloat() / totalDurationMs.toFloat()) * w
+                    val py = h - ((peakV / maxV).toFloat().coerceIn(0f, 1f) * h)
+                    // Halo exterior
+                    drawCircle(Color(0x6600FFCC), radius = 5.dp.toPx(), center = Offset(px, py))
+                    // Centro brillante
+                    drawCircle(Color(0xFF00FFCC), radius = 2.5.dp.toPx(), center = Offset(px, py))
+                }
+
+                // Cursor vertical dinámico sincronizado en tiempo real con el video
+                val cursorFrac = (elapsedInTrim.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
+                val cursorX = cursorFrac * w
+                drawLine(
+                    color = Color.White,
+                    start = Offset(cursorX, 0f),
+                    end = Offset(cursorX, h),
+                    strokeWidth = 2.dp.toPx()
+                )
+                val dotY = (h - (((activePoint?.velocityMps ?: 0.0) / maxV).toFloat().coerceIn(0f, 1f) * h))
+                drawCircle(
+                    color = Color.White,
+                    radius = 3.5.dp.toPx(),
+                    center = Offset(cursorX, dotY)
+                )
+                drawCircle(
+                    color = Color(0xFF00FFCC),
+                    radius = 2.dp.toPx(),
+                    center = Offset(cursorX, dotY)
+                )
+            }
         }
     }
 }

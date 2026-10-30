@@ -531,7 +531,7 @@ fun BoxScope.CalibrationVideoDirectionalOverlay(
         shadowElevation = 12.dp,
         modifier = Modifier
             .align(Alignment.TopCenter)
-            .padding(top = 8.dp)
+            .padding(top = 2.dp)
             .size(80.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -553,7 +553,7 @@ fun BoxScope.CalibrationVideoDirectionalOverlay(
         shadowElevation = 12.dp,
         modifier = Modifier
             .align(Alignment.BottomCenter)
-            .padding(bottom = 8.dp)
+            .padding(bottom = 2.dp)
             .size(80.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -575,7 +575,7 @@ fun BoxScope.CalibrationVideoDirectionalOverlay(
         shadowElevation = 12.dp,
         modifier = Modifier
             .align(Alignment.CenterStart)
-            .padding(start = 6.dp)
+            .padding(start = 2.dp)
             .size(80.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -597,7 +597,7 @@ fun BoxScope.CalibrationVideoDirectionalOverlay(
         shadowElevation = 12.dp,
         modifier = Modifier
             .align(Alignment.CenterEnd)
-            .padding(end = 6.dp)
+            .padding(end = 2.dp)
             .size(80.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
