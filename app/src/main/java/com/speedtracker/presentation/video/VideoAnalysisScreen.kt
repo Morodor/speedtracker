@@ -829,13 +829,14 @@ fun VideoAnalysisScreen(
                                 ) {
                                     VBTExerciseFamily.values().forEach { family ->
                                         val isSelected = setupFamily == family
+                                        val familyColor = Color(0xFF8B5CF6) // Violeta eléctrico para diferenciar categoría de los ejercicios
                                         Surface(
                                             onClick = { setupFamily = family },
                                             shape = RoundedCornerShape(10.dp),
-                                            color = if (isSelected) Color(0xFF00FFCC).copy(alpha = 0.22f) else Color(0xFF1E1E1E),
+                                            color = if (isSelected) familyColor.copy(alpha = 0.22f) else Color(0xFF1E1E1E),
                                             border = androidx.compose.foundation.BorderStroke(
-                                                1.dp,
-                                                if (isSelected) Color(0xFF00FFCC) else Color(0xFF333333)
+                                                1.5.dp,
+                                                if (isSelected) familyColor else Color(0xFF333333)
                                             ),
                                             modifier = Modifier.weight(1f).height(40.dp)
                                         ) {
@@ -848,7 +849,7 @@ fun VideoAnalysisScreen(
                                                 Spacer(modifier = Modifier.width(6.dp))
                                                 Text(
                                                     family.label,
-                                                    color = if (isSelected) Color(0xFF00FFCC) else Color.LightGray,
+                                                    color = if (isSelected) Color(0xFFDDD6FE) else Color.LightGray,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                                     fontSize = 12.sp
                                                 )
@@ -1118,20 +1119,6 @@ fun VideoAnalysisScreen(
                                         onRadiusChange = { circleRadiusPx = it }
                                     )
 
-                                    // Flechas HUD Direccionales aisladas (sin botones superpuestos)
-                                    CalibrationVideoDirectionalOverlay(
-                                        onMove = { dx, dy ->
-                                            val cur = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
-                                            circleCenter = Offset(
-                                                (cur.x + dx).coerceIn(circleRadiusPx, bounds.renderWidth - circleRadiusPx),
-                                                (cur.y + dy).coerceIn(circleRadiusPx, bounds.renderHeight - circleRadiusPx)
-                                            )
-                                        },
-                                        onReset = {
-                                            circleCenter = Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
-                                        }
-                                    )
-
                                     // Botones Superiores Derechos ÚNICOS: Audio y Reset Zoom (Sin superposición con ningún otro botón)
                                     Row(
                                         modifier = Modifier
@@ -1175,6 +1162,20 @@ fun VideoAnalysisScreen(
                                         }
                                     }
                                 }
+
+                                // Flechas HUD Direccionales alineadas a TODOS los márgenes de la pantalla para manejo cómodo con pulgar
+                                CalibrationVideoDirectionalOverlay(
+                                    onMove = { dx, dy ->
+                                        val cur = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
+                                        circleCenter = Offset(
+                                            (cur.x + dx).coerceIn(circleRadiusPx, bounds.renderWidth - circleRadiusPx),
+                                            (cur.y + dy).coerceIn(circleRadiusPx, bounds.renderHeight - circleRadiusPx)
+                                        )
+                                    },
+                                    onReset = {
+                                        circleCenter = Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
+                                    }
+                                )
                             }
 
                             // Panel Inferior de Controles
@@ -1717,12 +1718,12 @@ fun VideoAnalysisScreen(
                                 .padding(bottom = 12.dp)
                         )
 
-                        // ANCHOR: DATOS ANÁLISIS
+                        // ANCHOR: DATOS ANÁLISIS (Posición exacta para mostrar desde el tipo de ejercicio hacia abajo)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .onGloballyPositioned { coords ->
-                                    analysisDataYOffset = scrollState.value + coords.positionInParent().y.toInt()
+                                    analysisDataYOffset = coords.positionInParent().y.toInt()
                                 }
                         ) {
                             Column(modifier = Modifier.fillMaxWidth()) {
@@ -2257,90 +2258,92 @@ fun VideoAnalysisScreen(
                         Spacer(modifier = Modifier.height(84.dp))
                     }
 
-                    // Botón flotante para subir del todo a la pantalla y ver el video nuevamente
-                    AnimatedVisibility(
-                        visible = scrollState.value > 180,
-                        enter = fadeIn() + scaleIn(),
-                        exit = fadeOut() + scaleOut(),
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 16.dp, bottom = 74.dp)
-                    ) {
-                        FloatingActionButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    scrollState.animateScrollTo(0)
-                                }
-                            },
-                            containerColor = Color(0xFF00FFCC),
-                            contentColor = Color.Black,
-                            modifier = Modifier.size(44.dp),
-                            shape = CircleShape,
-                            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.KeyboardArrowUp,
-                                contentDescription = "Subir al video",
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                    }
-
-                    // Barra persistente con los 2 botones: "Datos Análisis" y "Acciones"
+                    // Barra persistente de navegación: [Video] [Datos Analizados] [Acciones]
                     Surface(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth(),
-                        color = Color(0xF2121212),
+                        color = Color(0xF5141414),
                         tonalElevation = 8.dp,
-                        shadowElevation = 12.dp,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262626)),
+                        shadowElevation = 14.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A2A2A)),
                         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // 1. Botón VIDEO: Primero en el menú, lleva directamente a la parte más alta para ver el video analizado
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
-                                        val targetY = if (scrollState.value > (analysisDataYOffset + 40)) {
-                                            (analysisDataYOffset - 8).coerceAtLeast(0)
-                                        } else {
-                                            0
-                                        }
-                                        scrollState.animateScrollTo(targetY)
+                                        scrollState.animateScrollTo(0)
                                     }
                                 },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(46.dp),
+                                    .height(44.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF1E2922),
-                                    contentColor = Color(0xFF00FFCC)
+                                    containerColor = Color(0xFF222222),
+                                    contentColor = Color.White
                                 ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.6f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF444444)),
                                 shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 4.dp)
                             ) {
                                 Icon(
-                                    Icons.Default.QueryStats,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
+                                    Icons.Default.Videocam,
+                                    contentDescription = "Video",
+                                    modifier = Modifier.size(17.dp),
                                     tint = Color(0xFF00FFCC)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    "Datos Analizados",
+                                    "Video",
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
+                                    fontSize = 11.5.sp,
                                     maxLines = 1
                                 )
                             }
 
+                            // 2. Botón DATOS ANALIZADOS: Muestra desde el tipo de ejercicio hacia abajo
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        scrollState.animateScrollTo((analysisDataYOffset - 4).coerceAtLeast(0))
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1.3f)
+                                    .height(44.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF162520),
+                                    contentColor = Color(0xFF00FFCC)
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.7f)),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.QueryStats,
+                                    contentDescription = "Datos",
+                                    modifier = Modifier.size(17.dp),
+                                    tint = Color(0xFF00FFCC)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    "Datos Analizados",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+
+                            // 3. Botón ACCIONES: Lleva al final de la pantalla a los botones de acción
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
@@ -2348,27 +2351,27 @@ fun VideoAnalysisScreen(
                                     }
                                 },
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .height(46.dp),
+                                    .weight(1.1f)
+                                    .height(44.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF262626),
+                                    containerColor = Color(0xFF222222),
                                     contentColor = Color.White
                                 ),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF444444)),
                                 shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 4.dp)
                             ) {
                                 Icon(
                                     Icons.Default.TouchApp,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
+                                    contentDescription = "Acciones",
+                                    modifier = Modifier.size(17.dp),
                                     tint = Color(0xFF00FFCC)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     "Acciones",
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
+                                    fontSize = 11.5.sp,
                                     maxLines = 1
                                 )
                             }

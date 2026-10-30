@@ -522,90 +522,90 @@ fun BoxScope.CalibrationVideoDirectionalOverlay(
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Flecha Arriba (Borde superior del video)
+    // Flecha Arriba (Alineada al margen superior de la pantalla)
     Surface(
         onClick = { onMove(0f, -6f) },
         shape = CircleShape,
-        color = Color(0xDD161616),
-        border = BorderStroke(1.5.dp, Color(0x8800FFCC)),
-        shadowElevation = 6.dp,
+        color = Color(0xEE1A1A1A),
+        border = BorderStroke(2.dp, Color(0xFF00FFCC)),
+        shadowElevation = 8.dp,
         modifier = Modifier
             .align(Alignment.TopCenter)
-            .padding(top = 12.dp)
-            .size(46.dp)
+            .padding(top = 10.dp)
+            .size(56.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.KeyboardArrowUp,
                 contentDescription = "Mover Arriba",
                 tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(30.dp)
+                modifier = Modifier.size(36.dp)
             )
         }
     }
 
-    // Flecha Abajo (Borde inferior del video)
+    // Flecha Abajo (Alineada al margen inferior de la pantalla)
     Surface(
         onClick = { onMove(0f, 6f) },
         shape = CircleShape,
-        color = Color(0xDD161616),
-        border = BorderStroke(1.5.dp, Color(0x8800FFCC)),
-        shadowElevation = 6.dp,
+        color = Color(0xEE1A1A1A),
+        border = BorderStroke(2.dp, Color(0xFF00FFCC)),
+        shadowElevation = 8.dp,
         modifier = Modifier
             .align(Alignment.BottomCenter)
-            .padding(bottom = 12.dp)
-            .size(46.dp)
+            .padding(bottom = 10.dp)
+            .size(56.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.KeyboardArrowDown,
                 contentDescription = "Mover Abajo",
                 tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(30.dp)
+                modifier = Modifier.size(36.dp)
             )
         }
     }
 
-    // Flecha Izquierda (Borde izquierdo del video)
+    // Flecha Izquierda (Alineada al margen izquierdo de la pantalla, ideal para dedo pulgar)
     Surface(
         onClick = { onMove(-6f, 0f) },
         shape = CircleShape,
-        color = Color(0xDD161616),
-        border = BorderStroke(1.5.dp, Color(0x8800FFCC)),
-        shadowElevation = 6.dp,
+        color = Color(0xEE1A1A1A),
+        border = BorderStroke(2.dp, Color(0xFF00FFCC)),
+        shadowElevation = 8.dp,
         modifier = Modifier
             .align(Alignment.CenterStart)
-            .padding(start = 12.dp)
-            .size(46.dp)
+            .padding(start = 10.dp)
+            .size(56.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.KeyboardArrowLeft,
                 contentDescription = "Mover Izquierda",
                 tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(30.dp)
+                modifier = Modifier.size(36.dp)
             )
         }
     }
 
-    // Flecha Derecha (Borde derecho del video)
+    // Flecha Derecha (Alineada al margen derecho de la pantalla, ideal para dedo pulgar)
     Surface(
         onClick = { onMove(6f, 0f) },
         shape = CircleShape,
-        color = Color(0xDD161616),
-        border = BorderStroke(1.5.dp, Color(0x8800FFCC)),
-        shadowElevation = 6.dp,
+        color = Color(0xEE1A1A1A),
+        border = BorderStroke(2.dp, Color(0xFF00FFCC)),
+        shadowElevation = 8.dp,
         modifier = Modifier
             .align(Alignment.CenterEnd)
-            .padding(end = 12.dp)
-            .size(46.dp)
+            .padding(end = 10.dp)
+            .size(56.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.KeyboardArrowRight,
                 contentDescription = "Mover Derecha",
                 tint = Color(0xFF00FFCC),
-                modifier = Modifier.size(30.dp)
+                modifier = Modifier.size(36.dp)
             )
         }
     }
