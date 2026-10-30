@@ -3689,73 +3689,94 @@ fun RealtimeTelemetryOverlayChart(
     }
 
     Column(modifier = modifier) {
-        // 1. Barra HUD Superior Compacta: Métricas más importantes + Toggle Aceleración
+        // 1. Barra HUD Superior Compacta con Ranuras Fijas (Inmune a variación de caracteres numéricos)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 2.dp),
+                .padding(horizontal = 6.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Velocidad instantánea en el cursor
-                Text(
-                    "⚡ V: ${String.format(Locale.US, "%.2f", activePoint?.velocityMps ?: 0.0)} m/s",
-                    color = Color(0xFF00FFCC),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                // Ranura fija Velocidad instantánea en el cursor (76dp)
+                Box(modifier = Modifier.width(76.dp), contentAlignment = Alignment.CenterStart) {
+                    Text(
+                        "⚡ V: ${String.format(Locale.US, "%.2f", activePoint?.velocityMps ?: 0.0)} m/s",
+                        color = Color(0xFF00FFCC),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
 
-                // Velocidad Pico de referencia
-                Text(
-                    "★ Pico: ${String.format(Locale.US, "%.2f", peakV)}",
-                    color = Color(0xFFFFD600),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                // Ranura fija Velocidad Pico (74dp)
+                Box(modifier = Modifier.width(74.dp), contentAlignment = Alignment.CenterStart) {
+                    Text(
+                        "★ Pico: ${String.format(Locale.US, "%.2f", peakV)}",
+                        color = Color(0xFFFFD600),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
 
-                // Badge de Fase
+                // Ranura fija Badge de Fase (76dp con ancho fijo para evitar empujar otros elementos)
                 val isConc = activePoint?.isConcentric == true
                 Surface(
                     color = if (isConc) Color(0x3300FFCC) else Color(0x22FFFFFF),
                     shape = RoundedCornerShape(3.dp),
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, if (isConc) Color(0xFF00FFCC) else Color(0x44FFFFFF))
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, if (isConc) Color(0xFF00FFCC) else Color(0x44FFFFFF)),
+                    modifier = Modifier.width(76.dp)
                 ) {
                     Text(
                         if (isConc) "CONCÉNTRICA" else "INERCIAL",
                         color = if (isConc) Color(0xFF00FFCC) else Color.LightGray,
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        modifier = Modifier.padding(vertical = 1.dp),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
+                // Ranura fija Aceleración (84dp)
                 if (showAcceleration) {
-                    Text(
-                        "📈 A: ${String.format(Locale.US, "%+.1f", activePoint?.accelerationMps2 ?: 0.0)} m/s²",
-                        color = Color(0xFFFF9100),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Box(modifier = Modifier.width(84.dp), contentAlignment = Alignment.CenterStart) {
+                        Text(
+                            "📈 A: ${String.format(Locale.US, "%+4.1f", activePoint?.accelerationMps2 ?: 0.0)} m/s²",
+                            color = Color(0xFFFF9100),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
             }
 
-            // Chip para encender/apagar aceleración sin saturar la vista
+            // Chip fijo para encender/apagar aceleración sin saturar la vista (48dp)
             Surface(
                 onClick = { showAcceleration = !showAcceleration },
                 shape = RoundedCornerShape(4.dp),
                 color = if (showAcceleration) Color(0xFF332000) else Color(0x22FFFFFF),
-                border = androidx.compose.foundation.BorderStroke(1.dp, if (showAcceleration) Color(0xFFFF9100) else Color(0x44FFFFFF))
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (showAcceleration) Color(0xFFFF9100) else Color(0x44FFFFFF)),
+                modifier = Modifier.width(48.dp)
             ) {
                 Text(
                     if (showAcceleration) "Acel ✓" else "+ Acel",
                     color = if (showAcceleration) Color(0xFFFF9100) else Color.LightGray,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    modifier = Modifier.padding(vertical = 2.dp),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -4289,19 +4310,22 @@ fun AnalysisResultVideoPreview(
                     }
                 }
 
-                // HUD Superior Izquierdo: Telemetría instantánea alineada al costado izquierdo (compacta, nunca se agranda)
+                // HUD Superior Izquierdo: Telemetría instantánea alineada al costado izquierdo con ranuras fijas (Cero temblor o vibración)
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(8.dp),
+                        .padding(8.dp)
+                        .width(238.dp),
                     color = Color(0xDD111111),
                     shape = RoundedCornerShape(8.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x6600FFCC))
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         val elapsedInTrimMs = (currentPosMs - trimStartMs).coerceAtLeast(0L)
                         val activePt = trackingPoints.filter { it.timestampMs <= elapsedInTrimMs }.lastOrNull()
@@ -4309,47 +4333,85 @@ fun AnalysisResultVideoPreview(
                             val vel = activePt?.velocityMps ?: 0.0
                             val load = barbellLoadKg ?: 70.0
                             val instPower = (vel * load * 9.81).toInt()
-                            val loadText = if (barbellLoadKg != null) "${load.toInt()} kg • " else ""
-                            Text(
-                                "⚡ $loadText${String.format(Locale.US, "%.2f", vel)} m/s • $instPower W",
-                                color = Color(0xFF00FFCC),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                            if (activePt?.isConcentric == true) {
-                                Surface(
-                                    color = Color(0x3300E676),
-                                    shape = RoundedCornerShape(4.dp),
-                                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color(0xFF00E676))
-                                ) {
-                                    Text(
-                                        "CON",
-                                        color = Color(0xFF00E676),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 9.sp,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                }
-                            } else if (activePt?.isEccentric == true) {
-                                Surface(
-                                    color = Color(0x33FFD600),
-                                    shape = RoundedCornerShape(4.dp),
-                                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color(0xFFFFD600))
-                                ) {
-                                    Text(
-                                        "EXC",
-                                        color = Color(0xFFFFD600),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 9.sp,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                }
+
+                            // Ranura fija para Carga (48dp)
+                            Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.CenterStart) {
+                                Text(
+                                    "⚡ ${load.toInt()} kg",
+                                    color = Color(0xFF00FFCC),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+
+                            Text("•", color = Color.Gray, fontSize = 9.sp)
+
+                            // Ranura fija para Velocidad (56dp)
+                            Box(modifier = Modifier.width(56.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    "${String.format(Locale.US, "%.2f", vel)} m/s",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+
+                            Text("•", color = Color.Gray, fontSize = 9.sp)
+
+                            // Ranura fija para Watts (48dp)
+                            Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.CenterEnd) {
+                                Text(
+                                    "${instPower} W",
+                                    color = Color(0xFF00FFCC),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+
+                            // Ranura fija para Badge de Fase (32dp siempre presente para evitar saltos horizontales)
+                            val isConc = activePt?.isConcentric == true
+                            val isEcc = activePt?.isEccentric == true
+                            Surface(
+                                color = when {
+                                    isConc -> Color(0x3300E676)
+                                    isEcc -> Color(0x33FFD600)
+                                    else -> Color(0x22333333)
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    0.5.dp,
+                                    when {
+                                        isConc -> Color(0xFF00E676)
+                                        isEcc -> Color(0xFFFFD600)
+                                        else -> Color(0x33666666)
+                                    }
+                                ),
+                                modifier = Modifier.width(32.dp)
+                            ) {
+                                Text(
+                                    when {
+                                        isConc -> "CON"
+                                        isEcc -> "EXC"
+                                        else -> "---"
+                                    },
+                                    color = when {
+                                        isConc -> Color(0xFF00E676)
+                                        isEcc -> Color(0xFFFFD600)
+                                        else -> Color.DarkGray
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 9.sp,
+                                    modifier = Modifier.padding(vertical = 1.dp),
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                         } else {
                             Text(

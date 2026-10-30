@@ -214,15 +214,23 @@ class KinoveaBarbellTracker {
                 val rawScore = computeZNCC(lumBuf, roiW, roiLeft, roiTop, cx, cy, tpl, numPixels)
 
                 // Penalización de distancia 2D respecto a la posición física predicha (predX, predY).
-                // Evita que elementos lejanos de alto contraste en el fondo (como vigas o sombras de techo)
-                // superen la firma del buje real de la barra cuando sube velozmente.
                 val dx = cx - predX
                 val dy = cy - predY
                 val distFromPred = hypot(dx.toDouble(), dy.toDouble()).toFloat()
                 val distPenalty = (distFromPred / 25f) * 0.15f
 
                 val hDev = (abs(cx - currentCenter.x) - 4f).coerceAtLeast(0f)
-                val score = rawScore - distPenalty - (hDev / 16f) * 0.10f
+
+                // Penalización preventiva de borde superior:
+                // Si el punto (cx, cy) está cerca del borde superior del disco (a medio radio hacia arriba ya no hay disco),
+                // penalizar fuertemente para evitar que el tracker elija la punta de la barra o el borde superior del disco
+                val testUpY = (cy - calibratedRadius * 0.55f).toInt()
+                val isUpperEdge = if (testUpY in 0 until bH && cx in 0 until bW) {
+                    !isPlateColor(bitmap.getPixel(cx, testUpY))
+                } else false
+                val upperEdgePenalty = if (isUpperEdge) 0.35f else 0f
+
+                val score = rawScore - distPenalty - (hDev / 16f) * 0.10f - upperEdgePenalty
 
                 if (score > bestScore) {
                     bestScore = score
@@ -251,23 +259,25 @@ class KinoveaBarbellTracker {
             var targetX = bestX + subX
             var targetY = bestY + subY
 
-            // Corrección de Centrado por Simetría Cromática del Disco:
-            // Si la retícula se desplaza hacia la punta superior del disco (por perspectiva o contraste de techo),
-            // la simetría cromática detecta que los puntos superiores caen en el fondo/vigas de madera y los inferiores en el disco verde.
-            // Corrige automáticamente la posición hacia el centro geométrico real del disco (buje).
-            val colorSym = evaluateColorSymmetry(bitmap, bestX, bestY)
-            if (colorSym.verticalBalance > 0.5f) {
-                // El cuerpo del disco está más abajo: empujar suavemente el centro hacia abajo al buje real
-                val vShift = colorSym.verticalBalance * (calibratedRadius * 0.08f)
-                targetY += vShift.coerceIn(0f, calibratedRadius * 0.35f)
-            } else if (colorSym.verticalBalance < -0.5f) {
-                val vShift = colorSym.verticalBalance * (calibratedRadius * 0.08f)
-                targetY += vShift.coerceIn(-calibratedRadius * 0.35f, 0f)
-            }
-
-            if (kotlin.math.abs(colorSym.horizontalBalance) > 0.5f) {
-                val hShift = colorSym.horizontalBalance * (calibratedRadius * 0.04f)
-                targetX += hShift.coerceIn(-calibratedRadius * 0.18f, calibratedRadius * 0.18f)
+            // Recentrado geométrico robusto mediante los bordes reales del disco:
+            // Si la correlación ZNCC intenta subir hacia la punta de la barra o hacia el contraste del techo,
+            // los rayos ortogonales detectan la envolvente circular completa del disco verde y ajustan
+            // el centro exactamente al punto medio entre el borde superior e inferior.
+            val geomCenter = findDiscGeometricCenter(bitmap, targetX, targetY)
+            if (geomCenter != null) {
+                // Corrección con alta ponderación hacia el centro geométrico real del disco
+                targetY = targetY * 0.20f + geomCenter.y * 0.80f
+                targetX = targetX * 0.35f + geomCenter.x * 0.65f
+            } else {
+                // Fallback de simetría cromática si un rayo está ocluido
+                val colorSym = evaluateColorSymmetry(bitmap, bestX, bestY)
+                if (colorSym.verticalBalance > 0.5f) {
+                    val vShift = colorSym.verticalBalance * (calibratedRadius * 0.16f)
+                    targetY += vShift.coerceIn(0f, calibratedRadius * 0.65f)
+                } else if (colorSym.verticalBalance < -0.5f) {
+                    val vShift = colorSym.verticalBalance * (calibratedRadius * 0.16f)
+                    targetY += vShift.coerceIn(-calibratedRadius * 0.65f, 0f)
+                }
             }
 
             val instVx = targetX - currentCenter.x
@@ -446,4 +456,143 @@ class KinoveaBarbellTracker {
 
         return ColorSymmetryResult(matchRatio, vBal, hBal)
     }
+    /**
+     * Comprueba si un píxel coincide con la firma cromática o de brillo del disco calibrado.
+     */
+    fun isPlateColor(p: Int): Boolean {
+        if (isChromaticPlate) {
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            val sumRgb = (r + g + b + 1).toFloat()
+            val nr = r / sumRgb
+            val ng = g / sumRgb
+            val nb = b / sumRgb
+            val dNr = nr - targetNr
+            val dNg = ng - targetNg
+            val dNb = nb - targetNb
+            val distChroma = sqrt((dNr * dNr + dNg * dNg + dNb * dNb).toDouble()).toFloat()
+
+            val hsv = FloatArray(3)
+            Color.colorToHSV(p, hsv)
+            val diffHue = abs(hsv[0] - targetHue).let { minOf(it, 360f - it) }
+
+            return (distChroma < 0.22f) || (diffHue < 55f && hsv[1] > (targetSat * 0.28f))
+        } else {
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            val lum = ((r * 299 + g * 587 + b * 114) / 1000f)
+            val hsv = FloatArray(3)
+            Color.colorToHSV(p, hsv)
+            return lum < 105f && hsv[1] < 0.40f
+        }
+    }
+
+    /**
+     * Rastrea mediante rayos ortogonales los bordes físicos superior, inferior, izquierdo y derecho
+     * del disco olímpico a partir de una posición candidata.
+     * Calcula el centro geométrico real (yTop + yBottom)/2 y (xLeft + xRight)/2, impidiendo
+     * que la retícula se desplace hacia la punta superior de la barra o hacia el borde del disco.
+     */
+    fun findDiscGeometricCenter(bitmap: Bitmap, startX: Float, startY: Float): Offset? {
+        val bW = bitmap.width
+        val bH = bitmap.height
+        val r = calibratedRadius
+
+        val cx = startX.toInt().coerceIn(0, bW - 1)
+        val cy = startY.toInt().coerceIn(0, bH - 1)
+
+        val hubClearance = (r * 0.20f).toInt().coerceAtLeast(4)
+        val maxExtent = (r * 1.6f).toInt()
+
+        // 1. Rayo hacia arriba (buscar borde superior del disco)
+        var yTop = -1
+        var nonPlateUp = 0
+        for (step in hubClearance..maxExtent) {
+            val ty = cy - step
+            if (ty < 0) { yTop = 0; break }
+            val p = bitmap.getPixel(cx, ty)
+            if (!isPlateColor(p)) {
+                nonPlateUp++
+                if (nonPlateUp >= 3) {
+                    yTop = ty + 2
+                    break
+                }
+            } else {
+                nonPlateUp = 0
+            }
+        }
+
+        // 2. Rayo hacia abajo (buscar borde inferior del disco)
+        var yBottom = -1
+        var nonPlateDown = 0
+        for (step in hubClearance..maxExtent) {
+            val by = cy + step
+            if (by >= bH) { yBottom = bH - 1; break }
+            val p = bitmap.getPixel(cx, by)
+            if (!isPlateColor(p)) {
+                nonPlateDown++
+                if (nonPlateDown >= 3) {
+                    yBottom = by - 2
+                    break
+                }
+            } else {
+                nonPlateDown = 0
+            }
+        }
+
+        // 3. Rayo hacia la izquierda
+        var xLeft = -1
+        var nonPlateLeft = 0
+        for (step in hubClearance..maxExtent) {
+            val lx = cx - step
+            if (lx < 0) { xLeft = 0; break }
+            val p = bitmap.getPixel(lx, cy)
+            if (!isPlateColor(p)) {
+                nonPlateLeft++
+                if (nonPlateLeft >= 3) {
+                    xLeft = lx + 2
+                    break
+                }
+            } else {
+                nonPlateLeft = 0
+            }
+        }
+
+        // 4. Rayo hacia la derecha
+        var xRight = -1
+        var nonPlateRight = 0
+        for (step in hubClearance..maxExtent) {
+            val rx = cx + step
+            if (rx >= bW) { xRight = bW - 1; break }
+            val p = bitmap.getPixel(rx, cy)
+            if (!isPlateColor(p)) {
+                nonPlateRight++
+                if (nonPlateRight >= 3) {
+                    xRight = rx - 2
+                    break
+                }
+            } else {
+                nonPlateRight = 0
+            }
+        }
+
+        // Validar si encontramos ambos bordes verticales con un diámetro coherente con el disco de 45 cm
+        if (yTop != -1 && yBottom != -1) {
+            val vertDiameter = yBottom - yTop
+            if (vertDiameter in (r * 1.25f).toInt()..(r * 2.5f).toInt()) {
+                val geomY = (yTop + yBottom) / 2f
+                val geomX = if (xLeft != -1 && xRight != -1 && (xRight - xLeft) in (r * 1.25f).toInt()..(r * 2.5f).toInt()) {
+                    (xLeft + xRight) / 2f
+                } else {
+                    startX
+                }
+                return Offset(geomX, geomY)
+            }
+        }
+
+        return null
+    }
+
 }
