@@ -240,21 +240,14 @@ object VBTAnalyzer {
         plateOffset = null
         previousDisplacementY = 25f
         handsFarFrameCount = 0
-        if (calibratedPlateCenter != null) {
-            currentBarX = calibratedPlateCenter?.x
-            currentBarY = calibratedPlateCenter?.y
-            originBaselineX = calibratedPlateCenter?.x
-            originBaselineY = calibratedPlateCenter?.y
-            lowestInflectionX = calibratedPlateCenter?.x
-            lowestInflectionY = calibratedPlateCenter?.y
-        } else {
-            currentBarX = null
-            currentBarY = null
-            originBaselineX = null
-            originBaselineY = null
-            lowestInflectionX = null
-            lowestInflectionY = null
-        }
+        calibratedPlateCenter = null
+        calibratedPlateRadius = null
+        currentBarX = null
+        currentBarY = null
+        originBaselineX = null
+        originBaselineY = null
+        lowestInflectionX = null
+        lowestInflectionY = null
     }
 
     fun resetSet() {

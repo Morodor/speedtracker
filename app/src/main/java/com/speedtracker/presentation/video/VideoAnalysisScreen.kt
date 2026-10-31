@@ -553,7 +553,9 @@ fun VideoAnalysisScreen(
     }
 
     fun runAutoDetectPlate(boxW: Float, boxH: Float) {
-        if (boxW <= 0f || boxH <= 0f) return
+        val effectiveW = if (boxW > 0f) boxW else screenBoxWidth
+        val effectiveH = if (boxH > 0f) boxH else screenBoxHeight
+        if (effectiveW <= 0f || effectiveH <= 0f) return
         coroutineScope.launch {
             try {
                 isDetectingPlate = true
@@ -588,7 +590,7 @@ fun VideoAnalysisScreen(
                 }
 
                 if (result != null) {
-                    val bounds = calculateVideoRenderBounds(boxW, boxH, videoNativeWidth, videoNativeHeight)
+                    val bounds = calculateVideoRenderBounds(effectiveW, effectiveH, videoNativeWidth, videoNativeHeight)
                     val scaleX = bounds.renderWidth / videoNativeWidth.toFloat()
                     val scaleY = bounds.renderHeight / videoNativeHeight.toFloat()
                     val screenCenter = Offset(result.center.x * scaleX, result.center.y * scaleY)
@@ -726,6 +728,9 @@ fun VideoAnalysisScreen(
                                 LaunchedEffect(boxW, boxH) {
                                     screenBoxWidth = boxW
                                     screenBoxHeight = boxH
+                                    if (boxW > 0f && (circleCenter == null || !isCalibrated) && !isDetectingPlate) {
+                                        runAutoDetectPlate(boxW, boxH)
+                                    }
                                 }
 
                                 val bounds = calculateVideoRenderBounds(boxW, boxH, videoNativeWidth, videoNativeHeight)
@@ -879,21 +884,34 @@ fun VideoAnalysisScreen(
                             RangeSlider(
                                 value = safeStart..safeEnd,
                                 onValueChange = { range ->
-                                    val changedStart = kotlin.math.abs(range.start.toLong() - trimStartMs) > 10L
+                                    val dStart = kotlin.math.abs(range.start.toLong() - trimStartMs)
+                                    val dEnd = kotlin.math.abs(range.endInclusive.toLong() - trimEndMs)
+                                    val changedStart = dStart >= dEnd
                                     trimStartMs = range.start.toLong()
                                     trimEndMs = range.endInclusive.toLong()
                                     val targetMs = if (changedStart) trimStartMs else trimEndMs
                                     currentVideoPosMs = targetMs
+                                    if (changedStart && dStart > 30L) {
+                                        isCalibrated = false
+                                        circleCenter = null
+                                        calibratedPlateCenterVideo = null
+                                        calibratedPlateRadiusVideo = 0f
+                                    }
                                     videoViewRef?.let { vv ->
                                         vv.pause()
                                         isPlaying = false
                                         seekVideoAccurate(mediaPlayerRef, vv, targetMs)
                                     }
+                                    updateStillFrame(targetMs)
                                 },
                                 onValueChangeFinished = {
                                     videoViewRef?.let { vv ->
                                         seekVideoAccurate(mediaPlayerRef, vv, trimStartMs)
                                         currentVideoPosMs = trimStartMs
+                                    }
+                                    updateStillFrame(trimStartMs)
+                                    if (!isCalibrated && (screenBoxWidth > 0f || screenBoxHeight > 0f)) {
+                                        runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
                                     }
                                 },
                                 valueRange = 0f..maxDur,
@@ -1023,7 +1041,14 @@ fun VideoAnalysisScreen(
                                     OutlinedButton(
                                         onClick = {
                                             trimStartMs = currentVideoPosMs.coerceAtMost(trimEndMs - 100L)
+                                            isCalibrated = false
+                                            circleCenter = null
+                                            calibratedPlateCenterVideo = null
+                                            calibratedPlateRadiusVideo = 0f
                                             updateStillFrame(trimStartMs)
+                                            if (screenBoxWidth > 0f || screenBoxHeight > 0f) {
+                                                runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
+                                            }
                                         },
                                         modifier = Modifier.height(34.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp),
@@ -1130,7 +1155,7 @@ fun VideoAnalysisScreen(
                                 ) {
                                     VBTExerciseFamily.values().forEach { family ->
                                         val isSelected = setupFamily == family
-                                        val familyColor = Color(0xFF8B5CF6) // Violeta eléctrico para diferenciar categoría de los ejercicios
+                                        val familyColor = Color(0xFFFFB300) // Oro ámbar vibrante para diferenciar categoría de los ejercicios
                                         Surface(
                                             onClick = { setupFamily = family },
                                             shape = RoundedCornerShape(10.dp),
@@ -1150,7 +1175,7 @@ fun VideoAnalysisScreen(
                                                 Spacer(modifier = Modifier.width(6.dp))
                                                 Text(
                                                     family.label,
-                                                    color = if (isSelected) Color(0xFFDDD6FE) else Color.LightGray,
+                                                    color = if (isSelected) Color(0xFFFFD54F) else Color.LightGray,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                                     fontSize = 12.sp
                                                 )
@@ -1317,14 +1342,14 @@ fun VideoAnalysisScreen(
                     AnalysisSetupStep.CALIBRATE -> {
                         // ── PASO 3: CALIBRACIÓN MÉTRICA Y CARGA (IMAGEN 3) ──
                         // Al ingresar a calibración, asegurar que el video inicie detenido en el primer frame y auto-detectar
-                        LaunchedEffect(analysisSetupStep) {
+                        LaunchedEffect(analysisSetupStep, trimStartMs) {
                             if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
                                 videoViewRef?.pause()
                                 isPlaying = false
                                 currentVideoPosMs = trimStartMs
                                 videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, trimStartMs) }
                                 updateStillFrame(trimStartMs)
-                                if (circleCenter == null && !isCalibrated && !isDetectingPlate) {
+                                if ((circleCenter == null || !isCalibrated) && !isDetectingPlate) {
                                     runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
                                 }
                             }
@@ -2732,11 +2757,17 @@ fun VideoAnalysisScreen(
                                 OutlinedButton(
                                     onClick = {
                                         isReadyToAnalyze = false
+                                        isCalibrated = false
+                                        circleCenter = null
+                                        calibratedPlateCenterVideo = null
+                                        calibratedPlateRadiusVideo = 0f
                                         finalResult = null
                                         progress = 0f
                                         jumpMetricsResult = null
                                         vbtDeviationResultCm = null
                                         trackingPointsResult = emptyList()
+                                        analysisSetupStep = AnalysisSetupStep.CALIBRATE
+                                        runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
                                     },
                                     modifier = Modifier.fillMaxWidth().height(46.dp)
                                 ) {
@@ -3628,32 +3659,36 @@ fun KinematicTelemetryChart(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Pie: Leyenda y Valores Pico
+            // Pie: Leyenda y Valores Pico (Ranuras compactas sin saltos de línea para evitar temblores)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).background(Color(0xFF00FFCC), CircleShape))
+                    Box(modifier = Modifier.size(7.dp).background(Color(0xFF00FFCC), CircleShape))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         if (vmp != null)
-                            "Velocidad (Pico: ${String.format(Locale.US, "%.2f", peakVelocity)} | VMP: ${String.format(Locale.US, "%.2f", vmp)} m/s)"
+                            "Vel: VP ${String.format(Locale.US, "%.2f", peakVelocity)} | VMP ${String.format(Locale.US, "%.2f", vmp)} m/s"
                         else
-                            "Velocidad (Pico: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s)",
+                            "Velocidad: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s",
                         color = Color.LightGray,
-                        fontSize = 10.sp
+                        fontSize = 9.5.sp,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).background(Color(0xFFFF9100), CircleShape))
+                    Box(modifier = Modifier.size(7.dp).background(Color(0xFFFF9100), CircleShape))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        "Aceleración (Pico: ${String.format(Locale.US, "%+.1f", peakAccel)} m/s²)",
+                        "Acel: ${String.format(Locale.US, "%+.1f", peakAccel)} m/s²",
                         color = Color.LightGray,
-                        fontSize = 10.sp
+                        fontSize = 9.5.sp,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
