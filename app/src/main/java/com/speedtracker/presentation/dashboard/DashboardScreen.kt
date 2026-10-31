@@ -259,7 +259,7 @@ fun DashboardScreen(
                                 }
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    "Aprende a recortar el segmento, calibrar a 45 cm y analizar con un Snatch de prueba",
+                                    "Snatch olímpico lateral de Lu Xiaojun: practica recorte, calibración a 45 cm y telemetría",
                                     color = Color.LightGray,
                                     style = MaterialTheme.typography.bodySmall
                                 )
