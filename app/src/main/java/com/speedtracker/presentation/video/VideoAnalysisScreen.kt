@@ -508,17 +508,32 @@ fun VideoAnalysisScreen(
     var stillFrameBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var stillFrameJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
+    // Retriever compartido en memoria para respuesta instantánea (< 10 ms) sin reabrir el archivo en cada frame
+    val sharedFrameRetriever = remember(videoUriString) {
+        MediaMetadataRetriever().apply {
+            try {
+                setDataSource(context, Uri.parse(videoUriString))
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    DisposableEffect(sharedFrameRetriever) {
+        onDispose {
+            try { sharedFrameRetriever.release() } catch (e: Exception) {}
+        }
+    }
+
     fun updateStillFrame(targetMs: Long) {
         stillFrameJob?.cancel()
         stillFrameJob = coroutineScope.launch(Dispatchers.IO) {
             try {
-                val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, Uri.parse(videoUriString))
-                val bm = retriever.getFrameAtTime(targetMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
-                withContext(Dispatchers.Main) {
-                    stillFrameBitmap = bm
+                val bm = sharedFrameRetriever.getFrameAtTime(targetMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                if (bm != null) {
+                    withContext(Dispatchers.Main) {
+                        stillFrameBitmap = bm
+                    }
                 }
-                retriever.release()
             } catch (e: Exception) {
             }
         }
@@ -816,6 +831,23 @@ fun VideoAnalysisScreen(
                                                 translationY = offsetY
                                             )
                                     )
+
+                                    // Fotograma fijo en pausa: elimina 100% de parpadeo a frame 0 al navegar cuadro a cuadro
+                                    if (!isPlaying && stillFrameBitmap != null) {
+                                        Image(
+                                            bitmap = stillFrameBitmap!!.asImageBitmap(),
+                                            contentDescription = "Fotograma pausado",
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .graphicsLayer(
+                                                    scaleX = scale,
+                                                    scaleY = scale,
+                                                    translationX = offsetX,
+                                                    translationY = offsetY
+                                                ),
+                                            contentScale = ContentScale.Fit
+                                        )
+                                    }
 
                                     // Controles superiores en video (Audio y Reset Zoom)
                                     Row(
@@ -3232,8 +3264,8 @@ fun KinematicTelemetryChart(
     val maxTimeMs = trackingPoints.last().timestampMs
     val totalDurationMs = (maxTimeMs - minTimeMs).coerceAtLeast(100L)
 
-    // Modo de telemetría: 0: Velocidad (m/s), 1: Aceleración (m/s²), 2: Ambas superpuestas
-    var telemetryMode by remember { mutableIntStateOf(0) }
+    // Modo de telemetría: 0: Velocidad (m/s), 1: Aceleración (m/s²), 2: Ambas superpuestas (activas por defecto)
+    var telemetryMode by remember { mutableIntStateOf(2) }
 
     // Procesar datos y suavizar con filtro digital de fase cero (Butterworth 4to orden emulado)
     val telemetryPoints = remember(trackingPoints) {
@@ -3797,7 +3829,7 @@ fun RealtimeTelemetryOverlayChart(
     val maxTimeMs = trackingPoints.last().timestampMs
     val totalDurationMs = (maxTimeMs - minTimeMs).coerceAtLeast(100L)
 
-    var showAcceleration by remember { mutableStateOf(false) }
+    var showAcceleration by remember { mutableStateOf(true) }
 
     // Suavizado avanzado de fase cero de 7-tap con 3 pasadas (elimina todo temblor o ruido digital)
     val telemetryPoints = remember(trackingPoints) {
@@ -4905,12 +4937,13 @@ fun AnalysisResultVideoPreview(
 
 
 fun seekVideoAccurate(mp: MediaPlayer?, vv: VideoView?, targetMs: Long) {
-    vv?.seekTo(targetMs.toInt())
     if (mp != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
         try {
             mp.seekTo(targetMs, MediaPlayer.SEEK_CLOSEST)
+            return
         } catch (e: Exception) { }
     }
+    vv?.seekTo(targetMs.toInt())
 }
 
 fun formatTimeMs(timeMs: Long): String {
@@ -5227,10 +5260,73 @@ fun TutorialGuideDialog(
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("📈 Telemetría: Gráfica de velocidad (cian) y aceleración (naranja) sincronizada con el video.", color = Color.White, fontSize = 11.5.sp)
-                                Text("⚡ Métricas: Velocidad Pico (PV), Media (MV), Propulsiva (VMP), RFD y Potencia en Watts.", color = Color(0xFF00FFCC), fontSize = 11.5.sp)
-                                Text("📄 Informe PDF: En Acciones puedes generar y compartir un informe con capturas del levantamiento.", color = Color.White, fontSize = 11.5.sp)
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // Mini gráfico interactivo ilustrativo de ambas curvas (Velocidad en cian + Aceleración en naranja)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(74.dp)
+                                        .background(Color(0xFF0B0F15), RoundedCornerShape(6.dp))
+                                        .border(1.dp, Color(0x3300FFCC), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        val w = size.width
+                                        val h = size.height
+
+                                        // Líneas de referencia
+                                        drawLine(Color(0x1AFFFFFF), Offset(0f, h * 0.25f), Offset(w, h * 0.25f))
+                                        drawLine(Color(0x22FFFFFF), Offset(0f, h * 0.50f), Offset(w, h * 0.50f))
+                                        drawLine(Color(0x1AFFFFFF), Offset(0f, h * 0.75f), Offset(w, h * 0.75f))
+
+                                        // Curva Aceleración (naranja ámbar)
+                                        val aPath = Path()
+                                        aPath.moveTo(0f, h * 0.55f)
+                                        aPath.cubicTo(w * 0.25f, h * 0.12f, w * 0.40f, h * 0.88f, w * 0.70f, h * 0.50f)
+                                        aPath.lineTo(w, h * 0.50f)
+                                        drawPath(aPath, Color(0xFFFF9100), style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round))
+
+                                        // Curva Velocidad (cian neón con degradado)
+                                        val vPath = Path()
+                                        val vFill = Path()
+                                        vPath.moveTo(0f, h * 0.85f)
+                                        vFill.moveTo(0f, h * 0.85f)
+                                        vPath.cubicTo(w * 0.25f, h * 0.85f, w * 0.46f, h * 0.16f, w * 0.75f, h * 0.82f)
+                                        vFill.cubicTo(w * 0.25f, h * 0.85f, w * 0.46f, h * 0.16f, w * 0.75f, h * 0.82f)
+                                        vPath.lineTo(w, h * 0.82f)
+                                        vFill.lineTo(w, h * 0.82f)
+                                        vFill.lineTo(w, h)
+                                        vFill.lineTo(0f, h)
+                                        vFill.close()
+
+                                        drawPath(vFill, Brush.verticalGradient(listOf(Color(0x3500FFCC), Color(0x0200FFCC)), startY = 0f, endY = h))
+                                        drawPath(vPath, Color(0xFF00FFCC), style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round))
+
+                                        // Marcador VP
+                                        drawCircle(Color(0xFF00FFCC), radius = 3.dp.toPx(), center = Offset(w * 0.48f, h * 0.20f))
+                                    }
+
+                                    // Leyendas
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(modifier = Modifier.size(7.dp).background(Color(0xFF00FFCC), CircleShape))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Velocidad (m/s)", color = Color(0xFF00FFCC), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(modifier = Modifier.size(7.dp).background(Color(0xFFFF9100), CircleShape))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Aceleración (m/s²)", color = Color(0xFFFF9100), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+
+                                Text("📈 Telemetría: Curvas de velocidad (cian) y aceleración (naranja) activas por defecto y sincronizadas con el video.", color = Color.White, fontSize = 11.sp)
+                                Text("⚡ Métricas: Velocidad Pico (PV), Media (MV), Propulsiva (VMP), RFD y Potencia en Watts.", color = Color(0xFF00FFCC), fontSize = 11.sp)
+                                Text("📄 Informe PDF: En Acciones puedes generar y compartir un informe con capturas del levantamiento en proporción natural.", color = Color.LightGray, fontSize = 11.sp)
                             }
                         }
                     }

@@ -164,26 +164,47 @@ object BiomechanicalPdfReportGenerator {
         textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         canvas.drawText("SECUENCIA CINEMÁTICA DEL LEVANTAMIENTO", 24f, 162f, textPaint)
 
-        val frameWidth = 175f
+        val frameWidth = 180f
         val frameHeight = 125f
         val frameY = 170f
         val frameLabels = listOf("1. Despegue / Inicio", "2. Máxima Aceleración (PV)", "3. Bloqueo / Recepción")
 
         for (i in 0 until 3) {
-            val fx = 20f + i * (frameWidth + 5f)
+            val fx = 20f + i * (frameWidth + 7.5f)
             val frameRect = RectF(fx, frameY, fx + frameWidth, frameY + frameHeight)
+
+            // Fondo oscuro para la tarjeta del fotograma
+            paint.color = Color.parseColor("#0F172A")
+            canvas.drawRoundRect(frameRect, 4f, 4f, paint)
 
             if (i < frameBitmaps.size) {
                 val bmp = frameBitmaps[i]
-                // Dibujar con crop centrado proporcional
+                val bmpRatio = bmp.width.toFloat() / bmp.height.toFloat()
+                val targetRatio = frameWidth / frameHeight
+
+                val drawRect: RectF = if (bmpRatio > targetRatio) {
+                    // Video horizontal: ajustar al ancho del contenedor y centrar verticalmente
+                    val fittedH = frameWidth / bmpRatio
+                    val yOff = (frameHeight - fittedH) / 2f
+                    RectF(fx, frameY + yOff, fx + frameWidth, frameY + yOff + fittedH)
+                } else {
+                    // Video vertical (smartphone portrait 9:16): ajustar al alto y centrar horizontalmente con proporción natural
+                    val fittedW = frameHeight * bmpRatio
+                    val xOff = (frameWidth - fittedW) / 2f
+                    RectF(fx + xOff, frameY, fx + xOff + fittedW, frameY + frameHeight)
+                }
+
                 val srcRect = Rect(0, 0, bmp.width, bmp.height)
-                canvas.drawBitmap(bmp, srcRect, frameRect, paint)
-            } else {
-                paint.color = Color.parseColor("#0F172A")
-                canvas.drawRoundRect(frameRect, 4f, 4f, paint)
+                canvas.save()
+                val clipPath = android.graphics.Path().apply {
+                    addRoundRect(frameRect, 4f, 4f, android.graphics.Path.Direction.CW)
+                }
+                canvas.clipPath(clipPath)
+                canvas.drawBitmap(bmp, srcRect, drawRect, paint)
+                canvas.restore()
             }
 
-            // Borde exterior
+            // Borde exterior cian neón
             paint.color = Color.parseColor("#00FFCC")
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 1.2f
