@@ -34,6 +34,8 @@ object OlympicPlateAutoDetector {
         var baseRadius = (minOf(w, h) * 0.14f).coerceIn(35f, 400f)
         val candidateSeeds = mutableListOf<Offset>()
         var usedPose = false
+        var targetHandsX = w * 0.5f
+        var targetHandsY = h * 0.65f
 
         if (pose != null) {
             val leftAnkle = pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)
@@ -81,7 +83,7 @@ object OlympicPlateAutoDetector {
 
                 // En vista lateral pura (estándar óptimo para VBT):
                 // El disco circular de 45 cm está alineado verticalmente con las manos y pies en el plano sagital
-                val lateralX = when {
+                targetHandsX = when {
                     hasWrist && hasAnkle -> {
                         val wX = when {
                             leftWrist != null && rightWrist != null -> (leftWrist.position.x + rightWrist.position.x) / 2f
@@ -100,7 +102,7 @@ object OlympicPlateAutoDetector {
                     else -> w * 0.5f
                 }
 
-                val primaryWristY = when {
+                targetHandsY = when {
                     leftWrist != null && rightWrist != null -> (leftWrist.position.y + rightWrist.position.y) / 2f
                     leftWrist != null -> leftWrist.position.y
                     rightWrist != null -> rightWrist.position.y
@@ -109,13 +111,13 @@ object OlympicPlateAutoDetector {
 
                 // Semillas candidatas enfocadas en el plano lateral de la barra:
                 // 1. A la altura de las manos/barra
-                candidateSeeds.add(Offset(lateralX, primaryWristY))
+                candidateSeeds.add(Offset(targetHandsX, targetHandsY))
                 // 2. En el suelo apoyado frente al tobillo (inicio del levantamiento)
-                candidateSeeds.add(Offset(lateralX, floorPlateCenterY))
+                candidateSeeds.add(Offset(targetHandsX, floorPlateCenterY))
                 // 3. Ajuste fino anterior/posterior en el eje sagital
-                candidateSeeds.add(Offset(lateralX + (baseRadius * 0.35f), primaryWristY))
-                candidateSeeds.add(Offset(lateralX - (baseRadius * 0.35f), primaryWristY))
-                candidateSeeds.add(Offset(lateralX, (primaryWristY + floorPlateCenterY) / 2f))
+                candidateSeeds.add(Offset(targetHandsX + (baseRadius * 0.35f), targetHandsY))
+                candidateSeeds.add(Offset(targetHandsX - (baseRadius * 0.35f), targetHandsY))
+                candidateSeeds.add(Offset(targetHandsX, (targetHandsY + floorPlateCenterY) / 2f))
 
                 usedPose = true
             }
@@ -139,8 +141,22 @@ object OlympicPlateAutoDetector {
                 seed.y.coerceIn(baseRadius * 0.8f, h - baseRadius * 0.8f)
             )
             val result = refineCircleByRadialGradients(bitmap, clampedSeed, baseRadius)
-            if (result.third > maxCandidateScore) {
-                maxCandidateScore = result.third
+            
+            // Ponderación por cercanía a las manos del atleta para ignorar discos sueltos en el suelo
+            val distToHands = if (usedPose) {
+                hypot((result.first.x - targetHandsX).toDouble(), (result.first.y - targetHandsY).toDouble()).toFloat()
+            } else {
+                0f
+            }
+            val proximityFactor = if (usedPose) {
+                1.0 / (1.0 + (distToHands / (baseRadius * 1.4f)).toDouble().let { it * it })
+            } else {
+                1.0
+            }
+            val totalScore = result.third * proximityFactor
+
+            if (totalScore > maxCandidateScore) {
+                maxCandidateScore = totalScore
                 bestCandidate = Pair(result.first, result.second)
             }
         }
