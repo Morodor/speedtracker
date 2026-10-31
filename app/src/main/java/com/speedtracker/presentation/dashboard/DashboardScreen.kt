@@ -16,8 +16,15 @@ import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SwitchAccount
 import androidx.compose.material.icons.filled.Videocam
+import android.content.Context
+import android.net.Uri
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
+import com.speedtracker.R
+import java.io.File
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -193,6 +200,72 @@ fun DashboardScreen(
                         date = if (maxVBT != null) formatDate(maxVBT.timestamp) else "Sin datos",
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+
+            // Acceso Directo: Video de Ejemplo y Tutorial Guiado
+            item {
+                val context = LocalContext.current
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch.mp4")
+                            onNavigateToVideoAnalysis(uri.toString())
+                        },
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF142420)),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF00FFCC))),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                Icons.Default.PlayCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF00FFCC),
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "🎬 Video de Ejemplo y Tutorial",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleSmall
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        color = Color(0xFF00FFCC).copy(alpha = 0.2f),
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            "DEMO",
+                                            color = Color(0xFF00FFCC),
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Aprende a recortar el segmento, calibrar a 45 cm y analizar con un Snatch de prueba",
+                                    color = Color.LightGray,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -397,4 +470,20 @@ fun SessionItemCard(session: Session, onDelete: () -> Unit) {
 fun formatDate(timestamp: Long): String {
     val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
     return sdf.format(Date(timestamp))
+}
+
+fun copyRawVideoToCache(context: Context, rawResId: Int, fileName: String): Uri {
+    val file = File(context.cacheDir, fileName)
+    if (!file.exists() || file.length() == 0L) {
+        try {
+            context.resources.openRawResource(rawResId).use { input ->
+                file.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+    return Uri.fromFile(file)
 }

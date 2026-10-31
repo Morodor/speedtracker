@@ -432,6 +432,8 @@ fun VideoAnalysisScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val activeUser = remember { userRepository.getActiveUser() }
 
+    var showTutorialDialog by remember { mutableStateOf(false) }
+    var tutorialStep by remember { mutableIntStateOf(0) }
     var currentMode by remember { mutableStateOf("VBT") }
     var setupFamily by remember { mutableStateOf(VBTExerciseFamily.DLP_OLYMPIC) }
     var selectedVBTExercise by remember { mutableStateOf(VBTExerciseModel.SNATCH_FLOOR) }
@@ -472,6 +474,9 @@ fun VideoAnalysisScreen(
     var calibratedPlateRadiusVideo by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(videoUriString) {
+        if (videoUriString.contains("sample_snatch")) {
+            showTutorialDialog = true
+        }
         withContext(Dispatchers.IO) {
             val dims = getVideoNativeDimensions(context, Uri.parse(videoUriString))
             if (dims.first > 0 && dims.second > 0) {
@@ -689,7 +694,23 @@ fun VideoAnalysisScreen(
                         }
                     }
                 },
-                actions = { },
+                actions = {
+                    TextButton(onClick = { showTutorialDialog = true }) {
+                        Icon(
+                            Icons.Default.HelpOutline,
+                            contentDescription = "Tutorial",
+                            tint = Color(0xFF00FFCC),
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            "Tutorial",
+                            color = Color(0xFF00FFCC),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color(0xFF121212),
                     titleContentColor = Color(0xFF00FFCC)
@@ -838,6 +859,28 @@ fun VideoAnalysisScreen(
                                             Icon(Icons.Default.Refresh, contentDescription = "Centrar", tint = Color.White, modifier = Modifier.size(17.dp))
                                         }
                                     }
+                                }
+                            }
+
+                            // Banner Guiado de Recorte
+                            Surface(
+                                color = Color(0x1F00FFCC),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x4400FFCC)),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00FFCC), modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "Paso 1: Fija ▶| Inicio al despegar del suelo y |◀ Fin al bloquear overhead.",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        maxLines = 1
+                                    )
                                 }
                             }
 
@@ -1527,6 +1570,28 @@ fun VideoAnalysisScreen(
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
+                                // Banner Guiado de Calibración
+                                Surface(
+                                    color = Color(0x1F00FFCC),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x4400FFCC)),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00FFCC), modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            "Paso 2: Usa las flechas para centrar la cruceta en el buje y ajusta al disco (45 cm).",
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+
                                 // Fila de Controles de Reproducción y Cuadro a Cuadro en Calibración
                                 Row(
                                     modifier = Modifier
@@ -3043,6 +3108,14 @@ fun VideoAnalysisScreen(
                 },
                 confirmButton = {},
                 containerColor = Color(0xFF1E1E1E)
+            )
+        }
+
+        if (showTutorialDialog) {
+            TutorialGuideDialog(
+                step = tutorialStep,
+                onStepChange = { tutorialStep = it },
+                onDismiss = { showTutorialDialog = false }
             )
         }
     }
@@ -5055,4 +5128,139 @@ fun shareVideoWithReport(context: Context, videoUri: Uri, summary: String) {
     context.startActivity(Intent.createChooser(shareIntent, "Compartir Video & Informe").apply {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK
     })
+}
+
+@Composable
+fun TutorialGuideDialog(
+    step: Int,
+    onStepChange: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1E1E1E),
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    color = Color(0xFF00FFCC).copy(alpha = 0.2f),
+                    shape = CircleShape
+                ) {
+                    Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            when (step) {
+                                0 -> "✂️"
+                                1 -> "🎯"
+                                else -> "📊"
+                            },
+                            fontSize = 18.sp
+                        )
+                    }
+                }
+                Column {
+                    Text(
+                        when (step) {
+                            0 -> "Paso 1: Recortar la Repetición"
+                            1 -> "Paso 2: Calibrar el Disco (45 cm)"
+                            else -> "Paso 3: Análisis y Telemetría"
+                        },
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                    Text(
+                        "Guía Speed Tracker (${step + 1}/3)",
+                        color = Color(0xFF00FFCC),
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                when (step) {
+                    0 -> {
+                        Text(
+                            "Aísla la fase concéntrica del levantamiento para que los cálculos de velocidad y potencia sean exactos:",
+                            color = Color.LightGray,
+                            fontSize = 12.5.sp
+                        )
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("1️⃣ Usa el control deslizante para avanzar al inicio del tirón.", color = Color.White, fontSize = 11.5.sp)
+                                Text("2️⃣ Pulsa ▶| Inicio justo cuando la barra despega del suelo.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Text("3️⃣ Desplaza al bloqueo final y pulsa |◀ Fin.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Text("4️⃣ Pulsa Siguiente Paso ➔ para elegir el ejercicio.", color = Color.LightGray, fontSize = 11.5.sp)
+                            }
+                        }
+                    }
+                    1 -> {
+                        Text(
+                            "El disco olímpico mide 45 cm de diámetro estándar. Esto calibra los píxeles a metros reales:",
+                            color = Color.LightGray,
+                            fontSize = 12.5.sp
+                        )
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("1️⃣ Pulsa ⚡ Auto Detectar para detección por IA anatómica.", color = Color.White, fontSize = 11.5.sp)
+                                Text("2️⃣ Usa las flechas HUD grandes (D-pad) para centrar la cruceta amarilla en el buje central.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Text("3️⃣ Ajusta el deslizador hasta que el círculo exterior calce con el borde del disco.", color = Color.White, fontSize = 11.5.sp)
+                                Text("4️⃣ Selecciona o ingresa la carga (kg) y pulsa Iniciar Análisis 🚀.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    else -> {
+                        Text(
+                            "Visualiza la telemetría biomecánica en tiempo real y exporta reportes:",
+                            color = Color.LightGray,
+                            fontSize = 12.5.sp
+                        )
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("📈 Telemetría: Gráfica de velocidad (cian) y aceleración (naranja) sincronizada con el video.", color = Color.White, fontSize = 11.5.sp)
+                                Text("⚡ Métricas: Velocidad Pico (PV), Media (MV), Propulsiva (VMP), RFD y Potencia en Watts.", color = Color(0xFF00FFCC), fontSize = 11.5.sp)
+                                Text("📄 Informe PDF: En Acciones puedes generar y compartir un informe con capturas del levantamiento.", color = Color.White, fontSize = 11.5.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (step < 2) {
+                        onStepChange(step + 1)
+                    } else {
+                        onDismiss()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black)
+            ) {
+                Text(if (step < 2) "Siguiente ➔" else "¡Entendido, Practicar! ✓", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        },
+        dismissButton = {
+            if (step > 0) {
+                TextButton(onClick = { onStepChange(step - 1) }) {
+                    Text("◀ Anterior", color = Color.LightGray, fontSize = 12.sp)
+                }
+            } else {
+                TextButton(onClick = onDismiss) {
+                    Text("Saltar", color = Color.Gray, fontSize = 12.sp)
+                }
+            }
+        }
+    )
 }

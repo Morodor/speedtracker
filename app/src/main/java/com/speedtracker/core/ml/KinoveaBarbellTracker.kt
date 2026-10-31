@@ -114,22 +114,26 @@ class KinoveaBarbellTracker {
         val tpl = anchorTemplate!!
         val numPixels = templateW * templateH
 
-        // 1. Predicción cinemática basada en inercia física real
-        val speed = hypot(currentVelocity.x.toDouble(), currentVelocity.y.toDouble()).toFloat()
-        val isFast = speed > 3.5f
+        // 1. Dinámica cinemática adaptativa escalada a metros reales según el disco olímpico (0.45 m)
+        val pxPerMeter = (calibratedRadius * 2f) / 0.45f
+        val maxTrackingVelocityMps = 4.5f // 4.5 m/s cubre holgadamente los tirones olímpicos más explosivos
+        val maxFrameDy = (maxTrackingVelocityMps * pxPerMeter / 30f).coerceIn(40f, 160f)
+        val maxFrameDx = (1.2f * pxPerMeter / 30f).coerceIn(12f, 45f)
 
-        // Sesgo de velocidad vertical para centrar dinámicamente la ventana durante aceleraciones de hasta 3.5 m/s
-        val velBiasX = (currentVelocity.x * 0.70f).coerceIn(-8f, 8f)
-        val velBiasY = (currentVelocity.y * 0.85f).coerceIn(-38f, 28f)
+        val speed = hypot(currentVelocity.x.toDouble(), currentVelocity.y.toDouble()).toFloat()
+        val isFast = speed > (0.4f * pxPerMeter / 30f) // Movimiento significativo (> 0.4 m/s)
+
+        // Sesgo de velocidad vertical para centrar dinámicamente la ventana durante aceleraciones extremas
+        val velBiasX = (currentVelocity.x * 0.75f).coerceIn(-maxFrameDx, maxFrameDx)
+        val velBiasY = (currentVelocity.y * 0.85f).coerceIn(-maxFrameDy, maxFrameDy)
 
         val predX = currentCenter.x + velBiasX
         val predY = currentCenter.y + velBiasY
 
-        // 2. Ventana de búsqueda elástica:
-        // Amplia en velocidad extrema (radio Y de 28 px sobre el centro predicho, cubriendo más de 50 px de desplazamiento total)
-        // Estable y compacta en bloqueo o fases estáticas (radio Y de 18 px)
-        val searchRadiusX = 18
-        val searchRadiusY = if (isFast) 28 else 18
+        // 2. Ventana de búsqueda elástica proporcional a la escala del disco:
+        val baseSearchRadiusY = (calibratedRadius * 0.35f).toInt().coerceIn(22, 55)
+        val searchRadiusY = if (isFast) (baseSearchRadiusY * 1.6f).toInt().coerceIn(36, 85) else baseSearchRadiusY
+        val searchRadiusX = (calibratedRadius * 0.22f).toInt().coerceIn(16, 38)
 
         val minSearchX = (predX - searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
         val maxSearchX = (predX + searchRadiusX).toInt().coerceIn(templateHalfW, bW - templateHalfW - 1)
@@ -173,11 +177,11 @@ class KinoveaBarbellTracker {
                 val dx = cx - predX
                 val dy = cy - predY
                 val distFromPred = hypot(dx.toDouble(), dy.toDouble()).toFloat()
-                val distPenalty = (distFromPred / 45f) * 0.12f
+                val distPenalty = (distFromPred / searchRadiusY.toFloat()) * 0.10f
 
                 // Penalización por desvío horizontal excesivo (la barra en levantamientos se desplaza casi exclusivamente en Y)
                 val hDev = (abs(cx - currentCenter.x) - 3f).coerceAtLeast(0f)
-                val hPenalty = (hDev / 15f) * 0.08f
+                val hPenalty = (hDev / searchRadiusX.toFloat()) * 0.08f
 
                 val score = zncc - distPenalty - hPenalty
 
@@ -210,9 +214,9 @@ class KinoveaBarbellTracker {
             val instVx = targetX - currentCenter.x
             val instVy = targetY - currentCenter.y
 
-            // Suavizado cinemático inercial
-            val updatedVy = currentVelocity.y * 0.25f + instVy.coerceIn(-36f, 30f) * 0.75f
-            val updatedVx = currentVelocity.x * 0.30f + instVx.coerceIn(-8f, 8f) * 0.70f
+            // Suavizado cinemático inercial adaptado a la velocidad real máxima del levantamiento
+            val updatedVy = currentVelocity.y * 0.25f + instVy.coerceIn(-maxFrameDy, maxFrameDy) * 0.75f
+            val updatedVx = currentVelocity.x * 0.30f + instVx.coerceIn(-maxFrameDx, maxFrameDx) * 0.70f
 
             val movementMag = hypot(instVx.toDouble(), instVy.toDouble()).toFloat()
             currentVelocity = if (movementMag < 0.35f) Offset.Zero else Offset(updatedVx, updatedVy)
