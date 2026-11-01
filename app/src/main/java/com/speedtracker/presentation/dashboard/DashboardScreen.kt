@@ -210,7 +210,7 @@ fun DashboardScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v3.mp4")
+                            val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v4.mp4")
                             onNavigateToVideoAnalysis(uri.toString())
                         },
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF142420)),
