@@ -37,12 +37,14 @@ fun KinoveaCircleReticleCanvas(
     radius: Float,
     onCenterChange: (Offset) -> Unit,
     onRadiusChange: (Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onInteraction: () -> Unit = {}
 ) {
     val currentCenter by rememberUpdatedState(center)
     val currentRadius by rememberUpdatedState(radius)
     val onCenterChangeState by rememberUpdatedState(onCenterChange)
     val onRadiusChangeState by rememberUpdatedState(onRadiusChange)
+    val onInteractionState by rememberUpdatedState(onInteraction)
 
     Canvas(
         modifier = modifier
@@ -50,6 +52,7 @@ fun KinoveaCircleReticleCanvas(
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    onInteractionState()
                     val startPos = down.position
                     val c = currentCenter
                     val r = currentRadius
@@ -59,6 +62,9 @@ fun KinoveaCircleReticleCanvas(
                         (startPos.y - handlePos.y).toDouble()
                     ) < 45.dp.toPx()
 
+                    val boundW = size.width.toFloat()
+                    val boundH = size.height.toFloat()
+
                     var hasMoved = false
                     var isDragging = false
 
@@ -66,9 +72,17 @@ fun KinoveaCircleReticleCanvas(
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
 
+                        // Límites estrictos para que el círculo tracker NUNCA salga de los márgenes del video
+                        val minX = currentRadius.coerceAtMost(boundW / 2f)
+                        val maxX = (boundW - currentRadius).coerceAtLeast(boundW / 2f)
+                        val minY = currentRadius.coerceAtMost(boundH / 2f)
+                        val maxY = (boundH - currentRadius).coerceAtLeast(boundH / 2f)
+
                         if (!change.pressed) {
                             if (!hasMoved && !isHandle) {
-                                onCenterChangeState(startPos)
+                                val tapX = startPos.x.coerceIn(minX, maxX)
+                                val tapY = startPos.y.coerceIn(minY, maxY)
+                                onCenterChangeState(Offset(tapX, tapY))
                             }
                             break
                         }
@@ -80,16 +94,20 @@ fun KinoveaCircleReticleCanvas(
                         if (!isDragging && dist > 6.0) {
                             isDragging = true
                             hasMoved = true
+                            onInteractionState()
                         }
 
                         if (isDragging) {
                             val dragDelta = change.positionChange()
                             change.consume()
                             if (isHandle) {
-                                val newR = (currentRadius + dragDelta.x).coerceIn(15f, 650f)
+                                val maxR = maxOf(15f, minOf(currentCenter.x, boundW - currentCenter.x, currentCenter.y, boundH - currentCenter.y))
+                                val newR = (currentRadius + dragDelta.x).coerceIn(15f, maxR)
                                 onRadiusChangeState(newR)
                             } else {
-                                onCenterChangeState(currentCenter + dragDelta)
+                                val targetX = (currentCenter.x + dragDelta.x).coerceIn(minX, maxX)
+                                val targetY = (currentCenter.y + dragDelta.y).coerceIn(minY, maxY)
+                                onCenterChangeState(Offset(targetX, targetY))
                             }
                         }
                     }

@@ -17,6 +17,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.ui.unit.IntOffset
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
@@ -816,8 +824,15 @@ fun VideoAnalysisScreen(
                                                             mp.playbackParams = params
                                                         } catch (e: Exception) { }
                                                     }
-                                                    start()
-                                                    isPlaying = true
+                                                    if (showTutorialDialog) {
+                                                        pause()
+                                                        isPlaying = false
+                                                        seekVideoAccurate(mp, this, trimStartMs)
+                                                        updateStillFrame(trimStartMs)
+                                                    } else {
+                                                        start()
+                                                        isPlaying = true
+                                                    }
                                                 }
                                                 videoViewRef = this
                                             }
@@ -1528,13 +1543,92 @@ fun VideoAnalysisScreen(
                                     }
 
                                     // Retícula Circular Kinovea sobre el marco centrado
+                                    var hasUserInteractedWithTracker by remember { mutableStateOf(false) }
                                     val activeCenter = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
                                     KinoveaCircleReticleCanvas(
                                         center = activeCenter,
                                         radius = circleRadiusPx,
-                                        onCenterChange = { circleCenter = it },
-                                        onRadiusChange = { circleRadiusPx = it }
+                                        onCenterChange = {
+                                            circleCenter = it
+                                            hasUserInteractedWithTracker = true
+                                        },
+                                        onRadiusChange = {
+                                            circleRadiusPx = it
+                                            hasUserInteractedWithTracker = true
+                                        },
+                                        onInteraction = {
+                                            hasUserInteractedWithTracker = true
+                                        }
                                     )
+
+                                    // Indicador parpadeante y animado que enseña a deslizar el dedo sobre el tracker
+                                    if (!hasUserInteractedWithTracker && !isCalibrated) {
+                                        val infiniteTransition = rememberInfiniteTransition(label = "pulseTrackerHint")
+                                        val hintAlpha by infiniteTransition.animateFloat(
+                                            initialValue = 0.35f,
+                                            targetValue = 1.0f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(700, easing = FastOutSlowInEasing),
+                                                repeatMode = RepeatMode.Reverse
+                                            ),
+                                            label = "hintAlpha"
+                                        )
+                                        val handSwipeX by infiniteTransition.animateFloat(
+                                            initialValue = -16f,
+                                            targetValue = 16f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(1100, easing = LinearEasing),
+                                                repeatMode = RepeatMode.Reverse
+                                            ),
+                                            label = "handSwipeX"
+                                        )
+                                        val hintScale by infiniteTransition.animateFloat(
+                                            initialValue = 0.94f,
+                                            targetValue = 1.06f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(700, easing = FastOutSlowInEasing),
+                                                repeatMode = RepeatMode.Reverse
+                                            ),
+                                            label = "hintScale"
+                                        )
+
+                                        val density = LocalDensity.current
+                                        val hintX = with(density) { (activeCenter.x - 70.dp.toPx()).coerceIn(10f, (bounds.renderWidth - 150.dp.toPx()).coerceAtLeast(10f)) }
+                                        val hintY = with(density) { (activeCenter.y - circleRadiusPx - 48.dp.toPx()).coerceIn(10f, (bounds.renderHeight - 55.dp.toPx()).coerceAtLeast(10f)) }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .offset { IntOffset(hintX.toInt(), hintY.toInt()) }
+                                                .graphicsLayer {
+                                                    alpha = hintAlpha
+                                                    scaleX = hintScale
+                                                    scaleY = hintScale
+                                                }
+                                                .background(Color(0xD90D1117), RoundedCornerShape(20.dp))
+                                                .border(1.5.dp, Color(0xFF00FFCC), RoundedCornerShape(20.dp))
+                                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.TouchApp,
+                                                    contentDescription = "Desliza para mover",
+                                                    tint = Color(0xFF00FFCC),
+                                                    modifier = Modifier
+                                                        .size(20.dp)
+                                                        .graphicsLayer { translationX = handSwipeX }
+                                                )
+                                                Text(
+                                                    "Desliza para mover",
+                                                    color = Color.White,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
+                                    }
 
                                     // Botones Superiores Derechos ÚNICOS: Audio y Reset Zoom (Sin superposición con ningún otro botón)
                                     Row(
@@ -1580,19 +1674,7 @@ fun VideoAnalysisScreen(
                                     }
                                 }
 
-                                // Flechas HUD Direccionales alineadas a TODOS los márgenes de la pantalla para manejo cómodo con pulgar
-                                CalibrationVideoDirectionalOverlay(
-                                    onMove = { dx, dy ->
-                                        val cur = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
-                                        circleCenter = Offset(
-                                            (cur.x + dx).coerceIn(circleRadiusPx, bounds.renderWidth - circleRadiusPx),
-                                            (cur.y + dy).coerceIn(circleRadiusPx, bounds.renderHeight - circleRadiusPx)
-                                        )
-                                    },
-                                    onReset = {
-                                        circleCenter = Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
-                                    }
-                                )
+                                // Botones de dirección retirados: el tracker se mueve fluidamente deslizando el dedo en la pantalla
                             }
 
                             // Panel Inferior de Controles (con padding horizontal para los controles)
@@ -1616,7 +1698,7 @@ fun VideoAnalysisScreen(
                                         Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00FFCC), modifier = Modifier.size(15.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            "Paso 2: Usa las flechas para centrar la cruceta en el buje y ajusta al disco (45 cm).",
+                                            "Paso 2: Desliza el dedo sobre la pantalla para centrar la cruceta en el buje y ajusta al disco (45 cm).",
                                             color = Color.White,
                                             fontSize = 11.sp,
                                             maxLines = 1
@@ -3147,7 +3229,11 @@ fun VideoAnalysisScreen(
             TutorialGuideDialog(
                 step = tutorialStep,
                 onStepChange = { tutorialStep = it },
-                onDismiss = { showTutorialDialog = false }
+                onDismiss = {
+                    showTutorialDialog = false
+                    videoViewRef?.start()
+                    isPlaying = true
+                }
             )
         }
     }
@@ -5244,7 +5330,7 @@ fun TutorialGuideDialog(
                         ) {
                             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("1️⃣ Pulsa ⚡ Auto Detectar para detección por IA anatómica.", color = Color.White, fontSize = 11.5.sp)
-                                Text("2️⃣ Usa las flechas HUD grandes (D-pad) para centrar la cruceta amarilla en el buje central.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Text("2️⃣ Desliza tu dedo en la pantalla para mover la cruceta y centrar el círculo en el disco olímpico.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                 Text("3️⃣ Ajusta el deslizador hasta que el círculo exterior calce con el borde del disco.", color = Color.White, fontSize = 11.5.sp)
                                 Text("4️⃣ Selecciona o ingresa la carga (kg) y pulsa Iniciar Análisis 🚀.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                             }
