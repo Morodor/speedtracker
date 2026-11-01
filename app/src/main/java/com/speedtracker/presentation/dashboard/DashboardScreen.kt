@@ -210,7 +210,7 @@ fun DashboardScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch.mp4")
+                            val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v2.mp4")
                             onNavigateToVideoAnalysis(uri.toString())
                         },
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF142420)),
@@ -474,16 +474,15 @@ fun formatDate(timestamp: Long): String {
 
 fun copyRawVideoToCache(context: Context, rawResId: Int, fileName: String): Uri {
     val file = File(context.cacheDir, fileName)
-    if (!file.exists() || file.length() == 0L) {
-        try {
-            context.resources.openRawResource(rawResId).use { input ->
-                file.outputStream().use { output ->
-                    input.copyTo(output)
-                }
+    try {
+        context.resources.openRawResource(rawResId).use { input ->
+            val rawBytes = input.readBytes()
+            if (!file.exists() || file.length() != rawBytes.size.toLong()) {
+                file.writeBytes(rawBytes)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
     return Uri.fromFile(file)
 }
