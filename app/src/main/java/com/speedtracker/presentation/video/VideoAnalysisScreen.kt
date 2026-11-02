@@ -51,6 +51,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -540,6 +542,7 @@ fun VideoAnalysisScreen(
         stillFrameJob = coroutineScope.launch(Dispatchers.IO) {
             try {
                 val bm = sharedFrameRetriever.getFrameAtTime(targetMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                    ?: sharedFrameRetriever.getFrameAtTime(targetMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 if (bm != null) {
                     withContext(Dispatchers.Main) {
                         stillFrameBitmap = bm
@@ -596,6 +599,7 @@ fun VideoAnalysisScreen(
                         retriever.setDataSource(context, Uri.parse(videoUriString))
                         val timeUs = trimStartMs * 1000L
                         val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                            ?: retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                         if (bitmap != null) {
                             if (bitmap.width > 0 && bitmap.height > 0) {
                                 videoNativeWidth = bitmap.width
@@ -622,18 +626,18 @@ fun VideoAnalysisScreen(
 
                 if (result != null) {
                     val bounds = calculateVideoRenderBounds(effectiveW, effectiveH, videoNativeWidth, videoNativeHeight)
-                    val scaleX = bounds.renderWidth / videoNativeWidth.toFloat()
-                    val scaleY = bounds.renderHeight / videoNativeHeight.toFloat()
-                    val padPx = 28f
-                    val maxR = (minOf(bounds.renderWidth, bounds.renderHeight) / 2f - padPx).coerceAtLeast(22f)
-                    val screenRadius = (result.radiusPx * scaleX).coerceIn(22f, maxR)
-                    val minX = (screenRadius + padPx).coerceAtMost(bounds.renderWidth / 2f)
-                    val maxX = (bounds.renderWidth - screenRadius - padPx).coerceAtLeast(bounds.renderWidth / 2f)
-                    val minY = (screenRadius + padPx).coerceAtMost(bounds.renderHeight / 2f)
-                    val maxY = (bounds.renderHeight - screenRadius - padPx).coerceAtLeast(bounds.renderHeight / 2f)
+                    val padPx = 20f
+                    val maxR = (minOf(effectiveW, effectiveH) / 2f - padPx).coerceAtLeast(22f)
+                    val screenRadius = (result.radiusPx * bounds.scale).coerceIn(22f, maxR)
+                    val minX = (screenRadius + padPx).coerceAtMost(effectiveW / 2f)
+                    val maxX = (effectiveW - screenRadius - padPx).coerceAtLeast(effectiveW / 2f)
+                    val minY = (screenRadius + padPx).coerceAtMost(effectiveH / 2f)
+                    val maxY = (effectiveH - screenRadius - padPx).coerceAtLeast(effectiveH / 2f)
+                    val rawScreenX = bounds.left + result.center.x * bounds.scale
+                    val rawScreenY = bounds.top + result.center.y * bounds.scale
                     val screenCenter = Offset(
-                        (result.center.x * scaleX).coerceIn(minX, maxX),
-                        (result.center.y * scaleY).coerceIn(minY, maxY)
+                        rawScreenX.coerceIn(minX, maxX),
+                        rawScreenY.coerceIn(minY, maxY)
                     )
 
                     circleCenter = screenCenter
@@ -652,7 +656,8 @@ fun VideoAnalysisScreen(
 
     // Polling del tiempo de video y bucle dentro del rango recortado [trimStartMs, trimEndMs]
     LaunchedEffect(videoViewRef, isPlaying, trimStartMs, trimEndMs, isLoopingTrimmedRange, analysisSetupStep) {
-        while (true) {
+        if (!isPlaying) return@LaunchedEffect
+        while (isPlaying) {
             videoViewRef?.let { vv ->
                 if (vv.isPlaying) {
                     val cur = vv.currentPosition.toLong()
@@ -672,35 +677,24 @@ fun VideoAnalysisScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = when {
-                                !isReadyToAnalyze -> {
-                                    when (analysisSetupStep) {
-                                        AnalysisSetupStep.TRIM_VIDEO -> "Trim Video"
-                                        AnalysisSetupStep.SELECT_EXERCISE -> if (currentMode == "VBT") "Halterofilia / VBT" else "Salto Vertical"
-                                        AnalysisSetupStep.CALIBRATE -> "Calibración y Carga"
-                                    }
+                    Text(
+                        text = when {
+                            !isReadyToAnalyze -> {
+                                when (analysisSetupStep) {
+                                    AnalysisSetupStep.TRIM_VIDEO -> "Trim Video"
+                                    AnalysisSetupStep.SELECT_EXERCISE -> if (currentMode == "VBT") "Halterofilia / VBT" else "Salto Vertical"
+                                    AnalysisSetupStep.CALIBRATE -> "Calibración y Carga"
                                 }
-                                isProcessing -> "Analizando..."
-                                else -> if (currentMode == "JUMP") "Resultados Salto (${selectedJumpType.name}) Biomecánicos" else "Resultados ${selectedVBTExercise.displayName} Biomecánicos"
-                            },
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (!isReadyToAnalyze && analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
-                            Text(
-                                if (currentMode == "VBT") "⚡ ${selectedVBTExercise.displayName} • ${barbellLoadKg} kg • ${activeUser?.name ?: "Invitado"} ✎" else "↕ Salto ${selectedJumpType.name} • ${activeUser?.name ?: "Invitado"} ✎",
-                                modifier = Modifier.clickable { showPreCalibrationSetupDialog = true },
-                                color = Color(0xFF00FFCC),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
+                            }
+                            isProcessing -> "Analizando..."
+                            else -> if (currentMode == "JUMP") "Resultados Salto (${selectedJumpType.name}) Biomecánicos" else "Resultados ${selectedVBTExercise.displayName} Biomecánicos"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 },
                 navigationIcon = {
                     if (!isReadyToAnalyze) {
@@ -1480,32 +1474,32 @@ fun VideoAnalysisScreen(
                                 val rHDp = with(LocalDensity.current) { bounds.renderHeight.toDp() }
                                 val edgePadPx = with(LocalDensity.current) { 14.dp.toPx() }
 
-                                // Reajustar centro y radio al tamaño exacto del cuadro de video de Calibración para que jamás quede afuera
-                                LaunchedEffect(bounds.renderWidth, bounds.renderHeight, calibratedPlateCenterVideo, calibratedPlateRadiusVideo) {
-                                    if (bounds.renderWidth > 0f && bounds.renderHeight > 0f) {
-                                        val maxR = (minOf(bounds.renderWidth, bounds.renderHeight) / 2f - edgePadPx).coerceAtLeast(22f)
+                                // Reajustar centro y radio dentro de todo el ancho de la caja del video (incluyendo franjas negras laterales)
+                                LaunchedEffect(boxW, boxH, bounds.renderWidth, bounds.renderHeight, calibratedPlateCenterVideo, calibratedPlateRadiusVideo) {
+                                    if (boxW > 0f && boxH > 0f && bounds.renderWidth > 0f && bounds.renderHeight > 0f) {
+                                        val maxR = (minOf(boxW, boxH) / 2f - edgePadPx).coerceAtLeast(22f)
                                         val vidCenter = calibratedPlateCenterVideo
                                         val vidRad = calibratedPlateRadiusVideo
                                         if (vidCenter != null && vidRad > 5f && videoNativeWidth > 0 && videoNativeHeight > 0) {
-                                            val sx = bounds.renderWidth / videoNativeWidth.toFloat()
-                                            val sy = bounds.renderHeight / videoNativeHeight.toFloat()
-                                            val sr = (vidRad * sx).coerceIn(22f, maxR)
-                                            val minX = (sr + edgePadPx).coerceAtMost(bounds.renderWidth / 2f)
-                                            val maxX = (bounds.renderWidth - sr - edgePadPx).coerceAtLeast(bounds.renderWidth / 2f)
-                                            val minY = (sr + edgePadPx).coerceAtMost(bounds.renderHeight / 2f)
-                                            val maxY = (bounds.renderHeight - sr - edgePadPx).coerceAtLeast(bounds.renderHeight / 2f)
+                                            val sr = (vidRad * bounds.scale).coerceIn(22f, maxR)
+                                            val minX = (sr + edgePadPx).coerceAtMost(boxW / 2f)
+                                            val maxX = (boxW - sr - edgePadPx).coerceAtLeast(boxW / 2f)
+                                            val minY = (sr + edgePadPx).coerceAtMost(boxH / 2f)
+                                            val maxY = (boxH - sr - edgePadPx).coerceAtLeast(boxH / 2f)
+                                            val rawScreenX = bounds.left + vidCenter.x * bounds.scale
+                                            val rawScreenY = bounds.top + vidCenter.y * bounds.scale
                                             circleRadiusPx = sr
                                             circleCenter = Offset(
-                                                (vidCenter.x * sx).coerceIn(minX, maxX),
-                                                (vidCenter.y * sy).coerceIn(minY, maxY)
+                                                rawScreenX.coerceIn(minX, maxX),
+                                                rawScreenY.coerceIn(minY, maxY)
                                             )
                                         } else {
                                             val sr = circleRadiusPx.coerceIn(22f, maxR)
-                                            val minX = (sr + edgePadPx).coerceAtMost(bounds.renderWidth / 2f)
-                                            val maxX = (bounds.renderWidth - sr - edgePadPx).coerceAtLeast(bounds.renderWidth / 2f)
-                                            val minY = (sr + edgePadPx).coerceAtMost(bounds.renderHeight / 2f)
-                                            val maxY = (bounds.renderHeight - sr - edgePadPx).coerceAtLeast(bounds.renderHeight / 2f)
-                                            val c = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight * 0.65f)
+                                            val minX = (sr + edgePadPx).coerceAtMost(boxW / 2f)
+                                            val maxX = (boxW - sr - edgePadPx).coerceAtLeast(boxW / 2f)
+                                            val minY = (sr + edgePadPx).coerceAtMost(boxH / 2f)
+                                            val maxY = (boxH - sr - edgePadPx).coerceAtLeast(boxH / 2f)
+                                            val c = circleCenter ?: Offset(boxW / 2f, boxH * 0.65f)
                                             circleRadiusPx = sr
                                             circleCenter = Offset(
                                                 c.x.coerceIn(minX, maxX),
@@ -1515,7 +1509,7 @@ fun VideoAnalysisScreen(
                                     }
                                 }
 
-                                // Contenedor exactamente del tamaño del video renderizado (con clip estricto a los bordes)
+                                // Contenedor del video renderizado centrado dentro de la caja completa
                                 Box(
                                     modifier = Modifier
                                         .size(rWDp, rHDp)
@@ -1588,16 +1582,21 @@ fun VideoAnalysisScreen(
                                             contentScale = ContentScale.Fit
                                         )
                                     }
+                                }
 
-                                    // Retícula Circular Kinovea sobre el marco centrado y estrictamente contenida en el video
+                                // Capa de ancho completo (boxW x boxH) para que el círculo Tracker pueda moverse por todo el ancho de la caja del video,
+                                // incluso sobre las franjas negras laterales, sin salirse de los bordes exteriores.
+                                Box(
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
                                     var hasUserInteractedWithTracker by remember(analysisSetupStep) { mutableStateOf(false) }
-                                    val maxAllowedRadius = (minOf(bounds.renderWidth, bounds.renderHeight) / 2f - edgePadPx).coerceAtLeast(20f)
+                                    val maxAllowedRadius = (minOf(boxW, boxH) / 2f - edgePadPx).coerceAtLeast(20f)
                                     val clampedRadius = circleRadiusPx.coerceIn(20f, maxAllowedRadius)
-                                    val minCX = (clampedRadius + edgePadPx).coerceAtMost(bounds.renderWidth / 2f)
-                                    val maxCX = (bounds.renderWidth - clampedRadius - edgePadPx).coerceAtLeast(bounds.renderWidth / 2f)
-                                    val minCY = (clampedRadius + edgePadPx).coerceAtMost(bounds.renderHeight / 2f)
-                                    val maxCY = (bounds.renderHeight - clampedRadius - edgePadPx).coerceAtLeast(bounds.renderHeight / 2f)
-                                    val rawCenter = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight * 0.65f)
+                                    val minCX = (clampedRadius + edgePadPx).coerceAtMost(boxW / 2f)
+                                    val maxCX = (boxW - clampedRadius - edgePadPx).coerceAtLeast(boxW / 2f)
+                                    val minCY = (clampedRadius + edgePadPx).coerceAtMost(boxH / 2f)
+                                    val maxCY = (boxH - clampedRadius - edgePadPx).coerceAtLeast(boxH / 2f)
+                                    val rawCenter = circleCenter ?: Offset(boxW / 2f, boxH * 0.65f)
                                     val activeCenter = Offset(
                                         rawCenter.x.coerceIn(minCX, maxCX),
                                         rawCenter.y.coerceIn(minCY, maxCY)
@@ -2190,12 +2189,14 @@ fun VideoAnalysisScreen(
                                 Button(
                                     onClick = {
                                         val bounds = calculateVideoRenderBounds(screenBoxWidth, screenBoxHeight, videoNativeWidth, videoNativeHeight)
-                                        val centerToUse = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
+                                        val centerToUse = circleCenter ?: Offset(screenBoxWidth / 2f, screenBoxHeight * 0.65f)
 
-                                        val scaleX = videoNativeWidth.toFloat() / bounds.renderWidth
-                                        val scaleY = videoNativeHeight.toFloat() / bounds.renderHeight
-                                        val nativeCenter = Offset(centerToUse.x * scaleX, centerToUse.y * scaleY)
-                                        val nativeRadius = circleRadiusPx * scaleX
+                                        val invScale = if (bounds.scale > 0f) 1f / bounds.scale else 1f
+                                        val nativeCenter = Offset(
+                                            ((centerToUse.x - bounds.left) * invScale).coerceIn(0f, videoNativeWidth.toFloat()),
+                                            ((centerToUse.y - bounds.top) * invScale).coerceIn(0f, videoNativeHeight.toFloat())
+                                        )
+                                        val nativeRadius = (circleRadiusPx * invScale).coerceAtLeast(12f)
 
                                         calibratedPlateCenterVideo = nativeCenter
                                         calibratedPlateRadiusVideo = nativeRadius
@@ -2401,6 +2402,48 @@ fun VideoAnalysisScreen(
                         ) {
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 if (currentMode == "JUMP") {
+                                    // Ficha de Datos de Sesión (Atleta, Tipo de Ejercicio y Salto)
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0xFF1E1E1E),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 10.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    when (selectedJumpType) {
+                                                        JumpType.CMJ -> "Salto Contramovimiento (CMJ)"
+                                                        JumpType.SJ -> "Squat Jump (SJ)"
+                                                        JumpType.DROP_JUMP -> "Drop Jump (Reactivo)"
+                                                    },
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp
+                                                )
+                                                Text(
+                                                    "Balísticos-Explosivos (Saltos)",
+                                                    color = Color(0xFF00FFCC),
+                                                    fontSize = 11.sp
+                                                )
+                                            }
+                                            Text(
+                                                "👤 ${activeUser?.name ?: "Invitado"} (${String.format(Locale.US, "%.1f", activeUser?.bodyWeightKg ?: 70.0)} kg)",
+                                                color = Color.LightGray,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+
                                     // Módulo 3: Salto + Potencia Watts (Sayers)
                                     val metrics = jumpMetricsResult
                                     Card(
@@ -2476,7 +2519,7 @@ fun VideoAnalysisScreen(
                                         )
                                     }
                                 } else if (currentMode == "VBT") {
-                                    // Ejercicio Seleccionado (Fijado previamente tras importar el video)
+                                    // Ficha de Datos de Sesión (Atleta, Tipo de Ejercicio, Ejercicio y Carga)
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
                                         color = Color(0xFF1E1E1E),
@@ -2485,41 +2528,68 @@ fun VideoAnalysisScreen(
                                             .fillMaxWidth()
                                             .padding(bottom = 10.dp)
                                     ) {
-                                        Row(
+                                        Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(horizontal = 14.dp, vertical = 10.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(selectedExerciseModel.family.icon, fontSize = 20.sp)
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Column {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(selectedExerciseModel.family.icon, fontSize = 20.sp)
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Column {
+                                                        Text(
+                                                            selectedExerciseModel.displayName,
+                                                            color = Color.White,
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 14.sp
+                                                        )
+                                                        Text(
+                                                            if (selectedExerciseModel.family == VBTExerciseFamily.HILL_TRADITIONAL)
+                                                                "Tradicionales (Ley de Hill)"
+                                                            else
+                                                                "Olímpicos (DLP)",
+                                                            color = Color(0xFF00FFCC),
+                                                            fontSize = 11.sp
+                                                        )
+                                                    }
+                                                }
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = Color(0xFF121212),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2C2C2C))
+                                                ) {
                                                     Text(
-                                                        selectedExerciseModel.displayName,
-                                                        color = Color.White,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 14.sp
-                                                    )
-                                                    Text(
-                                                        selectedExerciseModel.family.label,
-                                                        color = Color(0xFF00FFCC),
-                                                        fontSize = 11.sp
+                                                        if (selectedExerciseModel.usesPeakVelocity) "⚡ Vel. Pico (PV)" else "🏋️ Vel. Media (VM)",
+                                                        color = Color.LightGray,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                     )
                                                 }
                                             }
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = Color(0xFF121212),
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2C2C2C))
+                                            Divider(color = Color(0xFF2C2C2C), thickness = 1.dp)
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
-                                                    if (selectedExerciseModel.usesPeakVelocity) "⚡ Vel. Pico (PV)" else "🏋️ Vel. Media (VM)",
+                                                    "👤 Atleta: ${activeUser?.name ?: "Invitado"} (${String.format(Locale.US, "%.1f", activeUser?.bodyWeightKg ?: 70.0)} kg)",
                                                     color = Color.LightGray,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Text(
+                                                    "⚖️ Peso: ${currentLoadKg.toInt()} kg",
+                                                    color = Color(0xFF00FFCC),
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Bold
                                                 )
                                             }
                                         }
@@ -4432,7 +4502,10 @@ fun AnalysisResultVideoPreview(
         if (!isPlaying) {
             withContext(Dispatchers.IO) {
                 try {
-                    val bm = previewRetriever.getFrameAtTime(currentPosMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                    val targetUs = currentPosMs * 1000L
+                    val bm = previewRetriever.getFrameAtTime(targetUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                        ?: previewRetriever.getFrameAtTime(targetUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?: previewRetriever.getFrameAtTime((currentPosMs - 50L).coerceAtLeast(0L) * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
                     if (bm != null) {
                         withContext(Dispatchers.Main) {
                             previewStillBitmap = bm
@@ -4453,10 +4526,10 @@ fun AnalysisResultVideoPreview(
 
     LaunchedEffect(externalSeekPosMs) {
         externalSeekPosMs?.let { targetMs ->
-            previewVideoViewRef?.let { vv ->
-                val clamped = targetMs.coerceIn(trimStartMs, effectiveEndMs)
-                vv.seekTo(clamped.toInt())
-                currentPosMs = clamped
+            val clamped = targetMs.coerceIn(trimStartMs, effectiveEndMs)
+            currentPosMs = clamped
+            if (isPlaying) {
+                previewVideoViewRef?.seekTo(clamped.toInt())
             }
         }
     }
@@ -4501,18 +4574,16 @@ fun AnalysisResultVideoPreview(
         }
     }
 
-    // Bucle continuo en el rango recortado del levantamiento con interpolación suave a 60 fps
+    // Bucle continuo en el rango recortado del levantamiento con interpolación suave a 60 fps (solo activo cuando isPlaying == true)
     LaunchedEffect(previewVideoViewRef, isPlaying, trimStartMs, effectiveEndMs, isUserSeeking, playbackSpeed) {
+        if (!isPlaying) return@LaunchedEffect
         lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
         lastSyncPositionMs = currentPosMs
 
-        while (true) {
+        while (isPlaying) {
             if (!isUserSeeking) {
                 previewVideoViewRef?.let { vv ->
                     if (vv.isPlaying) {
-                        if (!isPlaying) {
-                            isPlaying = true
-                        }
                         val now = android.os.SystemClock.elapsedRealtime()
                         val reportedPos = vv.currentPosition.toLong()
 
@@ -4600,13 +4671,12 @@ fun AnalysisResultVideoPreview(
                                     lastSyncPositionMs = trimStartMs
                                 }
                                 setOnCompletionListener {
-                                    seekTo(trimStartMs.toInt())
-                                    lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
-                                    lastSyncPositionMs = trimStartMs
                                     if (isPlaying) {
+                                        seekTo(trimStartMs.toInt())
+                                        currentPosMs = trimStartMs
+                                        lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+                                        lastSyncPositionMs = trimStartMs
                                         start()
-                                    } else {
-                                        pause()
                                     }
                                 }
                                 previewVideoViewRef = this
@@ -4627,7 +4697,7 @@ fun AnalysisResultVideoPreview(
                         )
                     }
 
-                    // Capa Canvas: Bar Path dinámico y mira telescópica en tiempo real con alineación exacta 1:1
+                    // Capa Canvas: Bar Path dinámico suavizado con curvas Catmull-Rom Cubic Bezier y mira telescópica 1:1
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val rW = size.width
                         val rH = size.height
@@ -4658,38 +4728,68 @@ fun AnalysisResultVideoPreview(
                             )
                         }
 
-                        // 2. Trayectoria estática completa (Fondo translúcido de referencia)
+                        // 2. Trayectoria estática completa suavizada (Fondo translúcido de referencia)
                         if (trackingPoints.size > 1) {
+                            val bgPath = Path()
+                            val firstS = Offset(trackingPoints[0].x * scaleX, trackingPoints[0].y * scaleY)
+                            bgPath.moveTo(firstS.x, firstS.y)
                             for (i in 0 until trackingPoints.size - 1) {
+                                val p0 = trackingPoints[(i - 1).coerceAtLeast(0)]
                                 val p1 = trackingPoints[i]
                                 val p2 = trackingPoints[i + 1]
+                                val p3 = trackingPoints[(i + 2).coerceAtMost(trackingPoints.lastIndex)]
+                                val s0 = Offset(p0.x * scaleX, p0.y * scaleY)
                                 val s1 = Offset(p1.x * scaleX, p1.y * scaleY)
                                 val s2 = Offset(p2.x * scaleX, p2.y * scaleY)
-                                drawLine(
-                                    color = Color(0x2BFFFFFF),
-                                    start = s1,
-                                    end = s2,
-                                    strokeWidth = 2.dp.toPx(),
-                                    cap = StrokeCap.Round
-                                )
+                                val s3 = Offset(p3.x * scaleX, p3.y * scaleY)
+                                val cp1X = s1.x + (s2.x - s0.x) * 0.20f
+                                val cp1Y = s1.y + (s2.y - s0.y) * 0.20f
+                                val cp2X = s2.x - (s3.x - s1.x) * 0.20f
+                                val cp2Y = s2.y - (s3.y - s1.y) * 0.20f
+                                bgPath.cubicTo(cp1X, cp1Y, cp2X, cp2Y, s2.x, s2.y)
                             }
+                            drawPath(
+                                path = bgPath,
+                                color = Color(0x2BFFFFFF),
+                                style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
                         }
 
-                        // 3. Trayectoria activa dinámica sincronizada con el fotograma
+                        // 3. Trayectoria activa dinámica sincronizada con el fotograma (suavizada con splines cúbicos)
                         val elapsedInTrimMs = (currentPosMs - trimStartMs).coerceAtLeast(0L)
-                        val activePoints = trackingPoints.filter { it.timestampMs <= elapsedInTrimMs }
+                        val activePoints = if (currentPosMs >= effectiveEndMs - 25L) {
+                            trackingPoints
+                        } else {
+                            trackingPoints.filter { it.timestampMs <= elapsedInTrimMs }
+                        }
                         val currentPoint = activePoints.lastOrNull() ?: trackingPoints.firstOrNull()
 
                         if (activePoints.size > 1) {
+                            val glowStroke = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            val coreStroke = Stroke(width = 3.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                             for (i in 0 until activePoints.size - 1) {
+                                val p0 = activePoints[(i - 1).coerceAtLeast(0)]
                                 val p1 = activePoints[i]
                                 val p2 = activePoints[i + 1]
+                                val p3 = activePoints[(i + 2).coerceAtMost(activePoints.lastIndex)]
 
                                 val isMoving = p2.isConcentric || p2.isEccentric || p2.velocityMps > 0.15 || p1.isConcentric
                                 if (!isMoving && mode == "VBT") continue
 
+                                val s0 = Offset(p0.x * scaleX, p0.y * scaleY)
                                 val s1 = Offset(p1.x * scaleX, p1.y * scaleY)
                                 val s2 = Offset(p2.x * scaleX, p2.y * scaleY)
+                                val s3 = Offset(p3.x * scaleX, p3.y * scaleY)
+
+                                val cp1X = s1.x + (s2.x - s0.x) * 0.20f
+                                val cp1Y = s1.y + (s2.y - s0.y) * 0.20f
+                                val cp2X = s2.x - (s3.x - s1.x) * 0.20f
+                                val cp2Y = s2.y - (s3.y - s1.y) * 0.20f
+
+                                val segPath = Path().apply {
+                                    moveTo(s1.x, s1.y)
+                                    cubicTo(cp1X, cp1Y, cp2X, cp2Y, s2.x, s2.y)
+                                }
 
                                 val segColor = when {
                                     p2.velocityMps >= 1.10 -> Color(0xFFFF3D00)
@@ -4698,19 +4798,15 @@ fun AnalysisResultVideoPreview(
                                     else -> Color(0xFF00E5FF)
                                 }
 
-                                drawLine(
+                                drawPath(
+                                    path = segPath,
                                     color = segColor.copy(alpha = 0.35f),
-                                    start = s1,
-                                    end = s2,
-                                    strokeWidth = 6.dp.toPx(),
-                                    cap = StrokeCap.Round
+                                    style = glowStroke
                                 )
-                                drawLine(
+                                drawPath(
+                                    path = segPath,
                                     color = segColor,
-                                    start = s1,
-                                    end = s2,
-                                    strokeWidth = 3.dp.toPx(),
-                                    cap = StrokeCap.Round
+                                    style = coreStroke
                                 )
                             }
                         }
@@ -4994,10 +5090,15 @@ fun AnalysisResultVideoPreview(
                         IconButton(
                             onClick = {
                                 previewVideoViewRef?.let { vv ->
-                                    if (vv.isPlaying) {
+                                    if (isPlaying) {
                                         vv.pause()
                                         isPlaying = false
                                     } else {
+                                        val startFrom = if (currentPosMs >= effectiveEndMs - 50L) trimStartMs else currentPosMs
+                                        currentPosMs = startFrom
+                                        lastSyncPositionMs = startFrom
+                                        lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+                                        seekVideoAccurate(previewPlayerRef, vv, startFrom)
                                         vv.start()
                                         isPlaying = true
                                     }
@@ -5034,18 +5135,18 @@ fun AnalysisResultVideoPreview(
                             )
                         }
 
-                        // Botón -1 Frame (33ms)
+                        // Botón -1 Frame (33ms) - Avanza libremente cuadro a cuadro usando MediaMetadataRetriever sin bloqueo del MediaPlayer
                         FilledTonalIconButton(
                             onClick = {
                                 previewVideoViewRef?.let { vv ->
-                                    vv.pause()
-                                    isPlaying = false
-                                    val stepPos = (currentPosMs - 33L).coerceIn(trimStartMs, effectiveEndMs)
-                                    currentPosMs = stepPos
-                                    lastSyncPositionMs = stepPos
-                                    lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
-                                    seekVideoAccurate(previewPlayerRef, vv, stepPos)
+                                    if (vv.isPlaying) vv.pause()
                                 }
+                                isPlaying = false
+                                val rawPrev = currentPosMs - 33L
+                                val stepPos = if (rawPrev <= trimStartMs + 15L) trimStartMs else rawPrev.coerceIn(trimStartMs, effectiveEndMs)
+                                currentPosMs = stepPos
+                                lastSyncPositionMs = stepPos
+                                lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
                             },
                             modifier = Modifier.size(36.dp),
                             colors = IconButtonDefaults.filledTonalIconButtonColors(
@@ -5058,18 +5159,18 @@ fun AnalysisResultVideoPreview(
 
                         Spacer(modifier = Modifier.width(4.dp))
 
-                        // Botón +1 Frame (33ms)
+                        // Botón +1 Frame (33ms) - Avanza hasta el último frame exacto (effectiveEndMs) sin estancarse antes del final
                         FilledTonalIconButton(
                             onClick = {
                                 previewVideoViewRef?.let { vv ->
-                                    vv.pause()
-                                    isPlaying = false
-                                    val stepPos = (currentPosMs + 33L).coerceIn(trimStartMs, effectiveEndMs)
-                                    currentPosMs = stepPos
-                                    lastSyncPositionMs = stepPos
-                                    lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
-                                    seekVideoAccurate(previewPlayerRef, vv, stepPos)
+                                    if (vv.isPlaying) vv.pause()
                                 }
+                                isPlaying = false
+                                val rawNext = currentPosMs + 33L
+                                val stepPos = if (rawNext >= effectiveEndMs - 15L) effectiveEndMs else rawNext.coerceIn(trimStartMs, effectiveEndMs)
+                                currentPosMs = stepPos
+                                lastSyncPositionMs = stepPos
+                                lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
                             },
                             modifier = Modifier.size(36.dp),
                             colors = IconButtonDefaults.filledTonalIconButtonColors(
@@ -5091,11 +5192,11 @@ fun AnalysisResultVideoPreview(
                             value = sliderVal,
                             onValueChange = { newPos ->
                                 isUserSeeking = true
-                                currentPosMs = newPos.toLong()
+                                currentPosMs = newPos.toLong().coerceIn(trimStartMs, effectiveEndMs)
                                 lastSyncPositionMs = currentPosMs
                                 lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
                                 val now = android.os.SystemClock.elapsedRealtime()
-                                if (now - lastSeekRequestedMs >= 35L) {
+                                if (isPlaying && now - lastSeekRequestedMs >= 35L) {
                                     lastSeekRequestedMs = now
                                     seekVideoAccurate(previewPlayerRef, previewVideoViewRef, currentPosMs)
                                 }
@@ -5104,8 +5205,8 @@ fun AnalysisResultVideoPreview(
                                 isUserSeeking = false
                                 lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
                                 lastSyncPositionMs = currentPosMs
-                                seekVideoAccurate(previewPlayerRef, previewVideoViewRef, currentPosMs)
                                 if (isPlaying) {
+                                    seekVideoAccurate(previewPlayerRef, previewVideoViewRef, currentPosMs)
                                     previewVideoViewRef?.start()
                                 }
                             },
@@ -5410,6 +5511,19 @@ suspend fun processVideo(
                     if (totalFrames > 0) {
                         onProgress((i.toFloat() / totalFrames.toFloat()).coerceIn(0f, 1f))
                     }
+                }
+            }
+
+            // Suavizado biomecánico de fase cero (adelante-atrás) sobre las coordenadas (x, y)
+            // para eliminar vibraciones de píxel y generar una curva orgánica y continua.
+            if (trackingPoints.size >= 4) {
+                val smoothX = zeroPhaseSmooth(trackingPoints.map { it.x.toDouble() }, passes = 4)
+                val smoothY = zeroPhaseSmooth(trackingPoints.map { it.y.toDouble() }, passes = 2)
+                for (idx in trackingPoints.indices) {
+                    trackingPoints[idx] = trackingPoints[idx].copy(
+                        x = smoothX[idx].toFloat(),
+                        y = smoothY[idx].toFloat()
+                    )
                 }
             }
         }
@@ -6187,11 +6301,43 @@ fun PreCalibrationSetupDialog(
                     Spacer(modifier = Modifier.height(8.dp))
                     Divider(color = Color(0xFF333C48), thickness = 1.dp)
 
+                    val exerciseScrollState = rememberScrollState()
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f, fill = false)
-                            .verticalScroll(rememberScrollState())
+                            .drawWithContent {
+                                drawContent()
+                                val maxScroll = exerciseScrollState.maxValue.toFloat()
+                                if (maxScroll > 0f) {
+                                    val barWidth = 5.dp.toPx()
+                                    val barMarginRight = 5.dp.toPx()
+                                    val barPaddingVertical = 6.dp.toPx()
+                                    val trackHeight = (size.height - barPaddingVertical * 2f).coerceAtLeast(24f)
+                                    val totalContentHeight = size.height + maxScroll
+                                    val thumbHeight = ((size.height / totalContentHeight) * trackHeight).coerceIn(36.dp.toPx(), trackHeight)
+                                    val scrollFraction = (exerciseScrollState.value.toFloat() / maxScroll).coerceIn(0f, 1f)
+                                    val thumbOffsetY = barPaddingVertical + scrollFraction * (trackHeight - thumbHeight)
+                                    val barX = size.width - barWidth - barMarginRight
+
+                                    // Riel de fondo de la barra de scroll
+                                    drawRoundRect(
+                                        color = Color(0xFF333C48),
+                                        topLeft = Offset(barX, barPaddingVertical),
+                                        size = Size(barWidth, trackHeight),
+                                        cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+                                    )
+                                    // Indicador activo (barrita de scroll) en color cian brillante
+                                    drawRoundRect(
+                                        color = accentColor,
+                                        topLeft = Offset(barX, thumbOffsetY),
+                                        size = Size(barWidth, thumbHeight),
+                                        cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+                                    )
+                                }
+                            }
+                            .verticalScroll(exerciseScrollState)
+                            .padding(end = 12.dp)
                     ) {
                         if (currentMode == "JUMP") {
                             // Solo aparecen los Saltos cuando el Tipo es Balísticos-Explosivos (Saltos)
@@ -6285,6 +6431,19 @@ fun PreCalibrationSetupDialog(
                                 }
                             }
                         }
+                    }
+
+                    if (exerciseScrollState.maxValue > 0 && exerciseScrollState.value < exerciseScrollState.maxValue - 10) {
+                        Text(
+                            text = "▾ Desliza para ver más ejercicios",
+                            color = accentColor.copy(alpha = 0.85f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        )
                     }
 
                     Divider(color = Color(0xFF333C48), thickness = 1.dp)

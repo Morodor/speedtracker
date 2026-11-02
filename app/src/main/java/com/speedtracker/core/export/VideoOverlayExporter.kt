@@ -378,20 +378,32 @@ object VideoOverlayExporter {
                     canvas.drawLine(0f, inflectY, frameW.toFloat(), inflectY, inflectionPaint)
                 }
 
-                // 3. Dibujar Trayectoria Dinámica de la Barra (Bar Path)
+                // 3. Dibujar Trayectoria Dinámica de la Barra (Bar Path suavizado con curvas Catmull-Rom Cubic Bezier)
                 // Filtramos puntos estáticos para no crear manchas mientras la barra está en el piso
                 if (pointsUpToNow.size > 1) {
                     val strokeW = 6f * lineDensity
                     linePaint.strokeWidth = strokeW
                     glowPaint.strokeWidth = strokeW * 2f
+                    val segPath = android.graphics.Path()
 
                     for (i in 0 until pointsUpToNow.size - 1) {
+                        val p0 = pointsUpToNow[(i - 1).coerceAtLeast(0)]
                         val p1 = pointsUpToNow[i]
                         val p2 = pointsUpToNow[i + 1]
+                        val p3 = pointsUpToNow[(i + 2).coerceAtMost(pointsUpToNow.lastIndex)]
 
                         // Solo conectar si pertenece a movimiento activo
                         val isMoving = p2.isConcentric || p2.isEccentric || p2.velocityMps > 0.15 || p1.isConcentric
                         if (!isMoving) continue
+
+                        val cp1X = p1.x + (p2.x - p0.x) * 0.20f
+                        val cp1Y = p1.y + (p2.y - p0.y) * 0.20f
+                        val cp2X = p2.x - (p3.x - p1.x) * 0.20f
+                        val cp2Y = p2.y - (p3.y - p1.y) * 0.20f
+
+                        segPath.reset()
+                        segPath.moveTo(p1.x, p1.y)
+                        segPath.cubicTo(cp1X, cp1Y, cp2X, cp2Y, p2.x, p2.y)
 
                         val segColor = when {
                             p2.velocityMps >= 1.10 -> Color.parseColor("#FF3D00") // Rojo máxima aceleración
@@ -402,11 +414,11 @@ object VideoOverlayExporter {
 
                         // Resplandor translúcido
                         glowPaint.color = Color.argb(60, Color.red(segColor), Color.green(segColor), Color.blue(segColor))
-                        canvas.drawLine(p1.x, p1.y, p2.x, p2.y, glowPaint)
+                        canvas.drawPath(segPath, glowPaint)
 
                         // Línea central sólida
                         linePaint.color = segColor
-                        canvas.drawLine(p1.x, p1.y, p2.x, p2.y, linePaint)
+                        canvas.drawPath(segPath, linePaint)
                     }
                 }
 
