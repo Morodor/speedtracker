@@ -174,6 +174,184 @@ fun getVideoNativeDimensions(context: Context, uri: Uri): Pair<Int, Int> {
     }
 }
 
+data class VideoFpsMetadata(
+    val playbackFps: Double = 30.0,
+    val captureFps: Double = 30.0,
+    val frameStepMs: Long = 33L,
+    val autoSlowMoFactor: Double = 1.0
+)
+
+data class JumpFootSample(
+    val timestampMs: Long,
+    val footX: Float,
+    val footY: Float
+)
+
+/**
+ * Detecta los FPS reales del video analizando tanto los metadatos del contenedor (CAPTURE_FRAMERATE, VIDEO_FRAME_COUNT)
+ * como el intervalo real en microsegundos (sampleTime) entre fotogramas consecutivos mediante MediaExtractor.
+ */
+fun extractVideoFpsMetadata(context: Context, uri: Uri): VideoFpsMetadata {
+    var playbackFps = 30.0
+    var captureFps = 0.0
+    val retriever = MediaMetadataRetriever()
+    try {
+        retriever.setDataSource(context, uri)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            captureFps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toDoubleOrNull() ?: 0.0
+        }
+        val durMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P && durMs > 100L) {
+            val frameCount = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toLongOrNull() ?: 0L
+            if (frameCount > 5L) {
+                playbackFps = (frameCount * 1000.0 / durMs.toDouble()).coerceIn(15.0, 240.0)
+            }
+        }
+    } catch (e: Exception) {
+    } finally {
+        try { retriever.release() } catch (e: Exception) {}
+    }
+
+    val extractor = android.media.MediaExtractor()
+    try {
+        extractor.setDataSource(context, uri, null)
+        for (i in 0 until extractor.trackCount) {
+            val format = extractor.getTrackFormat(i)
+            val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: ""
+            if (mime.startsWith("video/")) {
+                if (format.containsKey(android.media.MediaFormat.KEY_FRAME_RATE)) {
+                    val fmtFps = try {
+                        format.getInteger(android.media.MediaFormat.KEY_FRAME_RATE).toDouble()
+                    } catch (e: Exception) {
+                        try { format.getFloat(android.media.MediaFormat.KEY_FRAME_RATE).toDouble() } catch (ex: Exception) { 0.0 }
+                    }
+                    if (fmtFps in 15.0..240.0) playbackFps = fmtFps
+                }
+                extractor.selectTrack(i)
+                val timestampsUs = mutableListOf<Long>()
+                while (timestampsUs.size < 35) {
+                    val t = extractor.sampleTime
+                    if (t < 0L) break
+                    timestampsUs.add(t)
+                    if (!extractor.advance()) break
+                }
+                if (timestampsUs.size >= 6) {
+                    val sorted = timestampsUs.sorted()
+                    val deltas = mutableListOf<Long>()
+                    for (k in 1 until sorted.size) {
+                        val d = sorted[k] - sorted[k - 1]
+                        if (d in 2000L..66000L) deltas.add(d)
+                    }
+                    if (deltas.isNotEmpty()) {
+                        deltas.sort()
+                        val medianUs = deltas[deltas.size / 2]
+                        val measuredFps = (1_000_000.0 / medianUs.toDouble()).coerceIn(15.0, 240.0)
+                        playbackFps = measuredFps
+                    }
+                }
+                break
+            }
+        }
+    } catch (e: Exception) {
+    } finally {
+        try { extractor.release() } catch (e: Exception) {}
+    }
+
+    val effectiveCapture = if (captureFps >= 24.0) captureFps else playbackFps
+    val stepMs = kotlin.math.round(1000.0 / playbackFps).toLong().coerceIn(4L, 40L)
+    val ratio = if (playbackFps > 10.0) effectiveCapture / playbackFps else 1.0
+    val autoSlowMo = when {
+        ratio >= 6.0 -> 8.0
+        ratio >= 3.0 -> 4.0
+        ratio >= 1.7 -> 2.0
+        else -> 1.0
+    }
+    return VideoFpsMetadata(
+        playbackFps = playbackFps,
+        captureFps = maxOf(playbackFps, effectiveCapture),
+        frameStepMs = stepMs,
+        autoSlowMoFactor = autoSlowMo
+    )
+}
+
+/**
+ * Recalcula con interpolación lineal sub-frame los instantes de Contacto, Despegue y Aterrizaje
+ * cuando la trayectoria vertical del pie (samples) cruza la línea de suelo (groundNativeY).
+ */
+fun computeSubFrameJumpEvents(
+    samples: List<JumpFootSample>,
+    groundNativeY: Float,
+    videoNativeHeight: Int,
+    jumpType: JumpType
+): Triple<Double?, Double?, Double?> {
+    if (samples.size < 4) return Triple(null, null, null)
+    val smoothedY = zeroPhaseSmooth(samples.map { it.footY.toDouble() }, passes = 1).map { it.toFloat() }
+    val minY = smoothedY.minOrNull() ?: return Triple(null, null, null)
+    val elevationPx = groundNativeY - minY
+    val minReqElevation = (videoNativeHeight * 0.018f).coerceAtLeast(10f)
+    if (elevationPx < minReqElevation) return Triple(null, null, null)
+
+    val apexIdx = smoothedY.indices.minByOrNull { smoothedY[it] } ?: return Triple(null, null, null)
+    // Línea efectiva de cruce de despegue/aterrizaje (ligeramente por encima de la línea base de reposo para compensar extensión plantar)
+    val crossingY = groundNativeY - (elevationPx * 0.18f).coerceIn(6f, 28f)
+
+    // 1. Buscar Despegue hacia atrás desde el vértice (apexIdx)
+    var takeoffIdx = apexIdx
+    while (takeoffIdx > 0 && smoothedY[takeoffIdx] < crossingY) {
+        takeoffIdx--
+    }
+    val takeoffMs: Double = if (takeoffIdx < apexIdx) {
+        val y0 = smoothedY[takeoffIdx]      // >= crossingY (en el suelo)
+        val y1 = smoothedY[takeoffIdx + 1]  // < crossingY (en el aire)
+        val t0 = samples[takeoffIdx].timestampMs.toDouble()
+        val t1 = samples[takeoffIdx + 1].timestampMs.toDouble()
+        val denom = (y0 - y1)
+        val frac = if (kotlin.math.abs(denom) > 0.001f) ((y0 - crossingY) / denom).coerceIn(0f, 1f) else 0.5f
+        t0 + frac * (t1 - t0)
+    } else {
+        samples[takeoffIdx].timestampMs.toDouble()
+    }
+
+    // 2. Buscar Aterrizaje hacia adelante desde el vértice (apexIdx)
+    var landingIdx = apexIdx
+    while (landingIdx < samples.size - 1 && smoothedY[landingIdx] < crossingY) {
+        landingIdx++
+    }
+    val landingMs: Double = if (landingIdx > apexIdx) {
+        val yPrev = smoothedY[landingIdx - 1] // < crossingY (en el aire)
+        val yCurr = smoothedY[landingIdx]     // >= crossingY (en el suelo)
+        val tPrev = samples[landingIdx - 1].timestampMs.toDouble()
+        val tCurr = samples[landingIdx].timestampMs.toDouble()
+        val denom = (yCurr - yPrev)
+        val frac = if (kotlin.math.abs(denom) > 0.001f) ((crossingY - yPrev) / denom).coerceIn(0f, 1f) else 0.5f
+        tPrev + frac * (tCurr - tPrev)
+    } else {
+        samples[landingIdx].timestampMs.toDouble()
+    }
+
+    // 3. Si es Drop Jump, buscar Contacto Inicial previo al despegue (caída desde el cajón)
+    var contactMs: Double? = null
+    if (jumpType == JumpType.DROP_JUMP && takeoffIdx >= 2) {
+        var cIdx = takeoffIdx
+        while (cIdx > 0 && smoothedY[cIdx] >= crossingY) {
+            cIdx--
+        }
+        if (cIdx < takeoffIdx && smoothedY[cIdx] < crossingY) {
+            val yAir = smoothedY[cIdx]
+            val yFloor = smoothedY[cIdx + 1]
+            val tAir = samples[cIdx].timestampMs.toDouble()
+            val tFloor = samples[cIdx + 1].timestampMs.toDouble()
+            val denom = (yFloor - yAir)
+            val frac = if (kotlin.math.abs(denom) > 0.001f) ((crossingY - yAir) / denom).coerceIn(0f, 1f) else 0.5f
+            contactMs = tAir + frac * (tFloor - tAir)
+        } else {
+            contactMs = (takeoffMs - 190.0).coerceAtLeast(samples.first().timestampMs.toDouble())
+        }
+    }
+
+    return Triple(contactMs, takeoffMs, landingMs)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 
 data class MetricInfo(
@@ -490,16 +668,36 @@ fun VideoAnalysisScreen(
     var calibratedPlateCenterVideo by remember { mutableStateOf<Offset?>(null) }
     var calibratedPlateRadiusVideo by remember { mutableFloatStateOf(0f) }
 
+    // Metadatos de FPS reales, Cámara Lenta y Calibración de Salto (My Jump + IA Sub-Frame)
+    var detectedVideoFps by remember { mutableStateOf(30.0) }
+    var detectedCaptureFps by remember { mutableStateOf(30.0) }
+    var nativeFrameStepMs by remember { mutableLongStateOf(33L) }
+    var jumpSlowMoFactor by remember { mutableStateOf(1.0) }
+    var jumpGroundLineScreenY by remember { mutableStateOf<Float?>(null) }
+    var jumpGroundLineNativeY by remember { mutableStateOf<Float?>(null) }
+    var jumpContactMs by remember { mutableStateOf<Double?>(null) }
+    var jumpTakeoffMs by remember { mutableStateOf<Double?>(null) }
+    var jumpLandingMs by remember { mutableStateOf<Double?>(null) }
+    var isSubFrameInterpolated by remember { mutableStateOf(false) }
+    var isDetectingJumpEvents by remember { mutableStateOf(false) }
+    var jumpFootSamples by remember { mutableStateOf<List<JumpFootSample>>(emptyList()) }
+
     LaunchedEffect(videoUriString) {
         if (videoUriString.contains("sample_snatch")) {
             showTutorialDialog = true
         }
         withContext(Dispatchers.IO) {
-            val dims = getVideoNativeDimensions(context, Uri.parse(videoUriString))
+            val parsedUri = Uri.parse(videoUriString)
+            val dims = getVideoNativeDimensions(context, parsedUri)
             if (dims.first > 0 && dims.second > 0) {
                 videoNativeWidth = dims.first
                 videoNativeHeight = dims.second
             }
+            val fpsMeta = extractVideoFpsMetadata(context, parsedUri)
+            detectedVideoFps = fpsMeta.playbackFps
+            detectedCaptureFps = fpsMeta.captureFps
+            nativeFrameStepMs = fpsMeta.frameStepMs
+            jumpSlowMoFactor = fpsMeta.autoSlowMoFactor
         }
     }
 
@@ -658,6 +856,99 @@ fun VideoAnalysisScreen(
         }
     }
 
+    fun runAutoDetectJumpFlight(boxW: Float, boxH: Float) {
+        val effectiveW = if (boxW > 0f) boxW else screenBoxWidth
+        val effectiveH = if (boxH > 0f) boxH else screenBoxHeight
+        if (effectiveW <= 0f || effectiveH <= 0f || isDetectingJumpEvents) return
+        coroutineScope.launch {
+            try {
+                isDetectingJumpEvents = true
+                val scanResult = withContext(Dispatchers.IO) {
+                    val retriever = MediaMetadataRetriever()
+                    val samples = mutableListOf<JumpFootSample>()
+                    try {
+                        retriever.setDataSource(context, Uri.parse(videoUriString))
+                        val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        val totalDur = durStr?.toLongOrNull() ?: videoDurationMs.coerceAtLeast(1000L)
+                        val start = trimStartMs.coerceIn(0L, totalDur)
+                        val end = if (trimEndMs in (start + 150L)..totalDur) trimEndMs else totalDur
+                        val rangeMs = (end - start).coerceAtLeast(150L)
+                        // Muestrear hasta ~65 fotogramas a lo largo del recorte para respuesta rápida y alta precisión
+                        val stepMs = maxOf(nativeFrameStepMs, (rangeMs / 65L).coerceAtLeast(12L)).coerceAtMost(33L)
+
+                        val options = AccuratePoseDetectorOptions.Builder()
+                            .setDetectorMode(AccuratePoseDetectorOptions.SINGLE_IMAGE_MODE)
+                            .build()
+                        val detector = PoseDetection.getClient(options)
+
+                        var t = start
+                        while (t <= end) {
+                            val bmp = retriever.getFrameAtTime(t * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                            if (bmp != null) {
+                                if (bmp.width > 0 && bmp.height > 0) {
+                                    videoNativeWidth = bmp.width
+                                    videoNativeHeight = bmp.height
+                                }
+                                val pose = try {
+                                    detector.process(InputImage.fromBitmap(bmp, 0)).await()
+                                } catch (e: Exception) { null }
+                                if (pose != null) {
+                                    val lf = pose.getPoseLandmark(PoseLandmark.LEFT_FOOT_INDEX)
+                                        ?: pose.getPoseLandmark(PoseLandmark.LEFT_HEEL)
+                                        ?: pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)
+                                    val rf = pose.getPoseLandmark(PoseLandmark.RIGHT_FOOT_INDEX)
+                                        ?: pose.getPoseLandmark(PoseLandmark.RIGHT_HEEL)
+                                        ?: pose.getPoseLandmark(PoseLandmark.RIGHT_ANKLE)
+                                    if (lf != null && rf != null && (lf.inFrameLikelihood > 0.25f || rf.inFrameLikelihood > 0.25f)) {
+                                        val fx = (lf.position.x + rf.position.x) / 2f
+                                        val fy = maxOf(lf.position.y, rf.position.y)
+                                        samples.add(JumpFootSample(t, fx, fy))
+                                    }
+                                }
+                            }
+                            t += stepMs
+                        }
+                    } finally {
+                        try { retriever.release() } catch (e: Exception) {}
+                    }
+                    samples
+                }
+
+                if (scanResult.size >= 4) {
+                    jumpFootSamples = scanResult
+                    val sortedY = scanResult.map { it.footY }.sorted()
+                    // El percentil 85 de Y representa el nivel firme de la suela en el suelo antes y después de saltar
+                    val autoGroundNativeY = jumpGroundLineNativeY ?: sortedY[(sortedY.size * 0.85).toInt().coerceIn(0, sortedY.size - 1)]
+                    jumpGroundLineNativeY = autoGroundNativeY
+
+                    val bounds = calculateVideoRenderBounds(effectiveW, effectiveH, videoNativeWidth, videoNativeHeight)
+                    jumpGroundLineScreenY = (bounds.top + autoGroundNativeY * bounds.scale).coerceIn(24f, effectiveH - 24f)
+
+                    val (contact, takeoff, landing) = computeSubFrameJumpEvents(
+                        samples = scanResult,
+                        groundNativeY = autoGroundNativeY,
+                        videoNativeHeight = videoNativeHeight,
+                        jumpType = selectedJumpType
+                    )
+                    if (takeoff != null && landing != null && landing > takeoff + 80.0) {
+                        jumpContactMs = contact
+                        jumpTakeoffMs = takeoff
+                        jumpLandingMs = landing
+                        isSubFrameInterpolated = true
+                        val seekTarget = takeoff.toLong()
+                        currentVideoPosMs = seekTarget
+                        videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, seekTarget) }
+                        updateStillFrame(seekTarget)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isDetectingJumpEvents = false
+            }
+        }
+    }
+
     // Polling del tiempo de video y bucle dentro del rango recortado [trimStartMs, trimEndMs]
     LaunchedEffect(videoViewRef, isPlaying, trimStartMs, trimEndMs, isLoopingTrimmedRange, analysisSetupStep) {
         if (!isPlaying) return@LaunchedEffect
@@ -687,7 +978,7 @@ fun VideoAnalysisScreen(
                                 when (analysisSetupStep) {
                                     AnalysisSetupStep.TRIM_VIDEO -> "Trim Video"
                                     AnalysisSetupStep.SELECT_EXERCISE -> if (currentMode == "VBT") "Halterofilia / VBT" else "Salto Vertical"
-                                    AnalysisSetupStep.CALIBRATE -> "Calibración y Carga"
+                                    AnalysisSetupStep.CALIBRATE -> if (currentMode == "JUMP") "Calibración de Salto (${selectedJumpType.name})" else "Calibración y Carga"
                                 }
                             }
                             isProcessing -> "Analizando..."
@@ -897,6 +1188,45 @@ fun VideoAnalysisScreen(
                                                 contentDescription = if (isVideoMuted) "Activar Sonido" else "Silenciar Video",
                                                 modifier = Modifier.size(17.dp)
                                             )
+                                        }
+
+                                        if (currentMode == "JUMP") {
+                                            Surface(
+                                                onClick = {
+                                                    if (scale > 1.3f) {
+                                                        scale = 1f
+                                                        offsetX = 0f
+                                                        offsetY = 0f
+                                                    } else {
+                                                        scale = 2.2f
+                                                        offsetX = 0f
+                                                        offsetY = -boxH * 0.28f
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(16.dp),
+                                                color = if (scale > 1.3f) Color(0xFF00FFCC) else Color(0xB3000000),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC)),
+                                                modifier = Modifier.height(34.dp)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.ZoomIn,
+                                                        contentDescription = "Lupa a los pies",
+                                                        tint = if (scale > 1.3f) Color.Black else Color(0xFF00FFCC),
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                    Text(
+                                                        if (scale > 1.3f) "1x" else "Pies 2x",
+                                                        color = if (scale > 1.3f) Color.Black else Color.White,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
                                         }
 
                                         IconButton(
@@ -1440,15 +1770,24 @@ fun VideoAnalysisScreen(
                     AnalysisSetupStep.CALIBRATE -> {
                         // ── PASO 3: CALIBRACIÓN MÉTRICA Y CARGA (IMAGEN 3) ──
                         // Al ingresar a calibración, asegurar que el video inicie detenido en el primer frame y auto-detectar
-                        LaunchedEffect(analysisSetupStep, trimStartMs) {
+                        LaunchedEffect(analysisSetupStep, trimStartMs, currentMode) {
                             if (analysisSetupStep == AnalysisSetupStep.CALIBRATE) {
                                 videoViewRef?.pause()
                                 isPlaying = false
                                 currentVideoPosMs = trimStartMs
                                 videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, trimStartMs) }
                                 updateStillFrame(trimStartMs)
-                                if ((circleCenter == null || !isCalibrated) && !isDetectingPlate) {
-                                    runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
+                                if (currentMode == "JUMP") {
+                                    if (jumpGroundLineScreenY == null && screenBoxHeight > 0f) {
+                                        jumpGroundLineScreenY = screenBoxHeight * 0.78f
+                                    }
+                                    if (jumpTakeoffMs == null && !isDetectingJumpEvents) {
+                                        runAutoDetectJumpFlight(screenBoxWidth, screenBoxHeight)
+                                    }
+                                } else {
+                                    if ((circleCenter == null || !isCalibrated) && !isDetectingPlate) {
+                                        runAutoDetectPlate(screenBoxWidth, screenBoxHeight)
+                                    }
                                 }
                             }
                         }
@@ -1588,38 +1927,116 @@ fun VideoAnalysisScreen(
                                     }
                                 }
 
-                                // Capa de ancho completo (boxW x boxH) para que el círculo Tracker pueda moverse por todo el ancho de la caja del video,
-                                // incluso sobre las franjas negras laterales, sin salirse de los bordes exteriores.
+                                // Capa de ancho completo (boxW x boxH):
+                                // - En modo VBT: Círculo Tracker de 45 cm (intacto).
+                                // - En modo JUMP: Línea de Nivel de Suelo (Zapatillas) + Badge de FPS e Interpolación Sub-Frame.
                                 Box(
                                     modifier = Modifier.fillMaxSize()
                                 ) {
-                                    var hasUserInteractedWithTracker by remember(analysisSetupStep) { mutableStateOf(false) }
-                                    val maxAllowedRadius = (minOf(boxW, boxH) / 2f - edgePadPx).coerceAtLeast(20f)
-                                    val clampedRadius = circleRadiusPx.coerceIn(20f, maxAllowedRadius)
-                                    val minCX = (clampedRadius + edgePadPx).coerceAtMost(boxW / 2f)
-                                    val maxCX = (boxW - clampedRadius - edgePadPx).coerceAtLeast(boxW / 2f)
-                                    val minCY = (clampedRadius + edgePadPx).coerceAtMost(boxH / 2f)
-                                    val maxCY = (boxH - clampedRadius - edgePadPx).coerceAtLeast(boxH / 2f)
-                                    val rawCenter = circleCenter ?: Offset(boxW / 2f, boxH * 0.65f)
-                                    val activeCenter = Offset(
-                                        rawCenter.x.coerceIn(minCX, maxCX),
-                                        rawCenter.y.coerceIn(minCY, maxCY)
-                                    )
-                                    KinoveaCircleReticleCanvas(
-                                        center = activeCenter,
-                                        radius = clampedRadius,
-                                        onCenterChange = {
-                                            circleCenter = it
-                                            hasUserInteractedWithTracker = true
-                                        },
-                                        onRadiusChange = {
-                                            circleRadiusPx = it
-                                            hasUserInteractedWithTracker = true
-                                        },
-                                        onInteraction = {
-                                            hasUserInteractedWithTracker = true
+                                    var hasUserInteractedWithTracker by remember(analysisSetupStep, currentMode) { mutableStateOf(false) }
+                                    if (currentMode == "JUMP") {
+                                        val activeGroundY = (jumpGroundLineScreenY ?: (boxH * 0.78f)).coerceIn(28f, (boxH - 24f).coerceAtLeast(30f))
+                                        val currentFootPt = remember(jumpFootSamples, currentVideoPosMs) {
+                                            jumpFootSamples.minByOrNull { kotlin.math.abs(it.timestampMs - currentVideoPosMs) }
                                         }
-                                    )
+                                        JumpGroundLineOverlayCanvas(
+                                            groundY = activeGroundY,
+                                            boxWidth = boxW,
+                                            boxHeight = boxH,
+                                            bounds = bounds,
+                                            currentFootSample = currentFootPt,
+                                            onGroundYChange = { newY ->
+                                                val clampedY = newY.coerceIn(28f, (boxH - 24f).coerceAtLeast(30f))
+                                                jumpGroundLineScreenY = clampedY
+                                                val invScale = if (bounds.scale > 0f) 1f / bounds.scale else 1f
+                                                val natY = ((clampedY - bounds.top) * invScale).coerceIn(0f, videoNativeHeight.toFloat())
+                                                jumpGroundLineNativeY = natY
+                                                hasUserInteractedWithTracker = true
+                                                if (jumpFootSamples.size >= 4) {
+                                                    val (cMs, tMs, lMs) = computeSubFrameJumpEvents(
+                                                        samples = jumpFootSamples,
+                                                        groundNativeY = natY,
+                                                        videoNativeHeight = videoNativeHeight,
+                                                        jumpType = selectedJumpType
+                                                    )
+                                                    if (tMs != null && lMs != null && lMs > tMs + 80.0) {
+                                                        jumpContactMs = cMs
+                                                        jumpTakeoffMs = tMs
+                                                        jumpLandingMs = lMs
+                                                        isSubFrameInterpolated = true
+                                                    }
+                                                }
+                                            },
+                                            onInteraction = {
+                                                hasUserInteractedWithTracker = true
+                                            }
+                                        )
+
+                                        // Badge Superior Izquierdo en Salto: FPS reales detectados + Interpolación Sub-Frame
+                                        Surface(
+                                            color = Color(0xD9101620),
+                                            shape = RoundedCornerShape(8.dp),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x8800FFCC)),
+                                            modifier = Modifier
+                                                .align(Alignment.TopStart)
+                                                .padding(8.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    "🎥 ${kotlin.math.round(detectedVideoFps).toInt()} FPS (${nativeFrameStepMs} ms/f)",
+                                                    color = Color(0xFF00FFCC),
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                if (jumpSlowMoFactor > 1.1) {
+                                                    Text(
+                                                        "• Slow-Mo 1/${jumpSlowMoFactor.toInt()}x",
+                                                        color = Color(0xFFFFD600),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                } else if (isSubFrameInterpolated) {
+                                                    Text(
+                                                        "• ✨ Sub-Frame IA",
+                                                        color = Color(0xFF00E676),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        val maxAllowedRadius = (minOf(boxW, boxH) / 2f - edgePadPx).coerceAtLeast(20f)
+                                        val clampedRadius = circleRadiusPx.coerceIn(20f, maxAllowedRadius)
+                                        val minCX = (clampedRadius + edgePadPx).coerceAtMost(boxW / 2f)
+                                        val maxCX = (boxW - clampedRadius - edgePadPx).coerceAtLeast(boxW / 2f)
+                                        val minCY = (clampedRadius + edgePadPx).coerceAtMost(boxH / 2f)
+                                        val maxCY = (boxH - clampedRadius - edgePadPx).coerceAtLeast(boxH / 2f)
+                                        val rawCenter = circleCenter ?: Offset(boxW / 2f, boxH * 0.65f)
+                                        val activeCenter = Offset(
+                                            rawCenter.x.coerceIn(minCX, maxCX),
+                                            rawCenter.y.coerceIn(minCY, maxCY)
+                                        )
+                                        KinoveaCircleReticleCanvas(
+                                            center = activeCenter,
+                                            radius = clampedRadius,
+                                            onCenterChange = {
+                                                circleCenter = it
+                                                hasUserInteractedWithTracker = true
+                                            },
+                                            onRadiusChange = {
+                                                circleRadiusPx = it
+                                                hasUserInteractedWithTracker = true
+                                            },
+                                            onInteraction = {
+                                                hasUserInteractedWithTracker = true
+                                            }
+                                        )
+                                    }
 
                                     // Shader negro translúcido + Símbolo táctil intermitente para enseñar a mover y cambiar tamaño del tracker.
                                     // Al pinchar en cualquier parte se oculta de inmediato y se ve el video normal.
@@ -1759,7 +2176,8 @@ fun VideoAnalysisScreen(
                                                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                                                     ) {
                                                         Text(
-                                                            "Toca y desliza para mover el Tracker",
+                                                            if (currentMode == "JUMP") "Desliza la línea al nivel de las zapatillas"
+                                                            else "Toca y desliza para mover el Tracker",
                                                             color = Color.White,
                                                             fontWeight = FontWeight.Bold,
                                                             fontSize = 13.sp,
@@ -1767,7 +2185,8 @@ fun VideoAnalysisScreen(
                                                         )
                                                         Spacer(modifier = Modifier.height(3.dp))
                                                         Text(
-                                                            "Arrastra el punto amarillo para ajustar al tamaño del disco",
+                                                            if (currentMode == "JUMP") "Marca 🛫 Despegue y 🛬 Aterrizaje o usa ⚡ Auto IA Sub-Frame"
+                                                            else "Arrastra el punto amarillo para ajustar al tamaño del disco",
                                                             color = Color(0xFF00FFCC),
                                                             fontSize = 11.sp,
                                                             textAlign = TextAlign.Center
@@ -1832,7 +2251,7 @@ fun VideoAnalysisScreen(
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                // Banner Guiado de Calibración
+                                // Banner Guiado de Calibración (Adaptado a VBT o Salto)
                                 Surface(
                                     color = Color(0x1F00FFCC),
                                     shape = RoundedCornerShape(8.dp),
@@ -1841,20 +2260,59 @@ fun VideoAnalysisScreen(
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00FFCC), modifier = Modifier.size(15.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            "Paso 2: Desliza el dedo sobre la pantalla para centrar la cruceta en el buje y ajusta al disco (45 cm).",
-                                            color = Color.White,
-                                            fontSize = 11.sp,
-                                            maxLines = 1
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00FFCC), modifier = Modifier.size(15.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                if (currentMode == "JUMP")
+                                                    "Paso 2: Marca 🛫 Despegue y 🛬 Aterrizaje cuadro a cuadro o usa ⚡ Auto IA."
+                                                else
+                                                    "Paso 2: Desliza el dedo sobre la pantalla para centrar la cruceta en el buje y ajusta al disco (45 cm).",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+
+                                        // En modo JUMP: Selector rápido de factor Cámara Lenta (Slow-Mo 1x, 1/2x, 1/4x, 1/8x)
+                                        if (currentMode == "JUMP") {
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                listOf(1.0 to "1x", 2.0 to "1/2x", 4.0 to "1/4x", 8.0 to "1/8x").forEach { (factor, label) ->
+                                                    val isSel = kotlin.math.abs(jumpSlowMoFactor - factor) < 0.1
+                                                    Surface(
+                                                        onClick = { jumpSlowMoFactor = factor },
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = if (isSel) Color(0xFF00FFCC) else Color(0xFF222831),
+                                                        modifier = Modifier.height(20.dp)
+                                                    ) {
+                                                        Box(
+                                                            contentAlignment = Alignment.Center,
+                                                            modifier = Modifier.padding(horizontal = 5.dp)
+                                                        ) {
+                                                            Text(
+                                                                label,
+                                                                color = if (isSel) Color.Black else Color.LightGray,
+                                                                fontSize = 9.sp,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
-                                // Fila de Controles de Reproducción y Cuadro a Cuadro en Calibración
+                                // Fila de Controles de Reproducción y Avance de 1 Frame Nativo Exacto (1000 / FPS ms)
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1866,13 +2324,14 @@ fun VideoAnalysisScreen(
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        // -1 Frame
+                                        // -1 Frame Nativo Exacto
                                         FilledTonalIconButton(
                                             onClick = {
                                                 videoViewRef?.let { vv ->
                                                     vv.pause()
                                                     isPlaying = false
-                                                    val newPos = (currentVideoPosMs - 33L).coerceAtLeast(trimStartMs)
+                                                    val step = nativeFrameStepMs.coerceIn(4L, 40L)
+                                                    val newPos = (currentVideoPosMs - step).coerceAtLeast(trimStartMs)
                                                     currentVideoPosMs = newPos
                                                     seekVideoAccurate(mediaPlayerRef, vv, newPos)
                                                     updateStillFrame(newPos)
@@ -1917,14 +2376,15 @@ fun VideoAnalysisScreen(
                                             )
                                         }
 
-                                        // +1 Frame
+                                        // +1 Frame Nativo Exacto
                                         FilledTonalIconButton(
                                             onClick = {
                                                 videoViewRef?.let { vv ->
                                                     vv.pause()
                                                     isPlaying = false
+                                                    val step = nativeFrameStepMs.coerceIn(4L, 40L)
                                                     val maxLimit = if (trimEndMs > 0) trimEndMs else (if (videoDurationMs > 0) videoDurationMs else vv.duration.toLong())
-                                                    val newPos = (currentVideoPosMs + 33L).coerceAtMost(maxLimit)
+                                                    val newPos = (currentVideoPosMs + step).coerceAtMost(maxLimit)
                                                     currentVideoPosMs = newPos
                                                     seekVideoAccurate(mediaPlayerRef, vv, newPos)
                                                     updateStillFrame(newPos)
@@ -1958,80 +2418,355 @@ fun VideoAnalysisScreen(
                                         }
                                     }
 
+                                    val frameNumber = ((currentVideoPosMs - trimStartMs).coerceAtLeast(0L) / nativeFrameStepMs.coerceAtLeast(1L)) + 1L
                                     Text(
-                                        text = "⏱ ${formatTimeMs(currentVideoPosMs)}",
+                                        text = if (currentMode == "JUMP") "⏱ ${formatTimeMs(currentVideoPosMs)} (F#$frameNumber)" else "⏱ ${formatTimeMs(currentVideoPosMs)}",
                                         color = Color(0xFF00FFCC),
-                                        fontSize = 13.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(2.dp))
-
-                                Text(
-                                    "Ajusta el círculo sobre el borde del disco olímpico (45 cm). Arrastra el centro o usa las flechas HUD.",
-                                    color = Color(0xFF00FFCC),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    textAlign = TextAlign.Center
-                                )
-
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                // Fila de Controles de Tamaño de Círculo [-] [Slider] [+] y Botón Auto Detectar
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    FilledTonalIconButton(
-                                        onClick = { circleRadiusPx = (circleRadiusPx - 4f).coerceAtLeast(20f) },
-                                        modifier = Modifier.size(32.dp),
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                            containerColor = Color(0xFF262626),
-                                            contentColor = Color.White
-                                        )
-                                    ) {
-                                        Text("-", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                    }
-
+                                if (currentMode == "JUMP") {
+                                    // ── PANEL EXCLUSIVO DE CALIBRACIÓN DE SALTO (ESTILO MY JUMP LAB + IA SUB-FRAME) ──
+                                    val maxTrimLimit = if (trimEndMs > trimStartMs + 100L) trimEndMs else videoDurationMs.coerceAtLeast(trimStartMs + 1000L)
                                     Slider(
-                                        value = circleRadiusPx.coerceIn(20f, 220f),
-                                        onValueChange = { circleRadiusPx = it },
-                                        valueRange = 20f..220f,
-                                        modifier = Modifier.weight(1f),
+                                        value = currentVideoPosMs.toFloat().coerceIn(trimStartMs.toFloat(), maxTrimLimit.toFloat()),
+                                        onValueChange = { newVal ->
+                                            val target = newVal.toLong()
+                                            videoViewRef?.pause()
+                                            isPlaying = false
+                                            currentVideoPosMs = target
+                                            videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, target) }
+                                            updateStillFrame(target)
+                                        },
+                                        valueRange = trimStartMs.toFloat()..maxTrimLimit.toFloat(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(26.dp)
+                                            .padding(horizontal = 4.dp),
                                         colors = SliderDefaults.colors(
                                             thumbColor = Color(0xFF00FFCC),
-                                            activeTrackColor = Color(0xFF00FFCC)
+                                            activeTrackColor = Color(0xFF00FFCC),
+                                            inactiveTrackColor = Color(0xFF333333)
                                         )
                                     )
 
-                                    FilledTonalIconButton(
-                                        onClick = { circleRadiusPx = (circleRadiusPx + 4f).coerceAtMost(220f) },
-                                        modifier = Modifier.size(32.dp),
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                            containerColor = Color(0xFF262626),
-                                            contentColor = Color(0xFF00FFCC)
-                                        )
+                                    Spacer(modifier = Modifier.height(4.dp))
+
+                                    // Botones de Marcado de Eventos (Contacto, Despegue, Aterrizaje) + Auto IA Sub-Frame
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 2.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                        if (selectedJumpType == JumpType.DROP_JUMP) {
+                                            val hasContact = jumpContactMs != null
+                                            OutlinedButton(
+                                                onClick = {
+                                                    jumpContactMs = currentVideoPosMs.toDouble()
+                                                    isSubFrameInterpolated = false
+                                                },
+                                                modifier = Modifier.weight(1f).height(38.dp),
+                                                contentPadding = PaddingValues(horizontal = 4.dp),
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    1.dp,
+                                                    if (hasContact) Color(0xFFFFB300) else Color(0xFF444444)
+                                                ),
+                                                colors = ButtonDefaults.outlinedButtonColors(
+                                                    containerColor = if (hasContact) Color(0x22FFB300) else Color(0xFF1A1E24),
+                                                    contentColor = if (hasContact) Color(0xFFFFB300) else Color.LightGray
+                                                ),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Text("🦶 Contacto", fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                                    Text(
+                                                        if (hasContact) String.format(Locale.US, "%.3fs", (jumpContactMs!! - trimStartMs).coerceAtLeast(0.0) / 1000.0)
+                                                        else "Fijar",
+                                                        fontSize = 8.5.sp,
+                                                        color = if (hasContact) Color.White else Color.Gray
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Botón 🛫 Despegue (Take-off)
+                                        val hasTakeoff = jumpTakeoffMs != null
+                                        OutlinedButton(
+                                            onClick = {
+                                                jumpTakeoffMs = currentVideoPosMs.toDouble()
+                                                isSubFrameInterpolated = false
+                                            },
+                                            modifier = Modifier.weight(1.1f).height(38.dp),
+                                            contentPadding = PaddingValues(horizontal = 6.dp),
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.5.dp,
+                                                if (hasTakeoff) Color(0xFF00FFCC) else Color(0xFF444444)
+                                            ),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = if (hasTakeoff) Color(0x2600FFCC) else Color(0xFF1A1E24),
+                                                contentColor = if (hasTakeoff) Color(0xFF00FFCC) else Color.White
+                                            ),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text("🛫 Despegue", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                                    Text(
+                                                        if (hasTakeoff) String.format(Locale.US, "%.3fs", (jumpTakeoffMs!! - trimStartMs).coerceAtLeast(0.0) / 1000.0)
+                                                        else "Toca en frame",
+                                                        fontSize = 9.sp,
+                                                        color = if (hasTakeoff) Color.White else Color.Gray,
+                                                        maxLines = 1
+                                                    )
+                                                }
+                                                if (hasTakeoff) {
+                                                    Icon(
+                                                        Icons.Default.Visibility,
+                                                        contentDescription = "Ir a Despegue",
+                                                        tint = Color(0xFF00FFCC),
+                                                        modifier = Modifier
+                                                            .size(15.dp)
+                                                            .clickable {
+                                                                val t = jumpTakeoffMs!!.toLong()
+                                                                videoViewRef?.pause()
+                                                                isPlaying = false
+                                                                currentVideoPosMs = t
+                                                                videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, t) }
+                                                                updateStillFrame(t)
+                                                            }
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Botón 🛬 Aterrizaje (Landing)
+                                        val hasLanding = jumpLandingMs != null
+                                        OutlinedButton(
+                                            onClick = {
+                                                jumpLandingMs = currentVideoPosMs.toDouble()
+                                                isSubFrameInterpolated = false
+                                            },
+                                            modifier = Modifier.weight(1.1f).height(38.dp),
+                                            contentPadding = PaddingValues(horizontal = 6.dp),
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.5.dp,
+                                                if (hasLanding) Color(0xFF00E676) else Color(0xFF444444)
+                                            ),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = if (hasLanding) Color(0x2600E676) else Color(0xFF1A1E24),
+                                                contentColor = if (hasLanding) Color(0xFF00E676) else Color.White
+                                            ),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text("🛬 Aterrizaje", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                                    Text(
+                                                        if (hasLanding) String.format(Locale.US, "%.3fs", (jumpLandingMs!! - trimStartMs).coerceAtLeast(0.0) / 1000.0)
+                                                        else "Toca en frame",
+                                                        fontSize = 9.sp,
+                                                        color = if (hasLanding) Color.White else Color.Gray,
+                                                        maxLines = 1
+                                                    )
+                                                }
+                                                if (hasLanding) {
+                                                    Icon(
+                                                        Icons.Default.Visibility,
+                                                        contentDescription = "Ir a Aterrizaje",
+                                                        tint = Color(0xFF00E676),
+                                                        modifier = Modifier
+                                                            .size(15.dp)
+                                                            .clickable {
+                                                                val t = jumpLandingMs!!.toLong()
+                                                                videoViewRef?.pause()
+                                                                isPlaying = false
+                                                                currentVideoPosMs = t
+                                                                videoViewRef?.let { seekVideoAccurate(mediaPlayerRef, it, t) }
+                                                                updateStillFrame(t)
+                                                            }
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Botón ⚡ Auto IA Sub-Frame
+                                        Button(
+                                            onClick = { runAutoDetectJumpFlight(screenBoxWidth, screenBoxHeight) },
+                                            modifier = Modifier.height(38.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp),
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF00FFCC),
+                                                contentColor = Color.Black
+                                            )
+                                        ) {
+                                            Text(
+                                                if (isDetectingJumpEvents) "IA..." else "⚡ Auto IA",
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1
+                                            )
+                                        }
                                     }
 
-                                    Button(
-                                        onClick = { runAutoDetectPlate(screenBoxWidth, screenBoxHeight) },
-                                        modifier = Modifier.height(34.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = Color(0xFF00FFCC),
-                                            contentColor = Color.Black
-                                        )
+                                    Spacer(modifier = Modifier.height(5.dp))
+
+                                    // Tarjeta de Vista Previa en Vivo (Tiempo de Vuelo, Altura Sayers, Vel. Despegue / RSI)
+                                    val liveFlightSec = if (jumpTakeoffMs != null && jumpLandingMs != null && jumpLandingMs!! > jumpTakeoffMs!!) {
+                                        ((jumpLandingMs!! - jumpTakeoffMs!!) / 1000.0) / jumpSlowMoFactor.coerceAtLeast(0.25)
+                                    } else null
+                                    val liveHeightCm = if (liveFlightSec != null && liveFlightSec in 0.10..1.35) {
+                                        0.125 * 9.81 * liveFlightSec * liveFlightSec * 100.0
+                                    } else null
+                                    val liveTakeoffVel = if (liveFlightSec != null && liveFlightSec in 0.10..1.35) {
+                                        0.5 * 9.81 * liveFlightSec
+                                    } else null
+                                    val liveContactMs = if (selectedJumpType == JumpType.DROP_JUMP && jumpContactMs != null && jumpTakeoffMs != null && jumpTakeoffMs!! > jumpContactMs!!) {
+                                        ((jumpTakeoffMs!! - jumpContactMs!!) / jumpSlowMoFactor.coerceAtLeast(0.25)).toLong()
+                                    } else null
+                                    val liveRsi = if (liveHeightCm != null && liveContactMs != null && liveContactMs > 50L) {
+                                        (liveHeightCm / 100.0) / (liveContactMs / 1000.0)
+                                    } else null
+
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = Color(0xFF14181F),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x4400FFCC))
                                     ) {
-                                        Text(
-                                            if (isDetectingPlate) "..." else "⚡ Auto Detectar",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    if (isSubFrameInterpolated) "TIEMPO DE VUELO (✨ IA SUB-FRAME)" else "TIEMPO DE VUELO (MY JUMP)",
+                                                    color = Color.Gray,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    if (liveFlightSec != null) "${String.format(Locale.US, "%.1f", liveFlightSec * 1000.0)} ms" else "-- ms",
+                                                    color = Color.White,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Black
+                                                )
+                                            }
+
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text("ALTURA ESTIMADA", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                Text(
+                                                    if (liveHeightCm != null) "${String.format(Locale.US, "%.1f", liveHeightCm)} cm" else "-- cm",
+                                                    color = Color(0xFF00FFCC),
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Black
+                                                )
+                                            }
+
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                if (selectedJumpType == JumpType.DROP_JUMP && liveRsi != null) {
+                                                    Text("RSI (Tc: ${liveContactMs}ms)", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                    Text(
+                                                        String.format(Locale.US, "%.2f", liveRsi),
+                                                        color = Color(0xFF00E676),
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                } else {
+                                                    Text("VEL. DESPEGUE", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                    Text(
+                                                        if (liveTakeoffVel != null) "${String.format(Locale.US, "%.2f", liveTakeoffVel)} m/s" else "-- m/s",
+                                                        color = Color(0xFF00E676),
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Spacer(modifier = Modifier.height(2.dp))
+
+                                    Text(
+                                        "Ajusta el círculo sobre el borde del disco olímpico (45 cm). Arrastra el centro o usa las flechas HUD.",
+                                        color = Color(0xFF00FFCC),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        textAlign = TextAlign.Center
+                                    )
+
+                                    Spacer(modifier = Modifier.height(4.dp))
+
+                                    // Fila de Controles de Tamaño de Círculo [-] [Slider] [+] y Botón Auto Detectar
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        FilledTonalIconButton(
+                                            onClick = { circleRadiusPx = (circleRadiusPx - 4f).coerceAtLeast(20f) },
+                                            modifier = Modifier.size(32.dp),
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = Color(0xFF262626),
+                                                contentColor = Color.White
+                                            )
+                                        ) {
+                                            Text("-", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                        }
+
+                                        Slider(
+                                            value = circleRadiusPx.coerceIn(20f, 220f),
+                                            onValueChange = { circleRadiusPx = it },
+                                            valueRange = 20f..220f,
+                                            modifier = Modifier.weight(1f),
+                                            colors = SliderDefaults.colors(
+                                                thumbColor = Color(0xFF00FFCC),
+                                                activeTrackColor = Color(0xFF00FFCC)
+                                            )
                                         )
+
+                                        FilledTonalIconButton(
+                                            onClick = { circleRadiusPx = (circleRadiusPx + 4f).coerceAtMost(220f) },
+                                            modifier = Modifier.size(32.dp),
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = Color(0xFF262626),
+                                                contentColor = Color(0xFF00FFCC)
+                                            )
+                                        ) {
+                                            Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                        }
+
+                                        Button(
+                                            onClick = { runAutoDetectPlate(screenBoxWidth, screenBoxHeight) },
+                                            modifier = Modifier.height(34.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF00FFCC),
+                                                contentColor = Color.Black
+                                            )
+                                        ) {
+                                            Text(
+                                                if (isDetectingPlate) "..." else "⚡ Auto Detectar",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
 
@@ -2193,23 +2928,28 @@ fun VideoAnalysisScreen(
                                 Button(
                                     onClick = {
                                         val bounds = calculateVideoRenderBounds(screenBoxWidth, screenBoxHeight, videoNativeWidth, videoNativeHeight)
-                                        val centerToUse = circleCenter ?: Offset(screenBoxWidth / 2f, screenBoxHeight * 0.65f)
-
                                         val invScale = if (bounds.scale > 0f) 1f / bounds.scale else 1f
-                                        val nativeCenter = Offset(
-                                            ((centerToUse.x - bounds.left) * invScale).coerceIn(0f, videoNativeWidth.toFloat()),
-                                            ((centerToUse.y - bounds.top) * invScale).coerceIn(0f, videoNativeHeight.toFloat())
-                                        )
-                                        val nativeRadius = (circleRadiusPx * invScale).coerceAtLeast(12f)
+                                        if (currentMode == "JUMP") {
+                                            val scrGroundY = jumpGroundLineScreenY ?: (screenBoxHeight * 0.78f)
+                                            jumpGroundLineNativeY = ((scrGroundY - bounds.top) * invScale).coerceIn(0f, videoNativeHeight.toFloat())
+                                            VerticalJumpAnalyzer.currentJumpType = selectedJumpType
+                                        } else {
+                                            val centerToUse = circleCenter ?: Offset(screenBoxWidth / 2f, screenBoxHeight * 0.65f)
+                                            val nativeCenter = Offset(
+                                                ((centerToUse.x - bounds.left) * invScale).coerceIn(0f, videoNativeWidth.toFloat()),
+                                                ((centerToUse.y - bounds.top) * invScale).coerceIn(0f, videoNativeHeight.toFloat())
+                                            )
+                                            val nativeRadius = (circleRadiusPx * invScale).coerceAtLeast(12f)
 
-                                        calibratedPlateCenterVideo = nativeCenter
-                                        calibratedPlateRadiusVideo = nativeRadius
+                                            calibratedPlateCenterVideo = nativeCenter
+                                            calibratedPlateRadiusVideo = nativeRadius
 
-                                        val nativeDiameterPx = nativeRadius * 2f
-                                        val ratio = if (nativeDiameterPx > 5f) 0.45 / nativeDiameterPx.toDouble() else 0.0024
-                                        VBTAnalyzer.setCalibratedPlate(nativeCenter, nativeRadius)
-                                        VBTAnalyzer.pxToMetersRatio = ratio
-                                        customRatioMmPerPx = ratio * 1000.0
+                                            val nativeDiameterPx = nativeRadius * 2f
+                                            val ratio = if (nativeDiameterPx > 5f) 0.45 / nativeDiameterPx.toDouble() else 0.0024
+                                            VBTAnalyzer.setCalibratedPlate(nativeCenter, nativeRadius)
+                                            VBTAnalyzer.pxToMetersRatio = ratio
+                                            customRatioMmPerPx = ratio * 1000.0
+                                        }
                                         isCalibrated = true
 
                                         videoViewRef?.pause()
@@ -2258,7 +2998,14 @@ fun VideoAnalysisScreen(
                         startMs = trimStartMs,
                         endMs = trimEndMs,
                         calibratedPlateCenter = calibratedPlateCenterVideo,
-                        calibratedPlateRadius = calibratedPlateRadiusVideo
+                        calibratedPlateRadius = calibratedPlateRadiusVideo,
+                        calibratedJumpTakeoffMs = jumpTakeoffMs,
+                        calibratedJumpLandingMs = jumpLandingMs,
+                        calibratedJumpContactMs = jumpContactMs,
+                        calibratedJumpGroundY = jumpGroundLineNativeY,
+                        jumpSlowMoFactor = jumpSlowMoFactor,
+                        nativeFrameStepMs = nativeFrameStepMs,
+                        selectedJumpType = selectedJumpType
                     ) { p ->
                         progress = p
                     }
@@ -5496,6 +6243,13 @@ suspend fun processVideo(
     endMs: Long = 0L,
     calibratedPlateCenter: Offset? = null,
     calibratedPlateRadius: Float? = null,
+    calibratedJumpTakeoffMs: Double? = null,
+    calibratedJumpLandingMs: Double? = null,
+    calibratedJumpContactMs: Double? = null,
+    calibratedJumpGroundY: Float? = null,
+    jumpSlowMoFactor: Double = 1.0,
+    nativeFrameStepMs: Long = 33L,
+    selectedJumpType: JumpType = JumpType.CMJ,
     onProgress: (Float) -> Unit
 ): ProcessVideoResult = withContext(Dispatchers.IO) {
     var maxResult = 0.0
@@ -5531,14 +6285,19 @@ suspend fun processVideo(
                     VBTAnalyzer.setCalibratedPlate(calibratedPlateCenter, calibratedPlateRadius)
                 }
             }
-            if (mode == "JUMP") VerticalJumpAnalyzer.reset()
+            if (mode == "JUMP") {
+                VerticalJumpAnalyzer.reset()
+                VerticalJumpAnalyzer.currentJumpType = selectedJumpType
+            }
 
-            val frameIntervalMs = 33L
-            val totalFrames = trimDurationMs / frameIntervalMs
+            val frameIntervalMs = if (mode == "JUMP") nativeFrameStepMs.coerceIn(16L, 33L) else 33L
+            val totalFrames = (trimDurationMs / frameIntervalMs).coerceAtLeast(1L)
 
             val barbellTracker = KinoveaBarbellTracker()
             activePlateCenter = calibratedPlateCenter
             activePlateRadius = calibratedPlateRadius
+            val rawJumpFootSamples = mutableListOf<JumpFootSample>()
+            var detectedVideoH = 1920
 
             for (i in 0..totalFrames) {
                 val timeOffsetMs = i * frameIntervalMs
@@ -5548,22 +6307,28 @@ suspend fun processVideo(
                 if (bitmap != null) {
                     try {
                         if (mode == "JUMP") {
+                            if (bitmap.height > 0) detectedVideoH = bitmap.height
                             val image = InputImage.fromBitmap(bitmap, 0)
                             val pose = detector.process(image).await()
                             val height = VerticalJumpAnalyzer.processPose(pose, timeOffsetMs, bodyWeightKg)
                             if (height != null && height > maxResult) {
                                 maxResult = height
                             }
-                            // En plano frontal de salto, priorizar centro de ambos pies
-                            val lf = pose.getPoseLandmark(PoseLandmark.LEFT_FOOT_INDEX) ?: pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)
-                            val rf = pose.getPoseLandmark(PoseLandmark.RIGHT_FOOT_INDEX) ?: pose.getPoseLandmark(PoseLandmark.RIGHT_ANKLE)
+                            // En plano de salto, priorizar punta/talón/tobillo de ambos pies
+                            val lf = pose.getPoseLandmark(PoseLandmark.LEFT_FOOT_INDEX)
+                                ?: pose.getPoseLandmark(PoseLandmark.LEFT_HEEL)
+                                ?: pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)
+                            val rf = pose.getPoseLandmark(PoseLandmark.RIGHT_FOOT_INDEX)
+                                ?: pose.getPoseLandmark(PoseLandmark.RIGHT_HEEL)
+                                ?: pose.getPoseLandmark(PoseLandmark.RIGHT_ANKLE)
                             val ptX: Float?
                             val ptY: Float?
                             val ptLabel: String
                             if (lf != null && rf != null && (lf.inFrameLikelihood > 0.25f || rf.inFrameLikelihood > 0.25f)) {
                                 ptX = (lf.position.x + rf.position.x) / 2f
-                                ptY = (lf.position.y + rf.position.y) / 2f
+                                ptY = maxOf(lf.position.y, rf.position.y)
                                 ptLabel = "Pies (Despegue)"
+                                rawJumpFootSamples.add(JumpFootSample(effectiveStartMs + timeOffsetMs, ptX, ptY))
                             } else {
                                 val lh = pose.getPoseLandmark(PoseLandmark.LEFT_HIP)
                                 val rh = pose.getPoseLandmark(PoseLandmark.RIGHT_HIP)
@@ -5638,6 +6403,73 @@ suspend fun processVideo(
                 withContext(Dispatchers.Main) {
                     if (totalFrames > 0) {
                         onProgress((i.toFloat() / totalFrames.toFloat()).coerceIn(0f, 1f))
+                    }
+                }
+            }
+
+            // En modo JUMP: Aplicar cálculo de alta precisión (My Jump + Interpolación Sub-Frame + Factor Slow-Mo)
+            if (mode == "JUMP") {
+                var finalTakeoffMs = calibratedJumpTakeoffMs
+                var finalLandingMs = calibratedJumpLandingMs
+                var finalContactMs = calibratedJumpContactMs
+
+                if ((finalTakeoffMs == null || finalLandingMs == null || finalLandingMs <= finalTakeoffMs) && rawJumpFootSamples.size >= 4) {
+                    val sortedY = rawJumpFootSamples.map { it.footY }.sorted()
+                    val groundY = calibratedJumpGroundY ?: sortedY[(sortedY.size * 0.85).toInt().coerceIn(0, sortedY.size - 1)]
+                    val (cMs, tMs, lMs) = computeSubFrameJumpEvents(
+                        samples = rawJumpFootSamples,
+                        groundNativeY = groundY,
+                        videoNativeHeight = detectedVideoH,
+                        jumpType = selectedJumpType
+                    )
+                    if (tMs != null && lMs != null && lMs > tMs) {
+                        finalContactMs = cMs
+                        finalTakeoffMs = tMs
+                        finalLandingMs = lMs
+                    }
+                }
+
+                if (finalTakeoffMs != null && finalLandingMs != null && finalLandingMs > finalTakeoffMs) {
+                    val preciseMetrics = VerticalJumpAnalyzer.calculateJumpMetricsPrecise(
+                        takeoffTimeMs = finalTakeoffMs,
+                        landingTimeMs = finalLandingMs,
+                        bodyWeightKg = bodyWeightKg,
+                        jumpType = selectedJumpType,
+                        contactStartTimeMs = finalContactMs,
+                        slowMoFactor = jumpSlowMoFactor
+                    )
+                    if (preciseMetrics != null) {
+                        maxResult = preciseMetrics.heightMeters
+                        val takeoffRelMs = (finalTakeoffMs - effectiveStartMs).coerceAtLeast(0.0)
+                        val landingRelMs = (finalLandingMs - effectiveStartMs).coerceAtLeast(takeoffRelMs + 50.0)
+                        val apexRelMs = (takeoffRelMs + landingRelMs) / 2.0
+                        val pushStartRelMs = (takeoffRelMs - 260.0 * jumpSlowMoFactor).coerceAtLeast(0.0)
+                        val vTakeoff = 0.5 * 9.81 * preciseMetrics.flightTimeSeconds
+
+                        for (idx in trackingPoints.indices) {
+                            val pt = trackingPoints[idx]
+                            val t = pt.timestampMs.toDouble()
+                            val vel = when {
+                                t in pushStartRelMs..takeoffRelMs -> {
+                                    val frac = ((t - pushStartRelMs) / (takeoffRelMs - pushStartRelMs).coerceAtLeast(1.0)).coerceIn(0.0, 1.0)
+                                    vTakeoff * kotlin.math.sin(frac * Math.PI / 2.0)
+                                }
+                                t in takeoffRelMs..apexRelMs -> {
+                                    val frac = ((apexRelMs - t) / (apexRelMs - takeoffRelMs).coerceAtLeast(1.0)).coerceIn(0.0, 1.0)
+                                    vTakeoff * frac
+                                }
+                                t in apexRelMs..landingRelMs -> {
+                                    val frac = ((t - apexRelMs) / (landingRelMs - apexRelMs).coerceAtLeast(1.0)).coerceIn(0.0, 1.0)
+                                    vTakeoff * frac * 0.65
+                                }
+                                else -> 0.0
+                            }
+                            trackingPoints[idx] = pt.copy(
+                                velocityMps = vel,
+                                isConcentric = t in pushStartRelMs..apexRelMs,
+                                currentPeakVelocity = vTakeoff
+                            )
+                        }
                     }
                 }
             }
@@ -6165,53 +6997,72 @@ fun PreCalibrationSetupDialog(
                     Divider(color = lineColor, thickness = 1.dp)
                 }
 
-                // 6. Campo: Diámetro del Disco (mm)
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "Diámetro del Disco (mm) - Disco estándar es 450mm",
-                        color = labelColor,
-                        fontSize = 12.5.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    BasicTextField(
-                        value = plateDiameterMm,
-                        onValueChange = { newVal ->
-                            if (newVal.isEmpty() || newVal.all { it.isDigit() }) {
-                                plateDiameterMm = newVal
-                            }
-                        },
-                        singleLine = true,
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            color = valueColor,
-                            fontSize = 17.sp
-                        ),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        cursorBrush = SolidColor(accentColor),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Divider(color = lineColor, thickness = 1.dp)
-                }
-
-                // Switch de diámetro por defecto
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "Fijar como diámetro por defecto",
-                        color = labelColor,
-                        fontSize = 14.sp
-                    )
-                    Switch(
-                        checked = defaultPlateDiameter,
-                        onCheckedChange = { defaultPlateDiameter = it },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = accentColor,
-                            checkedTrackColor = accentColor.copy(alpha = 0.35f)
+                if (currentMode != "JUMP") {
+                    // 6. Campo: Diámetro del Disco (mm) - Exclusivo para Halterofilia / VBT
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Diámetro del Disco (mm) - Disco estándar es 450mm",
+                            color = labelColor,
+                            fontSize = 12.5.sp
                         )
-                    )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        BasicTextField(
+                            value = plateDiameterMm,
+                            onValueChange = { newVal ->
+                                if (newVal.isEmpty() || newVal.all { it.isDigit() }) {
+                                    plateDiameterMm = newVal
+                                }
+                            },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = valueColor,
+                                fontSize = 17.sp
+                            ),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            cursorBrush = SolidColor(accentColor),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Divider(color = lineColor, thickness = 1.dp)
+                    }
+
+                    // Switch de diámetro por defecto
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Fijar como diámetro por defecto",
+                            color = labelColor,
+                            fontSize = 14.sp
+                        )
+                        Switch(
+                            checked = defaultPlateDiameter,
+                            onCheckedChange = { defaultPlateDiameter = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = accentColor,
+                                checkedTrackColor = accentColor.copy(alpha = 0.35f)
+                            )
+                        )
+                    }
+                } else {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Método de Calibración de Salto",
+                            color = labelColor,
+                            fontSize = 12.5.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tiempo de Vuelo (My Jump) + Detección de FPS e Interpolación IA Sub-Frame",
+                            color = accentColor,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Divider(color = lineColor, thickness = 1.dp)
+                    }
                 }
 
                 // 7. Fecha
@@ -6761,6 +7612,162 @@ fun PreCalibrationSetupDialog(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+
+/**
+ * Lienzo interactivo para la Calibración de Salto Vertical (Estilo My Jump + IA Sub-Frame).
+ * Dibuja la Línea de Nivel de Suelo (Zapatillas) deslizable verticalmente y el marcador óptico de los pies.
+ */
+@Composable
+fun JumpGroundLineOverlayCanvas(
+    groundY: Float,
+    boxWidth: Float,
+    boxHeight: Float,
+    bounds: VideoRenderBounds,
+    currentFootSample: JumpFootSample?,
+    onGroundYChange: (Float) -> Unit,
+    onInteraction: () -> Unit = {}
+) {
+    val currentY by rememberUpdatedState(groundY)
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(boxHeight) {
+                detectTapGestures(
+                    onPress = { pos ->
+                        onInteraction()
+                        if (kotlin.math.abs(pos.y - currentY) < 95f) {
+                            onGroundYChange(pos.y)
+                        }
+                    }
+                )
+            }
+            .pointerInput(boxHeight) {
+                detectDragGestures(
+                    onDragStart = { onInteraction() },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onGroundYChange(currentY + dragAmount.y)
+                    }
+                )
+            }
+    ) {
+        val w = size.width
+        val h = size.height
+        val y = groundY.coerceIn(24f, (h - 24f).coerceAtLeast(28f))
+        val neonCyan = Color(0xFF00FFCC)
+        val neonGreen = Color(0xFF00E676)
+
+        // 1. Sombreado sutil debajo de la línea de suelo (zona de piso)
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(neonCyan.copy(alpha = 0.22f), Color.Transparent),
+                startY = y,
+                endY = (y + 38.dp.toPx()).coerceAtMost(h)
+            ),
+            topLeft = Offset(0f, y),
+            size = Size(w, (h - y).coerceAtMost(38.dp.toPx()))
+        )
+
+        // 2. Líneas diagonales de achurado técnico de suelo
+        val hatchSpacing = 22.dp.toPx()
+        val hatchLen = 10.dp.toPx()
+        var hx = 12.dp.toPx()
+        while (hx < w - 12.dp.toPx()) {
+            drawLine(
+                color = neonCyan.copy(alpha = 0.45f),
+                start = Offset(hx, y),
+                end = Offset(hx - hatchLen * 0.7f, y + hatchLen),
+                strokeWidth = 1.5.dp.toPx()
+            )
+            hx += hatchSpacing
+        }
+
+        // 3. Línea Horizontal Principal de Nivel de Suelo (Suela de las zapatillas)
+        drawLine(
+            color = Color.Black.copy(alpha = 0.65f),
+            start = Offset(0f, y),
+            end = Offset(w, y),
+            strokeWidth = 5.dp.toPx()
+        )
+        drawLine(
+            color = neonCyan,
+            start = Offset(0f, y),
+            end = Offset(w, y),
+            strokeWidth = 2.5.dp.toPx(),
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(18f, 10f), 0f)
+        )
+
+        // 4. Tiradores laterales (Handles izquierdo y derecho para arrastrar la línea)
+        val handleR = 9.dp.toPx()
+        listOf(22.dp.toPx(), w - 22.dp.toPx()).forEach { cx ->
+            drawCircle(color = Color(0xFF0F172A), radius = handleR + 2.dp.toPx(), center = Offset(cx, y))
+            drawCircle(color = neonCyan, radius = handleR, center = Offset(cx, y))
+            drawCircle(color = Color.Black, radius = 3.dp.toPx(), center = Offset(cx, y))
+        }
+
+        // 5. Etiqueta central sobre la línea de suelo
+        val labelPaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.parseColor("#00FFCC")
+            textSize = 10.5.sp.toPx()
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+        val pillW = 210.dp.toPx()
+        val pillH = 20.dp.toPx()
+        val pillTop = (y - pillH - 6.dp.toPx()).coerceAtLeast(8.dp.toPx())
+        drawRoundRect(
+            color = Color(0xD90D131A),
+            topLeft = Offset(w / 2f - pillW / 2f, pillTop),
+            size = Size(pillW, pillH),
+            cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
+        )
+        drawRoundRect(
+            color = neonCyan.copy(alpha = 0.8f),
+            topLeft = Offset(w / 2f - pillW / 2f, pillTop),
+            size = Size(pillW, pillH),
+            cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx()),
+            style = Stroke(width = 1.dp.toPx())
+        )
+        drawContext.canvas.nativeCanvas.drawText(
+            "👟 NIVEL DEL SUELO (ARRASTRA A LA SUELA)",
+            w / 2f,
+            pillTop + pillH * 0.72f,
+            labelPaint
+        )
+
+        // 6. Si hay muestra de pies detectada por IA en este fotograma, dibujar indicador óptico en los pies
+        if (currentFootSample != null) {
+            val fx = bounds.left + currentFootSample.footX * bounds.scale
+            val fy = bounds.top + currentFootSample.footY * bounds.scale
+            val isAir = fy < y - 6.dp.toPx()
+            val ptColor = if (isAir) neonGreen else neonCyan
+
+            drawCircle(
+                color = ptColor.copy(alpha = 0.28f),
+                radius = 14.dp.toPx(),
+                center = Offset(fx, fy)
+            )
+            drawCircle(
+                color = ptColor,
+                radius = 5.dp.toPx(),
+                center = Offset(fx, fy)
+            )
+            if (isAir) {
+                // Flecha vertical de elevación desde el suelo hasta los pies en el aire
+                drawLine(
+                    color = neonGreen,
+                    start = Offset(fx, y),
+                    end = Offset(fx, fy),
+                    strokeWidth = 2.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), 0f)
+                )
             }
         }
     }

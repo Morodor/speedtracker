@@ -105,6 +105,73 @@ object VerticalJumpAnalyzer {
         )
     }
 
+    /**
+     * Calcula las métricas del salto con precisión sub-frame (Double ms) e integración de cámara lenta (slowMoFactor),
+     * combinando el método My Jump Lab con interpolación cinemática sub-fotograma.
+     */
+    fun calculateJumpMetricsPrecise(
+        takeoffTimeMs: Double,
+        landingTimeMs: Double,
+        bodyWeightKg: Double = 70.0,
+        jumpType: JumpType = currentJumpType,
+        contactStartTimeMs: Double? = null,
+        slowMoFactor: Double = 1.0
+    ): JumpMetrics? {
+        if (landingTimeMs <= takeoffTimeMs) return null
+        val safeSlowMo = slowMoFactor.coerceIn(0.25, 16.0)
+
+        // Tiempo de vuelo real (ToF) en segundos corregido por factor de cámara lenta e interpolación sub-frame
+        val flightTimeSeconds = ((landingTimeMs - takeoffTimeMs) / 1000.0) / safeSlowMo
+
+        // Filtro de plausibilidad biológica (100 ms a 1350 ms)
+        if (flightTimeSeconds < 0.10 || flightTimeSeconds > 1.35) {
+            return null
+        }
+
+        val timeToApex = flightTimeSeconds / 2.0
+        val heightMeters = 0.5 * GRAVITY * (timeToApex * timeToApex)
+        val heightCm = heightMeters * 100.0
+
+        // Ecuación de Sayers et al. (1999): Peak Power (W) = 60.7 * JumpHeight(cm) + 45.3 * BodyMass(kg) - 2055
+        val peakPower = (60.7 * heightCm + 45.3 * bodyWeightKg - 2055.0).coerceAtLeast(0.0)
+        val relativePower = if (bodyWeightKg > 0) peakPower / bodyWeightKg else 0.0
+
+        var contactTimeMs: Long? = null
+        var rsi: Double? = null
+
+        if (jumpType == JumpType.DROP_JUMP && contactStartTimeMs != null && takeoffTimeMs > contactStartTimeMs) {
+            val contactDurationRealMs = ((takeoffTimeMs - contactStartTimeMs) / safeSlowMo).toLong()
+            if (contactDurationRealMs in 60..800) {
+                contactTimeMs = contactDurationRealMs
+                val contactSec = contactDurationRealMs / 1000.0
+                rsi = heightMeters / contactSec
+            }
+        }
+
+        var eur: Double? = null
+        if (jumpType == JumpType.SJ) {
+            lastSjHeightMeters = heightMeters
+        } else if (jumpType == JumpType.CMJ) {
+            lastCmjHeightMeters = heightMeters
+            if (lastSjHeightMeters != null && lastSjHeightMeters!! > 0) {
+                eur = heightMeters / lastSjHeightMeters!!
+            }
+        }
+
+        val metrics = JumpMetrics(
+            heightMeters = heightMeters,
+            flightTimeSeconds = flightTimeSeconds,
+            peakPowerWatts = peakPower,
+            relativePowerWattsPerKg = relativePower,
+            jumpType = jumpType,
+            contactTimeMs = contactTimeMs,
+            rsi = rsi,
+            eur = eur
+        )
+        lastJumpMetrics = metrics
+        return metrics
+    }
+
     private var baselineY: Float? = null
     private var takeoffTimeMs: Long? = null
     private var isAirborne: Boolean = false
