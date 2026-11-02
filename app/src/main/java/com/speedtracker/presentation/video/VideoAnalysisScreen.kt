@@ -475,6 +475,8 @@ fun VideoAnalysisScreen(
     var trackingPointsResult by remember { mutableStateOf<List<VideoFrameTrackingPoint>>(emptyList()) }
     var isGeneratingPdf by remember { mutableStateOf(false) }
     var generatedPdfPath by remember { mutableStateOf<String?>(null) }
+    var generatedVideoPath by remember { mutableStateOf<String?>(null) }
+    var isSavingToProfile by remember { mutableStateOf(false) }
     var selectedMetricInfo by remember { mutableStateOf<MetricInfo?>(null) }
     var isExportingVideo by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableFloatStateOf(0f) }
@@ -2919,7 +2921,7 @@ fun VideoAnalysisScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .onGloballyPositioned { coords ->
-                                    actionsYOffset = scrollState.value + coords.positionInParent().y.toInt()
+                                    actionsYOffset = coords.positionInParent().y.toInt()
                                 }
                         ) {
                             Column(
@@ -2928,59 +2930,123 @@ fun VideoAnalysisScreen(
                             ) {
                                 Button(
                                     onClick = {
-                                        if (activeUser != null) {
+                                        if (!isSavingToProfile) {
                                             coroutineScope.launch {
-                                                val reportPath = generatedPdfPath ?: try {
-                                                    BiomechanicalPdfReportGenerator.generateReport(
-                                                        context = context,
-                                                        videoUri = Uri.parse(videoUriString),
-                                                        athleteName = activeUser.name,
-                                                        athleteWeightKg = activeUser.bodyWeightKg,
-                                                        exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical (${selectedJumpType.name})",
-                                                        exerciseFamily = if (currentMode == "VBT") selectedExerciseModel.family.label else "Salto",
-                                                        loadKg = currentLoadKg,
-                                                        peakVelocity = peakVelocity,
-                                                        meanVelocity = meanVelocity,
-                                                        vmpVelocity = vmpVelocity,
-                                                        concentricDurationMs = concentricDurationMs,
-                                                        timeToPeakMs = timeToPeakMs,
-                                                        rfdNPerSec = rfdNPerSec,
-                                                        peakPowerWatts = peakPowerWatts,
-                                                        relativeWattsPerKg = relativeWattsPerKg,
-                                                        peakForceN = peakForceN,
-                                                        workJoules = workJoules,
-                                                        estimatedOneRM = estimatedOneRM,
-                                                        pctOneRM = pctOneRM,
-                                                        horizontalDeviationCm = vbtDeviationResultCm,
-                                                        trackingPoints = trackingPointsResult,
-                                                        trimStartMs = trimStartMs,
-                                                        trimEndMs = trimEndMs
-                                                    ).absolutePath
-                                                } catch (e: Exception) {
-                                                    null
-                                                }
+                                                isSavingToProfile = true
+                                                isExportingVideo = true
+                                                exportProgress = 0.05f
+                                                try {
+                                                    val targetUser = activeUser
+                                                        ?: userRepository.getUsers().firstOrNull()
+                                                        ?: userRepository.saveUser("Atleta", 75.0)
 
-                                                userRepository.saveSession(
-                                                    Session(
-                                                        id = UUID.randomUUID().toString(),
-                                                        userId = activeUser.id,
-                                                        activityType = if (currentMode == "VBT") "${currentMode} (${selectedExerciseModel.displayName})" else currentMode!!,
-                                                        result = finalResult!!,
-                                                        timestamp = System.currentTimeMillis(),
-                                                        powerWatts = if (currentMode == "VBT") peakPowerWatts else jumpMetricsResult?.peakPowerWatts,
-                                                        powerWattsPerKg = if (currentMode == "VBT") relativeWattsPerKg else jumpMetricsResult?.relativePowerWattsPerKg,
-                                                        horizontalDeviationCm = vbtDeviationResultCm,
-                                                        meanVelocity = if (currentMode == "VBT") meanVelocity else null,
-                                                        loadKg = if (currentMode == "VBT") currentLoadKg else null,
-                                                        vmpVelocity = if (currentMode == "VBT") vmpVelocity else null,
-                                                        concentricDurationMs = if (currentMode == "VBT") concentricDurationMs else null,
-                                                        timeToPeakMs = if (currentMode == "VBT") timeToPeakMs else null,
-                                                        rfdNPerSec = if (currentMode == "VBT") rfdNPerSec else null,
-                                                        pdfReportPath = reportPath
+                                                    // 1. Generar / asegurar Informe PDF en almacenamiento persistente (filesDir/reports)
+                                                    val reportPath = generatedPdfPath?.takeIf { File(it).exists() } ?: try {
+                                                        val repFile = BiomechanicalPdfReportGenerator.generateReport(
+                                                            context = context,
+                                                            videoUri = Uri.parse(videoUriString),
+                                                            athleteName = targetUser.name,
+                                                            athleteWeightKg = targetUser.bodyWeightKg,
+                                                            exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical (${selectedJumpType.name})",
+                                                            exerciseFamily = if (currentMode == "VBT") selectedExerciseModel.family.label else "Salto",
+                                                            loadKg = currentLoadKg,
+                                                            peakVelocity = peakVelocity,
+                                                            meanVelocity = meanVelocity,
+                                                            vmpVelocity = vmpVelocity,
+                                                            concentricDurationMs = concentricDurationMs,
+                                                            timeToPeakMs = timeToPeakMs,
+                                                            rfdNPerSec = rfdNPerSec,
+                                                            peakPowerWatts = peakPowerWatts,
+                                                            relativeWattsPerKg = relativeWattsPerKg,
+                                                            peakForceN = peakForceN,
+                                                            workJoules = workJoules,
+                                                            estimatedOneRM = estimatedOneRM,
+                                                            pctOneRM = pctOneRM,
+                                                            horizontalDeviationCm = vbtDeviationResultCm,
+                                                            trackingPoints = trackingPointsResult,
+                                                            trimStartMs = trimStartMs,
+                                                            trimEndMs = trimEndMs
+                                                        )
+                                                        generatedPdfPath = repFile.absolutePath
+                                                        repFile.absolutePath
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                        null
+                                                    }
+
+                                                    // 2. Generar / asegurar Video Analizado con HUD y trayectoria en almacenamiento persistente (filesDir/saved_videos)
+                                                    val savedVideosDir = File(context.filesDir, "saved_videos").apply { mkdirs() }
+                                                    val sanitizedAthlete = targetUser.name.replace(" ", "_").replace(Regex("[^a-zA-Z0-9_]"), "")
+                                                    val persistentVideoFile = File(savedVideosDir, "Video_${sanitizedAthlete}_${System.currentTimeMillis()}.mp4")
+
+                                                    val savedVideoPath = generatedVideoPath?.takeIf { File(it).exists() } ?: try {
+                                                        val metricSummary = if (currentMode == "VBT") {
+                                                            "${selectedExerciseModel.displayName} • ${currentLoadKg.toInt()} kg • 1RM: ${estimatedOneRM.toInt()}kg • VP: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s"
+                                                        } else {
+                                                            "Altura: ${String.format(Locale.US, "%.1f", (finalResult ?: 0.0) * 100)} cm"
+                                                        }
+                                                        val exported = VideoOverlayExporter.exportVideoWithOverlay(
+                                                            context = context,
+                                                            inputUri = Uri.parse(videoUriString),
+                                                            outputFile = persistentVideoFile,
+                                                            mode = currentMode ?: "VBT",
+                                                            trackingPoints = trackingPointsResult,
+                                                            exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical",
+                                                            athleteName = targetUser.name,
+                                                            bestMetricSummary = metricSummary,
+                                                            originBaselineY = VBTAnalyzer.originBaselineY,
+                                                            lowestInflectionY = VBTAnalyzer.lowestInflectionY,
+                                                            calibratedPlateRadius = calibratedPlateRadiusVideo,
+                                                            startMs = trimStartMs,
+                                                            endMs = trimEndMs,
+                                                            onProgress = { p -> exportProgress = p }
+                                                        )
+                                                        generatedVideoPath = exported.absolutePath
+                                                        exported.absolutePath
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                        // Respaldo: copiar el archivo de video original si el codificador falla
+                                                        try {
+                                                            context.contentResolver.openInputStream(Uri.parse(videoUriString))?.use { input ->
+                                                                persistentVideoFile.outputStream().use { output ->
+                                                                    input.copyTo(output)
+                                                                }
+                                                            }
+                                                            if (persistentVideoFile.exists() && persistentVideoFile.length() > 0L) {
+                                                                persistentVideoFile.absolutePath
+                                                            } else null
+                                                        } catch (ex: Exception) {
+                                                            null
+                                                        }
+                                                    }
+
+                                                    // 3. Guardar Sesión completa con Informe PDF y Video en el perfil del atleta
+                                                    userRepository.saveSession(
+                                                        Session(
+                                                            id = UUID.randomUUID().toString(),
+                                                            userId = targetUser.id,
+                                                            activityType = if (currentMode == "VBT") "${currentMode} (${selectedExerciseModel.displayName})" else currentMode!!,
+                                                            result = finalResult!!,
+                                                            timestamp = System.currentTimeMillis(),
+                                                            powerWatts = if (currentMode == "VBT") peakPowerWatts else jumpMetricsResult?.peakPowerWatts,
+                                                            powerWattsPerKg = if (currentMode == "VBT") relativeWattsPerKg else jumpMetricsResult?.relativePowerWattsPerKg,
+                                                            horizontalDeviationCm = vbtDeviationResultCm,
+                                                            meanVelocity = if (currentMode == "VBT") meanVelocity else null,
+                                                            loadKg = if (currentMode == "VBT") currentLoadKg else null,
+                                                            vmpVelocity = if (currentMode == "VBT") vmpVelocity else null,
+                                                            concentricDurationMs = if (currentMode == "VBT") concentricDurationMs else null,
+                                                            timeToPeakMs = if (currentMode == "VBT") timeToPeakMs else null,
+                                                            rfdNPerSec = if (currentMode == "VBT") rfdNPerSec else null,
+                                                            pdfReportPath = reportPath,
+                                                            videoExportPath = savedVideoPath
+                                                        )
                                                     )
-                                                )
-                                                Toast.makeText(context, "Sesión e informe guardados en el perfil", Toast.LENGTH_SHORT).show()
-                                                onCloseClick()
+                                                    Toast.makeText(context, "✓ Informe PDF y Video guardados en el perfil de ${targetUser.name}", Toast.LENGTH_LONG).show()
+                                                    onCloseClick()
+                                                } finally {
+                                                    isExportingVideo = false
+                                                    isSavingToProfile = false
+                                                }
                                             }
                                         }
                                     },
@@ -2990,7 +3056,10 @@ fun VideoAnalysisScreen(
                                         contentColor = Color.Black
                                     )
                                 ) {
-                                    Text("Guardar en Perfil del Atleta", fontWeight = FontWeight.Bold)
+                                    Text(
+                                        if (isSavingToProfile) "Guardando Informe PDF y Video..." else "💾 Guardar en Perfil del Atleta (PDF + Video)",
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
 
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -3106,7 +3175,7 @@ fun VideoAnalysisScreen(
                                             isExportingVideo = true
                                             exportProgress = 0f
                                             try {
-                                                val exportDir = File(context.cacheDir, "videos").apply { mkdirs() }
+                                                val exportDir = File(context.filesDir, "saved_videos").apply { mkdirs() }
                                                 val exportedFile = File(exportDir, "SpeedTracker_Export_${System.currentTimeMillis()}.mp4")
                                                 val metricSummary = if (currentMode == "VBT") {
                                                     "${selectedExerciseModel.displayName} • ${currentLoadKg.toInt()} kg • 1RM: ${estimatedOneRM.toInt()}kg • VP: ${String.format("%.2f", peakVelocity)} m/s"
@@ -3130,6 +3199,7 @@ fun VideoAnalysisScreen(
                                                     endMs = trimEndMs,
                                                     onProgress = { p -> exportProgress = p }
                                                 )
+                                                generatedVideoPath = finalVideoFile.absolutePath
                                                 shareVideoWithReport(context, Uri.fromFile(finalVideoFile), summary)
                                             } catch (e: Exception) {
                                                 e.printStackTrace()
@@ -3179,6 +3249,17 @@ fun VideoAnalysisScreen(
                     }
 
                     // Barra persistente de navegación: [Video] [Datos Analizados] [Acciones]
+                    // Solo el botón de la sección actual tiene color (#00FFCC) y cambia dinámicamente al hacer scroll o tocar.
+                    var manualTabOverride by remember { mutableStateOf<Int?>(null) }
+                    val activeBottomTab = manualTabOverride ?: when {
+                        scrollState.maxValue > 0 && (
+                            scrollState.value >= (scrollState.maxValue - 90).coerceAtLeast(100) ||
+                            (actionsYOffset > 0 && scrollState.value >= (actionsYOffset - 320).coerceAtLeast(140))
+                        ) -> 2
+                        analysisDataYOffset > 0 && scrollState.value >= (analysisDataYOffset - 180).coerceAtLeast(80) -> 1
+                        else -> 0
+                    }
+
                     Surface(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -3196,21 +3277,27 @@ fun VideoAnalysisScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // 1. Botón VIDEO: Primero en el menú, lleva directamente a la parte más alta para ver el video analizado
+                            // 1. Botón VIDEO
+                            val isVideoTab = activeBottomTab == 0
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
+                                        manualTabOverride = 0
                                         scrollState.animateScrollTo(0)
+                                        manualTabOverride = null
                                     }
                                 },
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(44.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF222222),
-                                    contentColor = Color.White
+                                    containerColor = if (isVideoTab) Color(0xFF162B24) else Color(0xFF1E1E1E),
+                                    contentColor = if (isVideoTab) Color(0xFF00FFCC) else Color(0xFF8A8A8A)
                                 ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF444444)),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    if (isVideoTab) 1.5.dp else 1.dp,
+                                    if (isVideoTab) Color(0xFF00FFCC) else Color(0xFF333333)
+                                ),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 4.dp)
                             ) {
@@ -3218,32 +3305,38 @@ fun VideoAnalysisScreen(
                                     Icons.Default.Videocam,
                                     contentDescription = "Video",
                                     modifier = Modifier.size(17.dp),
-                                    tint = Color(0xFF00FFCC)
+                                    tint = if (isVideoTab) Color(0xFF00FFCC) else Color(0xFF8A8A8A)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     "Video",
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = if (isVideoTab) FontWeight.Bold else FontWeight.Medium,
                                     fontSize = 11.5.sp,
                                     maxLines = 1
                                 )
                             }
 
-                            // 2. Botón DATOS ANALIZADOS: Muestra desde el tipo de ejercicio hacia abajo
+                            // 2. Botón DATOS ANALIZADOS
+                            val isDataTab = activeBottomTab == 1
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
+                                        manualTabOverride = 1
                                         scrollState.animateScrollTo((analysisDataYOffset - 4).coerceAtLeast(0))
+                                        manualTabOverride = null
                                     }
                                 },
                                 modifier = Modifier
                                     .weight(1.3f)
                                     .height(44.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF162520),
-                                    contentColor = Color(0xFF00FFCC)
+                                    containerColor = if (isDataTab) Color(0xFF162B24) else Color(0xFF1E1E1E),
+                                    contentColor = if (isDataTab) Color(0xFF00FFCC) else Color(0xFF8A8A8A)
                                 ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.7f)),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    if (isDataTab) 1.5.dp else 1.dp,
+                                    if (isDataTab) Color(0xFF00FFCC) else Color(0xFF333333)
+                                ),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 4.dp)
                             ) {
@@ -3251,33 +3344,39 @@ fun VideoAnalysisScreen(
                                     Icons.Default.QueryStats,
                                     contentDescription = "Datos",
                                     modifier = Modifier.size(17.dp),
-                                    tint = Color(0xFF00FFCC)
+                                    tint = if (isDataTab) Color(0xFF00FFCC) else Color(0xFF8A8A8A)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     "Datos Analizados",
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = if (isDataTab) FontWeight.Bold else FontWeight.Medium,
                                     fontSize = 11.sp,
                                     maxLines = 1,
                                     softWrap = false
                                 )
                             }
 
-                            // 3. Botón ACCIONES: Lleva al final de la pantalla a los botones de acción
+                            // 3. Botón ACCIONES
+                            val isActionsTab = activeBottomTab == 2
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
+                                        manualTabOverride = 2
                                         scrollState.animateScrollTo(scrollState.maxValue)
+                                        manualTabOverride = null
                                     }
                                 },
                                 modifier = Modifier
                                     .weight(1.1f)
                                     .height(44.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF222222),
-                                    contentColor = Color.White
+                                    containerColor = if (isActionsTab) Color(0xFF162B24) else Color(0xFF1E1E1E),
+                                    contentColor = if (isActionsTab) Color(0xFF00FFCC) else Color(0xFF8A8A8A)
                                 ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF444444)),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    if (isActionsTab) 1.5.dp else 1.dp,
+                                    if (isActionsTab) Color(0xFF00FFCC) else Color(0xFF333333)
+                                ),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 4.dp)
                             ) {
@@ -3285,12 +3384,12 @@ fun VideoAnalysisScreen(
                                     Icons.Default.TouchApp,
                                     contentDescription = "Acciones",
                                     modifier = Modifier.size(17.dp),
-                                    tint = Color(0xFF00FFCC)
+                                    tint = if (isActionsTab) Color(0xFF00FFCC) else Color(0xFF8A8A8A)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     "Acciones",
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = if (isActionsTab) FontWeight.Bold else FontWeight.Medium,
                                     fontSize = 11.5.sp,
                                     maxLines = 1
                                 )
@@ -3408,7 +3507,11 @@ fun VideoAnalysisScreen(
                             strokeWidth = 3.dp
                         )
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text("Exportando Video", fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(
+                            if (isSavingToProfile) "Guardando en Perfil del Atleta" else "Exportando Video",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
                     }
                 },
                 text = {

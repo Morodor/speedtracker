@@ -18,8 +18,12 @@ import androidx.compose.material.icons.filled.SwitchAccount
 import androidx.compose.material.icons.filled.Videocam
 import android.content.Context
 import android.net.Uri
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.VideoLibrary
+import com.speedtracker.core.report.BiomechanicalPdfReportGenerator
+import com.speedtracker.presentation.history.SavedVideoPlayerDialog
 import androidx.compose.material3.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
@@ -49,7 +53,7 @@ fun DashboardScreen(
     var sessions by remember { mutableStateOf(userRepository.getSessionsForActiveUser()) }
 
     val maxJump = sessions.filter { it.activityType == "JUMP" }.maxByOrNull { it.result }
-    val maxVBT = sessions.filter { it.activityType == "VBT" }.maxByOrNull { it.result }
+    val maxVBT = sessions.filter { it.activityType.startsWith("VBT") }.maxByOrNull { it.result }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -390,80 +394,145 @@ fun MetricHighlightCard(title: String, value: String, date: String, modifier: Mo
 
 @Composable
 fun SessionItemCard(session: Session, onDelete: () -> Unit) {
+    val context = LocalContext.current
+    var showVideoDialog by remember { mutableStateOf(false) }
+    val hasVideo = !session.videoExportPath.isNullOrEmpty() && File(session.videoExportPath).exists()
+    val hasPdf = !session.pdfReportPath.isNullOrEmpty() && File(session.pdfReportPath).exists()
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF262626)),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(10.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (session.activityType == "JUMP") Icons.Default.Height else Icons.Default.FitnessCenter,
-                    contentDescription = null,
-                    tint = Color(0xFF00FFCC),
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                    Text(
-                        if (session.activityType == "JUMP") "Salto Vertical" else "Velocidad Barra (VBT)",
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.bodyMedium
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        if (session.activityType == "JUMP") Icons.Default.Height else Icons.Default.FitnessCenter,
+                        contentDescription = null,
+                        tint = Color(0xFF00FFCC),
+                        modifier = Modifier.size(22.dp)
                     )
-                    Text(
-                        formatDate(session.timestamp),
-                        color = Color.Gray,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val valueStr = if (session.activityType == "JUMP") {
-                    "${String.format("%.1f", session.result * 100)} cm"
-                } else {
-                    "${String.format("%.2f", session.result)} m/s"
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        valueStr,
-                        color = Color(0xFF00FFCC),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    if (session.activityType == "JUMP" && session.powerWatts != null) {
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
                         Text(
-                            "${session.powerWatts.toInt()} W (${String.format("%.1f", session.powerWattsPerKg ?: 0.0)} W/kg)",
-                            color = Color.LightGray,
-                            style = MaterialTheme.typography.labelSmall
+                            if (session.activityType == "JUMP") "Salto Vertical" else session.activityType,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.bodyMedium
                         )
-                    } else if (session.activityType == "VBT" && session.horizontalDeviationCm != null) {
                         Text(
-                            "Desvío: ${String.format("%.1f", session.horizontalDeviationCm)} cm",
-                            color = Color.LightGray,
-                            style = MaterialTheme.typography.labelSmall
+                            formatDate(session.timestamp),
+                            color = Color.Gray,
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
 
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.DeleteOutline,
-                        contentDescription = "Eliminar",
-                        tint = Color.Gray,
-                        modifier = Modifier.size(20.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val valueStr = if (session.activityType == "JUMP") {
+                        "${String.format("%.1f", session.result * 100)} cm"
+                    } else {
+                        "${String.format("%.2f", session.result)} m/s"
+                    }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            valueStr,
+                            color = Color(0xFF00FFCC),
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        if (session.activityType == "JUMP" && session.powerWatts != null) {
+                            Text(
+                                "${session.powerWatts.toInt()} W (${String.format("%.1f", session.powerWattsPerKg ?: 0.0)} W/kg)",
+                                color = Color.LightGray,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        } else if (session.activityType.startsWith("VBT")) {
+                            val sub = buildList {
+                                if (session.loadKg != null) add("${session.loadKg.toInt()} kg")
+                                if (session.horizontalDeviationCm != null) add("Desv: ${String.format("%.1f", session.horizontalDeviationCm)} cm")
+                            }.joinToString(" • ")
+                            if (sub.isNotEmpty()) {
+                                Text(
+                                    sub,
+                                    color = Color.LightGray,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
+                    }
+
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = "Eliminar",
+                            tint = Color.Gray,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            if (hasVideo || hasPdf) {
+                Divider(color = Color(0xFF333333), thickness = 1.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (hasVideo) {
+                        OutlinedButton(
+                            onClick = { showVideoDialog = true },
+                            modifier = Modifier.weight(1f).height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            border = BorderStroke(1.dp, Color(0xFF00FFCC)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
+                        ) {
+                            Icon(Icons.Default.PlayCircle, contentDescription = "Ver Video", modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Ver Video", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (hasPdf) {
+                        OutlinedButton(
+                            onClick = {
+                                BiomechanicalPdfReportGenerator.openOrSharePdf(context, File(session.pdfReportPath!!))
+                            },
+                            modifier = Modifier.weight(1f).height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
+                        ) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = "Informe PDF", modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Informe PDF", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    if (showVideoDialog && hasVideo) {
+        SavedVideoPlayerDialog(
+            videoFile = File(session.videoExportPath!!),
+            title = session.activityType,
+            onDismiss = { showVideoDialog = false }
+        )
     }
 }
 

@@ -378,12 +378,12 @@ object VideoOverlayExporter {
                     canvas.drawLine(0f, inflectY, frameW.toFloat(), inflectY, inflectionPaint)
                 }
 
-                // 3. Dibujar Trayectoria Dinámica de la Barra (Bar Path suavizado con curvas Catmull-Rom Cubic Bezier)
+                // 3. Dibujar Trayectoria Dinámica de la Barra (Bar Path suavizado con curvas Catmull-Rom Cubic Bezier y mayor grosor)
                 // Filtramos puntos estáticos para no crear manchas mientras la barra está en el piso
                 if (pointsUpToNow.size > 1) {
-                    val strokeW = 6f * lineDensity
+                    val strokeW = 8.5f * lineDensity
                     linePaint.strokeWidth = strokeW
-                    glowPaint.strokeWidth = strokeW * 2f
+                    glowPaint.strokeWidth = strokeW * 2.5f
                     val segPath = android.graphics.Path()
 
                     for (i in 0 until pointsUpToNow.size - 1) {
@@ -412,17 +412,17 @@ object VideoOverlayExporter {
                             else -> Color.parseColor("#00E5FF")                   // Cyan fase controlada
                         }
 
-                        // Resplandor translúcido
-                        glowPaint.color = Color.argb(60, Color.red(segColor), Color.green(segColor), Color.blue(segColor))
+                        // Resplandor translúcido más intenso
+                        glowPaint.color = Color.argb(105, Color.red(segColor), Color.green(segColor), Color.blue(segColor))
                         canvas.drawPath(segPath, glowPaint)
 
-                        // Línea central sólida
+                        // Línea central sólida más gruesa
                         linePaint.color = segColor
                         canvas.drawPath(segPath, linePaint)
                     }
                 }
 
-                // 4. Dibujar la Mira / Tracker centrada exactamente en el disco
+                // 4. Dibujar la Mira / Tracker centrada en el disco con relleno translúcido visible y trazos gruesos
                 if (currentPoint != null) {
                     val trackerColor = when {
                         currentPoint.velocityMps >= 1.10 -> Color.parseColor("#FF3D00")
@@ -432,42 +432,74 @@ object VideoOverlayExporter {
                     }
 
                     trackerCirclePaint.color = trackerColor
-                    trackerCirclePaint.strokeWidth = 3.5f * lineDensity
+                    trackerCirclePaint.strokeWidth = 6f * lineDensity
                     trackerDotPaint.color = trackerColor
                     crosshairPaint.color = trackerColor
-                    crosshairPaint.strokeWidth = 2f * lineDensity
+                    crosshairPaint.strokeWidth = 4.5f * lineDensity
 
                     // Radio exacto del disco olímpico calibrado (45 cm)
                     val plateRadius = if (calibratedPlateRadius != null && calibratedPlateRadius > 10f) {
                         calibratedPlateRadius
                     } else {
-                        35f * lineDensity
+                        45f * lineDensity
                     }
 
-                    // 1. Círculo exterior con el tamaño real del disco (45 cm)
+                    // 1. Relleno translúcido del disco completo (30% opacidad para que destaque sobre discos negros)
                     val plateAuraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         style = Paint.Style.FILL
-                        color = Color.argb(30, Color.red(trackerColor), Color.green(trackerColor), Color.blue(trackerColor))
+                        color = Color.argb(78, Color.red(trackerColor), Color.green(trackerColor), Color.blue(trackerColor))
                     }
                     canvas.drawCircle(currentPoint.x, currentPoint.y, plateRadius, plateAuraPaint)
 
+                    // Halo perimetral continuo suave + Anillo exterior segmentado grueso
+                    val outerGlowRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = 11f * lineDensity
+                        color = Color.argb(90, Color.red(trackerColor), Color.green(trackerColor), Color.blue(trackerColor))
+                    }
+                    canvas.drawCircle(currentPoint.x, currentPoint.y, plateRadius, outerGlowRingPaint)
+
                     val plateRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         style = Paint.Style.STROKE
-                        strokeWidth = 3f * lineDensity
+                        strokeWidth = 6.5f * lineDensity
                         color = trackerColor
-                        pathEffect = DashPathEffect(floatArrayOf(12f * lineDensity, 12f * lineDensity), 0f)
+                        pathEffect = DashPathEffect(floatArrayOf(18f * lineDensity, 12f * lineDensity), 0f)
                     }
                     canvas.drawCircle(currentPoint.x, currentPoint.y, plateRadius, plateRimPaint)
 
-                    // 2. Collarín interior y punto central
-                    val collarR = plateRadius * 0.28f
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, collarR, trackerCirclePaint)
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, 4.5f * lineDensity, trackerDotPaint)
+                    // Marcas cardinales amarillas (N, S, E, O) en el borde del disco
+                    val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = 5f * lineDensity
+                        strokeCap = Paint.Cap.ROUND
+                        color = Color.parseColor("#FFD600")
+                    }
+                    val tickLen = 10f * lineDensity
+                    canvas.drawLine(currentPoint.x, currentPoint.y - plateRadius - tickLen, currentPoint.x, currentPoint.y - plateRadius + tickLen, tickPaint)
+                    canvas.drawLine(currentPoint.x, currentPoint.y + plateRadius - tickLen, currentPoint.x, currentPoint.y + plateRadius + tickLen, tickPaint)
+                    canvas.drawLine(currentPoint.x - plateRadius - tickLen, currentPoint.y, currentPoint.x - plateRadius + tickLen, currentPoint.y, tickPaint)
+                    canvas.drawLine(currentPoint.x + plateRadius - tickLen, currentPoint.y, currentPoint.x + plateRadius + tickLen, currentPoint.y, tickPaint)
 
-                    // Cruz de mira óptica (+)
-                    val crossSize = collarR + 8f * lineDensity
+                    // 2. Collarín interior con relleno translúcido más marcado y borde grueso
+                    val collarR = (plateRadius * 0.30f).coerceAtLeast(14f * lineDensity)
+                    val collarFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.FILL
+                        color = Color.argb(115, Color.red(trackerColor), Color.green(trackerColor), Color.blue(trackerColor))
+                    }
+                    canvas.drawCircle(currentPoint.x, currentPoint.y, collarR, collarFillPaint)
+                    canvas.drawCircle(currentPoint.x, currentPoint.y, collarR, trackerCirclePaint)
+
+                    // 3. Cruz de mira óptica (+) gruesa y punto bullseye central
+                    val crossSize = collarR + 14f * lineDensity
                     canvas.drawLine(currentPoint.x - crossSize, currentPoint.y, currentPoint.x + crossSize, currentPoint.y, crosshairPaint)
                     canvas.drawLine(currentPoint.x, currentPoint.y - crossSize, currentPoint.x, currentPoint.y + crossSize, crosshairPaint)
+
+                    canvas.drawCircle(currentPoint.x, currentPoint.y, 7.5f * lineDensity, trackerDotPaint)
+                    val centerWhitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.FILL
+                        color = Color.WHITE
+                    }
+                    canvas.drawCircle(currentPoint.x, currentPoint.y, 3.2f * lineDensity, centerWhitePaint)
                 }
 
                 // 5. Dibujar HUD Biomecánico Profesional en 4 filas independientes (Cero superposición de textos)
