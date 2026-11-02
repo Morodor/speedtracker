@@ -367,7 +367,8 @@ object VideoOverlayExporter {
                 val currentPoint = pointsUpToNow.lastOrNull()
 
                 val scaleFactor = frameW / 1080f
-                val density = scaleFactor.coerceIn(0.7f, 2.0f)
+                val density = scaleFactor.coerceIn(0.32f, 2.5f)
+                val lineDensity = scaleFactor.coerceIn(0.45f, 2.2f)
 
                 // 2. Líneas Guía de Referencia
                 originBaselineY?.let { origY ->
@@ -380,7 +381,7 @@ object VideoOverlayExporter {
                 // 3. Dibujar Trayectoria Dinámica de la Barra (Bar Path)
                 // Filtramos puntos estáticos para no crear manchas mientras la barra está en el piso
                 if (pointsUpToNow.size > 1) {
-                    val strokeW = 6f * density
+                    val strokeW = 6f * lineDensity
                     linePaint.strokeWidth = strokeW
                     glowPaint.strokeWidth = strokeW * 2f
 
@@ -419,16 +420,16 @@ object VideoOverlayExporter {
                     }
 
                     trackerCirclePaint.color = trackerColor
-                    trackerCirclePaint.strokeWidth = 3.5f * density
+                    trackerCirclePaint.strokeWidth = 3.5f * lineDensity
                     trackerDotPaint.color = trackerColor
                     crosshairPaint.color = trackerColor
-                    crosshairPaint.strokeWidth = 2f * density
+                    crosshairPaint.strokeWidth = 2f * lineDensity
 
                     // Radio exacto del disco olímpico calibrado (45 cm)
                     val plateRadius = if (calibratedPlateRadius != null && calibratedPlateRadius > 10f) {
                         calibratedPlateRadius
                     } else {
-                        35f * density
+                        35f * lineDensity
                     }
 
                     // 1. Círculo exterior con el tamaño real del disco (45 cm)
@@ -440,70 +441,153 @@ object VideoOverlayExporter {
 
                     val plateRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         style = Paint.Style.STROKE
-                        strokeWidth = 3f * density
+                        strokeWidth = 3f * lineDensity
                         color = trackerColor
-                        pathEffect = DashPathEffect(floatArrayOf(12f * density, 12f * density), 0f)
+                        pathEffect = DashPathEffect(floatArrayOf(12f * lineDensity, 12f * lineDensity), 0f)
                     }
                     canvas.drawCircle(currentPoint.x, currentPoint.y, plateRadius, plateRimPaint)
 
                     // 2. Collarín interior y punto central
                     val collarR = plateRadius * 0.28f
                     canvas.drawCircle(currentPoint.x, currentPoint.y, collarR, trackerCirclePaint)
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, 4.5f * density, trackerDotPaint)
+                    canvas.drawCircle(currentPoint.x, currentPoint.y, 4.5f * lineDensity, trackerDotPaint)
 
                     // Cruz de mira óptica (+)
-                    val crossSize = collarR + 8f * density
+                    val crossSize = collarR + 8f * lineDensity
                     canvas.drawLine(currentPoint.x - crossSize, currentPoint.y, currentPoint.x + crossSize, currentPoint.y, crosshairPaint)
                     canvas.drawLine(currentPoint.x, currentPoint.y - crossSize, currentPoint.x, currentPoint.y + crossSize, crosshairPaint)
                 }
 
-                // 5. Dibujar HUD Biomecánico Profesional (Tarjeta Superior de Telemetría)
-                val hudMarginX = 28f * density
-                val hudMarginY = 32f * density
-                val hudW = frameW - (hudMarginX * 2)
-                val hudH = 135f * density
+                // 5. Dibujar HUD Biomecánico Profesional en 4 filas independientes (Cero superposición de textos)
+                val hudMarginX = 24f * density
+                val hudMarginY = 24f * density
+                val hudW = frameW - (hudMarginX * 2f)
+                val hudH = 186f * density
                 val hudRect = RectF(hudMarginX, hudMarginY, hudMarginX + hudW, hudMarginY + hudH)
 
-                titlePaint.textSize = 23f * density
-                highlightPaint.textSize = 21f * density
-                textPaint.textSize = 19f * density
-                subTextPaint.textSize = 16f * density
+                titlePaint.textSize = 27f * density
+                highlightPaint.textSize = 26f * density
+                textPaint.textSize = 22f * density
+                subTextPaint.textSize = 20f * density
 
-                canvas.drawRoundRect(hudRect, 18f * density, 18f * density, hudCardPaint)
-                canvas.drawRoundRect(hudRect, 18f * density, 18f * density, hudBorderPaint)
+                canvas.drawRoundRect(hudRect, 20f * density, 20f * density, hudCardPaint)
+                canvas.drawRoundRect(hudRect, 20f * density, 20f * density, hudBorderPaint)
 
-                val leftX = hudMarginX + 18f * density
-                var rowY = hudMarginY + 34f * density
+                val padX = 22f * density
+                val leftX = hudRect.left + padX
+                val rightX = hudRect.right - padX
+                val fullContentW = (rightX - leftX).coerceAtLeast(50f)
 
-                // Fila 1: Título y Modalidad
-                canvas.drawText("⚡ SPEED TRACKER PRO", leftX, rowY, titlePaint)
-                val modeTag = if (mode == "VBT") "VBT • $exerciseName" else "SALTO • $exerciseName"
-                val tagW = subTextPaint.measureText(modeTag)
-                canvas.drawText(modeTag, hudRect.right - 18f * density - tagW, rowY, subTextPaint)
-
-                // Fila 2: Velocidad instantánea y Resumen
-                rowY += 40f * density
-                if (mode == "VBT") {
-                    val velStr = "Velocidad: ${String.format("%.2f", currentPoint?.velocityMps ?: 0.0)} m/s"
-                    canvas.drawText(velStr, leftX, rowY, highlightPaint)
-
-                    val summaryStr = if (bestMetricSummary.isNotBlank()) bestMetricSummary else "Pico: ${String.format("%.2f", currentPoint?.currentPeakVelocity ?: 0.0)} m/s"
-                    val sumW = textPaint.measureText(summaryStr)
-                    canvas.drawText(summaryStr, hudRect.right - 18f * density - sumW, rowY, textPaint)
-                } else {
-                    canvas.drawText("Salto Vertical", leftX, rowY, highlightPaint)
-                    if (bestMetricSummary.isNotBlank()) {
-                        val sumW = textPaint.measureText(bestMetricSummary)
-                        canvas.drawText(bestMetricSummary, hudRect.right - 18f * density - sumW, rowY, textPaint)
+                fun drawLeftAndRightRow(
+                    leftText: String,
+                    leftPaint: Paint,
+                    leftBaseSize: Float,
+                    rightText: String,
+                    rightPaint: Paint,
+                    rightBaseSize: Float,
+                    y: Float
+                ) {
+                    leftPaint.textSize = leftBaseSize
+                    rightPaint.textSize = rightBaseSize
+                    val gap = 16f * density
+                    var lW = leftPaint.measureText(leftText)
+                    var rW = rightPaint.measureText(rightText)
+                    if (lW + rW + gap > fullContentW) {
+                        val ratio = (fullContentW - gap).coerceAtLeast(40f) / (lW + rW).coerceAtLeast(1f)
+                        leftPaint.textSize = (leftBaseSize * ratio).coerceAtLeast(8f)
+                        rightPaint.textSize = (rightBaseSize * ratio).coerceAtLeast(8f)
+                        rW = rightPaint.measureText(rightText)
                     }
+                    canvas.drawText(leftText, leftX, y, leftPaint)
+                    canvas.drawText(rightText, rightX - rW, y, rightPaint)
                 }
 
-                // Fila 3: Atleta y Fase
-                rowY += 34f * density
-                val phaseStr = if (currentPoint?.isConcentric == true) "Fase Concéntrica" else if (currentPoint?.isEccentric == true) "Fase Excéntrica" else "Reposo"
-                canvas.drawText("Atleta: $athleteName", leftX, rowY, subTextPaint)
-                val phaseW = subTextPaint.measureText(phaseStr)
-                canvas.drawText(phaseStr, hudRect.right - 18f * density - phaseW, rowY, subTextPaint)
+                fun drawFullRow(
+                    text: String,
+                    paint: Paint,
+                    baseSize: Float,
+                    y: Float
+                ) {
+                    paint.textSize = baseSize
+                    val tW = paint.measureText(text)
+                    if (tW > fullContentW && tW > 0f) {
+                        paint.textSize = (baseSize * (fullContentW / tW)).coerceAtLeast(8f)
+                    }
+                    canvas.drawText(text, leftX, y, paint)
+                }
+
+                // Fila 1: Marca y Ejercicio
+                var rowY = hudMarginY + 38f * density
+                val modeTag = if (mode == "VBT") "VBT • $exerciseName" else "SALTO • $exerciseName"
+                drawLeftAndRightRow(
+                    leftText = "⚡ SPEED TRACKER PRO",
+                    leftPaint = titlePaint,
+                    leftBaseSize = 26f * density,
+                    rightText = modeTag,
+                    rightPaint = subTextPaint,
+                    rightBaseSize = 20f * density,
+                    y = rowY
+                )
+
+                // Fila 2: Velocidad Instantánea y Fase Cinemática
+                rowY += 44f * density
+                val phaseStr = when {
+                    currentPoint?.isConcentric == true -> "Fase Concéntrica"
+                    currentPoint?.isEccentric == true -> "Fase Excéntrica"
+                    else -> "Reposo"
+                }
+                if (mode == "VBT") {
+                    val velStr = "Velocidad: ${String.format(java.util.Locale.US, "%.2f", currentPoint?.velocityMps ?: 0.0)} m/s"
+                    drawLeftAndRightRow(
+                        leftText = velStr,
+                        leftPaint = highlightPaint,
+                        leftBaseSize = 26f * density,
+                        rightText = phaseStr,
+                        rightPaint = subTextPaint,
+                        rightBaseSize = 20f * density,
+                        y = rowY
+                    )
+                } else {
+                    drawLeftAndRightRow(
+                        leftText = "Salto Vertical",
+                        leftPaint = highlightPaint,
+                        leftBaseSize = 26f * density,
+                        rightText = phaseStr,
+                        rightPaint = subTextPaint,
+                        rightBaseSize = 20f * density,
+                        y = rowY
+                    )
+                }
+
+                // Fila 3: Resumen Biomecánico (Línea completa independiente para evitar cualquier superposición)
+                rowY += 42f * density
+                val cleanSummary = bestMetricSummary
+                    .removePrefix("$exerciseName • ")
+                    .removePrefix("$exerciseName   ")
+                    .ifBlank {
+                        if (mode == "VBT") {
+                            "VP: ${String.format(java.util.Locale.US, "%.2f", currentPoint?.currentPeakVelocity ?: 0.0)} m/s"
+                        } else {
+                            ""
+                        }
+                    }
+                if (cleanSummary.isNotBlank()) {
+                    drawFullRow(
+                        text = cleanSummary,
+                        paint = textPaint,
+                        baseSize = 22f * density,
+                        y = rowY
+                    )
+                }
+
+                // Fila 4: Nombre del Atleta
+                rowY += 38f * density
+                drawFullRow(
+                    text = "Atleta: $athleteName",
+                    paint = subTextPaint,
+                    baseSize = 20f * density,
+                    y = rowY
+                )
 
                 return currentBmp
             }
