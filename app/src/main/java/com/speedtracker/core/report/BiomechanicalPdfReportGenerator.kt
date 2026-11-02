@@ -149,8 +149,10 @@ object BiomechanicalPdfReportGenerator {
             val t3 = trimEndMs * 1000L
 
             listOf(t1, t2, t3).forEach { timeUs ->
-                val b = retriever?.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                if (b != null) frameBitmaps.add(b)
+                val rawBmp = retriever?.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                if (rawBmp != null) {
+                    frameBitmaps.add(preparePdfSafeBitmap(rawBmp, maxDimPx = 540))
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -186,22 +188,19 @@ object BiomechanicalPdfReportGenerator {
                     // Video horizontal: ajustar al ancho del contenedor y centrar verticalmente
                     val fittedH = frameWidth / bmpRatio
                     val yOff = (frameHeight - fittedH) / 2f
-                    RectF(fx, frameY + yOff, fx + frameWidth, frameY + yOff + fittedH)
+                    RectF(fx + 1f, frameY + yOff + 1f, fx + frameWidth - 1f, frameY + yOff + fittedH - 1f)
                 } else {
                     // Video vertical (smartphone portrait 9:16): ajustar al alto y centrar horizontalmente con proporción natural
                     val fittedW = frameHeight * bmpRatio
                     val xOff = (frameWidth - fittedW) / 2f
-                    RectF(fx + xOff, frameY, fx + xOff + fittedW, frameY + frameHeight)
+                    RectF(fx + xOff, frameY + 1f, fx + xOff + fittedW, frameY + frameHeight - 1f)
                 }
 
                 val srcRect = Rect(0, 0, bmp.width, bmp.height)
-                canvas.save()
-                val clipPath = android.graphics.Path().apply {
-                    addRoundRect(frameRect, 4f, 4f, android.graphics.Path.Direction.CW)
-                }
-                canvas.clipPath(clipPath)
+                paint.isFilterBitmap = true
+                // Dibujar el bitmap ARGB_8888 pre-escalado directamente (sin clipPath no rectangular)
+                // para que PdfRenderer de Android renderice la página al instante sin quedar en blanco
                 canvas.drawBitmap(bmp, srcRect, drawRect, paint)
-                canvas.restore()
             }
 
             // Borde exterior cian neón
@@ -373,6 +372,62 @@ object BiomechanicalPdfReportGenerator {
     /**
      * Abre el archivo PDF generado en el visor del sistema o lo comparte vía aplicaciones de mensajería/correo
      */
+    /**
+     * Convierte cualquier fotograma de video (incluyendo HARDWARE bitmaps de Android 10+)
+     * a un Bitmap ARGB_8888 en software y pre-escalado a resolución óptima de impresión A4,
+     * evitando que el motor PdfRenderer deje la página en blanco al abrir.
+     */
+    private fun preparePdfSafeBitmap(src: Bitmap, maxDimPx: Int = 540): Bitmap {
+        val softBmp = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && src.config == Bitmap.Config.HARDWARE) {
+            src.copy(Bitmap.Config.ARGB_8888, false)
+        } else if (src.config != Bitmap.Config.ARGB_8888) {
+            src.copy(Bitmap.Config.ARGB_8888, false)
+        } else {
+            src
+        }
+        val w = softBmp.width.coerceAtLeast(1)
+        val h = softBmp.height.coerceAtLeast(1)
+        val maxSide = maxOf(w, h)
+        if (maxSide <= maxDimPx) return softBmp
+        val scale = maxDimPx.toFloat() / maxSide.toFloat()
+        val targetW = (w * scale).toInt().coerceAtLeast(1)
+        val targetH = (h * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(softBmp, targetW, targetH, true)
+    }
+
+    /**
+     * Renderiza la primera página del archivo PDF a un Bitmap ARGB_8888 de alta resolución (2x A4)
+     * con fondo blanco pre-rellenado para visualización instantánea dentro de la app sin pantalla en blanco.
+     */
+    suspend fun renderPdfPageToBitmap(pdfFile: File): Bitmap? = withContext(Dispatchers.IO) {
+        if (!pdfFile.exists()) return@withContext null
+        var pfd: android.os.ParcelFileDescriptor? = null
+        var renderer: android.graphics.pdf.PdfRenderer? = null
+        var page: android.graphics.pdf.PdfRenderer.Page? = null
+        try {
+            pfd = android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+            renderer = android.graphics.pdf.PdfRenderer(pfd)
+            if (renderer.pageCount > 0) {
+                page = renderer.openPage(0)
+                val bmpW = (page.width * 2).coerceAtLeast(595)
+                val bmpH = (page.height * 2).coerceAtLeast(842)
+                val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                canvas.drawColor(Color.parseColor("#F8FAFC"))
+                page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                return@withContext bitmap
+            }
+            null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        } finally {
+            try { page?.close() } catch (e: Exception) {}
+            try { renderer?.close() } catch (e: Exception) {}
+            try { pfd?.close() } catch (e: Exception) {}
+        }
+    }
+
     fun openOrSharePdf(context: Context, pdfFile: File) {
         val uri: Uri = FileProvider.getUriForFile(
             context,
@@ -389,9 +444,30 @@ object BiomechanicalPdfReportGenerator {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
 
-        context.startActivity(Intent.createChooser(intent, "Abrir o Compartir Informe PDF").apply {
+        context.startActivity(Intent.createChooser(intent, "Compartir Informe PDF").apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         })
+    }
+
+    fun openPdfInExternalViewer(context: Context, pdfFile: File) {
+        try {
+            val uri: Uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                pdfFile
+            )
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/pdf")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(Intent.createChooser(viewIntent, "Abrir Informe PDF").apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            })
+        } catch (e: Exception) {
+            openOrSharePdf(context, pdfFile)
+        }
     }
 
     data class BiomechanicalEvaluation(

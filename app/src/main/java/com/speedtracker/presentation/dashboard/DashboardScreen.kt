@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.VideoLibrary
 import com.speedtracker.core.report.BiomechanicalPdfReportGenerator
+import com.speedtracker.presentation.history.SavedPdfReportDialog
 import com.speedtracker.presentation.history.SavedVideoPlayerDialog
 import androidx.compose.material3.*
 import androidx.compose.ui.platform.LocalContext
@@ -396,6 +397,7 @@ fun MetricHighlightCard(title: String, value: String, date: String, modifier: Mo
 fun SessionItemCard(session: Session, onDelete: () -> Unit) {
     val context = LocalContext.current
     var showVideoDialog by remember { mutableStateOf(false) }
+    var showPdfDialog by remember { mutableStateOf(false) }
     val hasVideo = !session.videoExportPath.isNullOrEmpty() && File(session.videoExportPath).exists()
     val hasPdf = !session.pdfReportPath.isNullOrEmpty() && File(session.pdfReportPath).exists()
 
@@ -510,7 +512,7 @@ fun SessionItemCard(session: Session, onDelete: () -> Unit) {
                     if (hasPdf) {
                         OutlinedButton(
                             onClick = {
-                                BiomechanicalPdfReportGenerator.openOrSharePdf(context, File(session.pdfReportPath!!))
+                                showPdfDialog = true
                             },
                             modifier = Modifier.weight(1f).height(34.dp),
                             contentPadding = PaddingValues(horizontal = 8.dp),
@@ -532,6 +534,14 @@ fun SessionItemCard(session: Session, onDelete: () -> Unit) {
             videoFile = File(session.videoExportPath!!),
             title = session.activityType,
             onDismiss = { showVideoDialog = false }
+        )
+    }
+
+    if (showPdfDialog && hasPdf) {
+        SavedPdfReportDialog(
+            pdfFile = File(session.pdfReportPath!!),
+            title = "Informe PDF • ${session.activityType}",
+            onDismiss = { showPdfDialog = false }
         )
     }
 }

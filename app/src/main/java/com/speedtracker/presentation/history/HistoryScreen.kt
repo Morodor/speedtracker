@@ -5,8 +5,11 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.VideoView
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,6 +21,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -43,6 +48,7 @@ fun HistoryScreen(
 
     var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "JUMP", "VBT"
     var videoSessionToPlay by remember { mutableStateOf<Session?>(null) }
+    var pdfSessionToView by remember { mutableStateOf<Session?>(null) }
 
     val filteredSessions = remember(sessions, selectedFilter) {
         when (selectedFilter) {
@@ -254,8 +260,7 @@ fun HistoryScreen(
                                     if (hasPdf) {
                                         OutlinedButton(
                                             onClick = {
-                                                val reportFile = File(session.pdfReportPath!!)
-                                                BiomechanicalPdfReportGenerator.openOrSharePdf(context, reportFile)
+                                                pdfSessionToView = session
                                             },
                                             modifier = Modifier.weight(1f).height(36.dp),
                                             contentPadding = PaddingValues(horizontal = 8.dp),
@@ -289,6 +294,20 @@ fun HistoryScreen(
             )
         } else {
             videoSessionToPlay = null
+        }
+    }
+
+    pdfSessionToView?.let { session ->
+        val pFile = session.pdfReportPath?.let { File(it) }
+        if (pFile != null && pFile.exists()) {
+            val athleteName = usersMap[session.userId]?.name ?: "Atleta"
+            SavedPdfReportDialog(
+                pdfFile = pFile,
+                title = "Informe PDF • ${session.activityType} ($athleteName)",
+                onDismiss = { pdfSessionToView = null }
+            )
+        } else {
+            pdfSessionToView = null
         }
     }
 }
@@ -445,6 +464,141 @@ fun openOrShareVideoFile(context: Context, videoFile: File) {
         })
     } catch (e: Exception) {
         e.printStackTrace()
+    }
+}
+
+@Composable
+fun SavedPdfReportDialog(
+    pdfFile: File,
+    title: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var renderedBitmap by remember(pdfFile) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var isLoading by remember(pdfFile) { mutableStateOf(true) }
+
+    LaunchedEffect(pdfFile) {
+        isLoading = true
+        renderedBitmap = BiomechanicalPdfReportGenerator.renderPdfPageToBitmap(pdfFile)
+        isLoading = false
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF161A20),
+            border = BorderStroke(1.dp, Color(0x5500FFCC))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.5.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.LightGray)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(470.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFFF8FAFC)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val bmp = renderedBitmap
+                    if (isLoading) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = Color(0xFF0F172A))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Renderizando Informe Biomecánico...", color = Color(0xFF0F172A), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else if (bmp != null) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = "Informe PDF",
+                                contentScale = ContentScale.FillWidth,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    } else {
+                        Text(
+                            "Listo para abrir o compartir en visor externo.",
+                            color = Color(0xFF0F172A),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            BiomechanicalPdfReportGenerator.openPdfInExternalViewer(context, pdfFile)
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = Color(0xFF262D37),
+                            contentColor = Color(0xFF00FFCC)
+                        )
+                    ) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Visor Externo", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            BiomechanicalPdfReportGenerator.openOrSharePdf(context, pdfFile)
+                        },
+                        modifier = Modifier.weight(1.15f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF00FFCC),
+                            contentColor = Color.Black
+                        )
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Compartir PDF", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                    }
+                }
+            }
+        }
     }
 }
 

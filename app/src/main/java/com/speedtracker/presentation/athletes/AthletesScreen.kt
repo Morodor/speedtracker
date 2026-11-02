@@ -21,6 +21,7 @@ import com.speedtracker.core.report.BiomechanicalPdfReportGenerator
 import com.speedtracker.data.UserRepository
 import com.speedtracker.domain.model.Session
 import com.speedtracker.domain.model.User
+import com.speedtracker.presentation.history.SavedPdfReportDialog
 import com.speedtracker.presentation.history.SavedVideoPlayerDialog
 import com.speedtracker.presentation.history.formatHistoryDate
 import java.io.File
@@ -41,6 +42,7 @@ fun AthletesScreen(
     var userToDelete by remember { mutableStateOf<User?>(null) }
     var expandedUserId by remember { mutableStateOf<String?>(activeUser?.id) }
     var videoSessionToPlay by remember { mutableStateOf<Session?>(null) }
+    var pdfSessionToView by remember { mutableStateOf<Session?>(null) }
 
     Scaffold(
         topBar = {
@@ -259,7 +261,7 @@ fun AthletesScreen(
                                                             if (hasPdf) {
                                                                 OutlinedButton(
                                                                     onClick = {
-                                                                        BiomechanicalPdfReportGenerator.openOrSharePdf(context, File(session.pdfReportPath!!))
+                                                                        pdfSessionToView = session
                                                                     },
                                                                     modifier = Modifier.weight(1f).height(32.dp),
                                                                     contentPadding = PaddingValues(horizontal = 6.dp),
@@ -298,6 +300,20 @@ fun AthletesScreen(
                 )
             } else {
                 videoSessionToPlay = null
+            }
+        }
+
+        pdfSessionToView?.let { session ->
+            val pFile = session.pdfReportPath?.let { File(it) }
+            if (pFile != null && pFile.exists()) {
+                val athleteName = users.find { it.id == session.userId }?.name ?: "Atleta"
+                SavedPdfReportDialog(
+                    pdfFile = pFile,
+                    title = "Informe PDF • ${session.activityType} ($athleteName)",
+                    onDismiss = { pdfSessionToView = null }
+                )
+            } else {
+                pdfSessionToView = null
             }
         }
 

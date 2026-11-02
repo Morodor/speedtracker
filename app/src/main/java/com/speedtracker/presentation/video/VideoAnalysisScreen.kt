@@ -88,6 +88,7 @@ import com.speedtracker.core.math.VBTExerciseFamily
 import com.speedtracker.core.math.VBTExerciseModel
 import com.speedtracker.core.math.VerticalJumpAnalyzer
 import com.speedtracker.core.report.BiomechanicalPdfReportGenerator
+import com.speedtracker.presentation.history.SavedPdfReportDialog
 import com.speedtracker.data.UserRepository
 import com.speedtracker.presentation.camera.FramingGuideOverlay
 import com.speedtracker.presentation.camera.FramingGuideType
@@ -475,6 +476,7 @@ fun VideoAnalysisScreen(
     var trackingPointsResult by remember { mutableStateOf<List<VideoFrameTrackingPoint>>(emptyList()) }
     var isGeneratingPdf by remember { mutableStateOf(false) }
     var generatedPdfPath by remember { mutableStateOf<String?>(null) }
+    var showPdfPreviewDialog by remember { mutableStateOf(false) }
     var generatedVideoPath by remember { mutableStateOf<String?>(null) }
     var isSavingToProfile by remember { mutableStateOf(false) }
     var selectedMetricInfo by remember { mutableStateOf<MetricInfo?>(null) }
@@ -2885,6 +2887,7 @@ fun VideoAnalysisScreen(
                                         trackingPoints = trackingPointsResult,
                                         peakVelocity = peakVelocity,
                                         meanVelocity = meanVelocity,
+                                        vmpVelocity = vmpVelocity,
                                         currentVideoPosMs = previewPlaybackPosMs,
                                         onSeekToTimestamp = { resultSeekPosMs = it },
                                         modifier = Modifier.fillMaxWidth()
@@ -3096,8 +3099,8 @@ fun VideoAnalysisScreen(
                                                     trimEndMs = trimEndMs
                                                 )
                                                 generatedPdfPath = reportFile.absolutePath
+                                                showPdfPreviewDialog = true
                                                 Toast.makeText(context, "Informe PDF generado con éxito", Toast.LENGTH_SHORT).show()
-                                                BiomechanicalPdfReportGenerator.openOrSharePdf(context, reportFile)
                                             } catch (e: Exception) {
                                                 e.printStackTrace()
                                                 Toast.makeText(context, "Error al generar informe PDF: ${e.message}", Toast.LENGTH_LONG).show()
@@ -3402,6 +3405,15 @@ fun VideoAnalysisScreen(
 
         // Diálogo de exportación y quemado de video con trayectoria
         
+    // Visor Instantáneo del Informe PDF dentro de la App (Cero pantalla en blanco + Compartir)
+    if (showPdfPreviewDialog && generatedPdfPath != null && File(generatedPdfPath!!).exists()) {
+        SavedPdfReportDialog(
+            pdfFile = File(generatedPdfPath!!),
+            title = "Informe Biomecánico • ${if (currentMode == "VBT") selectedVBTExercise.displayName else "Salto Vertical"}",
+            onDismiss = { showPdfPreviewDialog = false }
+        )
+    }
+
     // Dialog explicativo de métricas biomecánicas
     if (selectedMetricInfo != null) {
         val info = selectedMetricInfo!!
@@ -3692,6 +3704,7 @@ fun KinematicTelemetryChart(
     trackingPoints: List<VideoFrameTrackingPoint>,
     peakVelocity: Double,
     meanVelocity: Double,
+    vmpVelocity: Double? = null,
     currentVideoPosMs: Long = 0L,
     onSeekToTimestamp: ((Long) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -3705,10 +3718,15 @@ fun KinematicTelemetryChart(
     // Modo de telemetría: 0: Velocidad (m/s), 1: Aceleración (m/s²), 2: Ambas superpuestas (activas por defecto)
     var telemetryMode by remember { mutableIntStateOf(2) }
 
-    // Procesar datos y suavizar con filtro digital de fase cero (Butterworth 4to orden emulado)
-    val telemetryPoints = remember(trackingPoints) {
+    // Procesar datos y preservar exactamente el pico real (peakVelocity) para 100% de consistencia
+    // entre la tarjeta principal, el marcador VP sobre la curva y la leyenda inferior
+    val telemetryPoints = remember(trackingPoints, peakVelocity) {
         val rawV = trackingPoints.map { it.velocityMps }
-        val smoothedV = zeroPhaseSmooth(rawV)
+        val baseSmoothedV = zeroPhaseSmooth(rawV, passes = 1)
+        val smoothMax = baseSmoothedV.maxOrNull() ?: 0.0
+        val targetPeak = if (peakVelocity > 0.05) peakVelocity else (rawV.maxOrNull() ?: 0.0)
+        val peakScale = if (smoothMax > 0.05 && targetPeak > 0.05) (targetPeak / smoothMax) else 1.0
+        val smoothedV = baseSmoothedV.map { it * peakScale }
 
         val rawA = mutableListOf<Double>()
         for (i in trackingPoints.indices) {
@@ -3730,10 +3748,12 @@ fun KinematicTelemetryChart(
         }
     }
 
-    // Velocidad Media Propulsiva (VMP): fase concéntrica con aceleración >= -9.81 m/s²
-    val vmp = remember(telemetryPoints) {
-        val propulsivePoints = telemetryPoints.filter { it.isConcentric && it.accelerationMps2 >= -9.81 }
-        if (propulsivePoints.isNotEmpty()) propulsivePoints.map { it.velocityMps }.average() else null
+    // Velocidad Media Propulsiva (VMP): unificada al 100% con el cálculo principal de la tarjeta de resultados
+    val vmp = remember(telemetryPoints, vmpVelocity, meanVelocity) {
+        vmpVelocity ?: run {
+            val propulsivePoints = telemetryPoints.filter { (it.isConcentric || it.velocityMps > 0.15) && it.accelerationMps2 >= -9.81 }
+            if (propulsivePoints.isNotEmpty()) propulsivePoints.map { it.velocityMps }.average().coerceAtLeast(meanVelocity) else null
+        }
     }
 
     val maxV = remember(telemetryPoints, peakVelocity) {
@@ -4269,10 +4289,15 @@ fun RealtimeTelemetryOverlayChart(
 
     var showAcceleration by remember { mutableStateOf(true) }
 
-    // Suavizado avanzado de fase cero de 7-tap con 3 pasadas (elimina todo temblor o ruido digital)
+    // Suavizado avanzado de fase cero con preservación exacta del pico real (VP)
+    // para que ★ Pico en el gráfico del video sea idéntico a la tarjeta principal y a Telemetría Cinemática
     val telemetryPoints = remember(trackingPoints) {
         val rawV = trackingPoints.map { it.velocityMps }
-        val smoothedV = zeroPhaseSmooth7Tap(rawV, passes = 3)
+        val rawPeak = trackingPoints.maxOfOrNull { maxOf(it.velocityMps, it.currentPeakVelocity) } ?: 0.0
+        val baseSmoothedV = zeroPhaseSmooth7Tap(rawV, passes = 2)
+        val smoothMax = baseSmoothedV.maxOrNull() ?: 0.0
+        val peakScale = if (smoothMax > 0.05 && rawPeak > 0.05) (rawPeak / smoothMax) else 1.0
+        val smoothedV = baseSmoothedV.map { it * peakScale }
 
         val rawA = mutableListOf<Double>()
         for (i in trackingPoints.indices) {
@@ -4282,7 +4307,7 @@ fun RealtimeTelemetryOverlayChart(
             } else 0.0
             rawA.add(a.coerceIn(-25.0, 35.0))
         }
-        val smoothedA = zeroPhaseSmooth7Tap(rawA, passes = 3)
+        val smoothedA = zeroPhaseSmooth7Tap(rawA, passes = 2)
 
         trackingPoints.indices.map { i ->
             KinematicDataPoint(
@@ -4342,8 +4367,8 @@ fun RealtimeTelemetryOverlayChart(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Ranura fija Velocidad instantánea en el cursor (76dp)
-                Box(modifier = Modifier.width(76.dp), contentAlignment = Alignment.CenterStart) {
+                // Ranura fija Velocidad instantánea en el cursor (86dp)
+                Box(modifier = Modifier.width(86.dp), contentAlignment = Alignment.CenterStart) {
                     Text(
                         "⚡ V: ${String.format(Locale.US, "%.2f", activePoint?.velocityMps ?: 0.0)} m/s",
                         color = Color(0xFF00FFCC),
@@ -5014,7 +5039,7 @@ fun AnalysisResultVideoPreview(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(8.dp)
-                        .width(238.dp),
+                        .width(250.dp),
                     color = Color(0xDD111111),
                     shape = RoundedCornerShape(8.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x6600FFCC))
@@ -5033,8 +5058,8 @@ fun AnalysisResultVideoPreview(
                             val load = barbellLoadKg ?: 70.0
                             val instPower = (vel * load * 9.81).toInt()
 
-                            // Ranura fija para Carga (48dp)
-                            Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.CenterStart) {
+                            // Ranura fija para Carga (56dp)
+                            Box(modifier = Modifier.width(56.dp), contentAlignment = Alignment.CenterStart) {
                                 Text(
                                     "⚡ ${load.toInt()} kg",
                                     color = Color(0xFF00FFCC),
@@ -5618,14 +5643,24 @@ suspend fun processVideo(
             }
 
             // Suavizado biomecánico de fase cero (adelante-atrás) sobre las coordenadas (x, y)
-            // para eliminar vibraciones de píxel y generar una curva orgánica y continua.
+            // y sobre la curva de velocidad con preservación exacta del pico real (maxResult),
+            // garantizando que todas las pantallas, gráficos, HUD y video exportado muestren la misma velocidad.
             if (trackingPoints.size >= 4) {
                 val smoothX = zeroPhaseSmooth(trackingPoints.map { it.x.toDouble() }, passes = 4)
                 val smoothY = zeroPhaseSmooth(trackingPoints.map { it.y.toDouble() }, passes = 2)
+                val rawV = trackingPoints.map { it.velocityMps }
+                val baseSmoothV = zeroPhaseSmooth(rawV, passes = 2)
+                val smoothPeak = baseSmoothV.maxOrNull() ?: 0.0
+                val truePeak = if (maxResult > 0.05) maxResult else (rawV.maxOrNull() ?: 0.0)
+                val vScale = if (smoothPeak > 0.05 && truePeak > 0.05) (truePeak / smoothPeak) else 1.0
+
                 for (idx in trackingPoints.indices) {
+                    val canonicalV = if (mode == "VBT") (baseSmoothV[idx] * vScale) else trackingPoints[idx].velocityMps
                     trackingPoints[idx] = trackingPoints[idx].copy(
                         x = smoothX[idx].toFloat(),
-                        y = smoothY[idx].toFloat()
+                        y = smoothY[idx].toFloat(),
+                        velocityMps = canonicalV,
+                        currentPeakVelocity = if (mode == "VBT") truePeak else trackingPoints[idx].currentPeakVelocity
                     )
                 }
             }
