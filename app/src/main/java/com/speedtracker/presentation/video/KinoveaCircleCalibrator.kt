@@ -72,11 +72,13 @@ fun KinoveaCircleReticleCanvas(
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
 
-                        // Límites estrictos para que el círculo tracker NUNCA salga de los márgenes del video
-                        val minX = currentRadius.coerceAtMost(boundW / 2f)
-                        val maxX = (boundW - currentRadius).coerceAtLeast(boundW / 2f)
-                        val minY = currentRadius.coerceAtMost(boundH / 2f)
-                        val maxY = (boundH - currentRadius).coerceAtLeast(boundH / 2f)
+                        val edgePad = 14.dp.toPx()
+                        val safeR = currentRadius.coerceAtMost(minOf(boundW, boundH) * 0.44f)
+                        // Límites estrictos para que el círculo tracker y sus marcas NUNCA salgan de los márgenes del video
+                        val minX = (safeR + edgePad).coerceAtMost(boundW / 2f)
+                        val maxX = (boundW - safeR - edgePad).coerceAtLeast(boundW / 2f)
+                        val minY = (safeR + edgePad).coerceAtMost(boundH / 2f)
+                        val maxY = (boundH - safeR - edgePad).coerceAtLeast(boundH / 2f)
 
                         if (!change.pressed) {
                             if (!hasMoved && !isHandle) {
@@ -101,8 +103,16 @@ fun KinoveaCircleReticleCanvas(
                             val dragDelta = change.positionChange()
                             change.consume()
                             if (isHandle) {
-                                val maxR = maxOf(15f, minOf(currentCenter.x, boundW - currentCenter.x, currentCenter.y, boundH - currentCenter.y))
-                                val newR = (currentRadius + dragDelta.x).coerceIn(15f, maxR)
+                                val maxR = maxOf(
+                                    18f,
+                                    minOf(
+                                        currentCenter.x - edgePad,
+                                        boundW - currentCenter.x - edgePad,
+                                        currentCenter.y - edgePad,
+                                        boundH - currentCenter.y - edgePad
+                                    )
+                                )
+                                val newR = (currentRadius + dragDelta.x).coerceIn(18f, maxR)
                                 onRadiusChangeState(newR)
                             } else {
                                 val targetX = (currentCenter.x + dragDelta.x).coerceIn(minX, maxX)
@@ -114,29 +124,41 @@ fun KinoveaCircleReticleCanvas(
                 }
             }
     ) {
+        val edgePad = 14.dp.toPx()
+        val maxAllowedR = (minOf(size.width, size.height) / 2f - edgePad).coerceAtLeast(18f)
+        val drawR = radius.coerceIn(18f, maxAllowedR)
+        val minCX = (drawR + edgePad).coerceAtMost(size.width / 2f)
+        val maxCX = (size.width - drawR - edgePad).coerceAtLeast(size.width / 2f)
+        val minCY = (drawR + edgePad).coerceAtMost(size.height / 2f)
+        val maxCY = (size.height - drawR - edgePad).coerceAtLeast(size.height / 2f)
+        val drawCenter = Offset(
+            center.x.coerceIn(minCX, maxCX),
+            center.y.coerceIn(minCY, maxCY)
+        )
+
         val strokeW = 3.dp.toPx()
         val dashEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 14f), 0f)
 
         // 1. Relleno suave translúcido del disco
         drawCircle(
             color = Color(0x3300FFCC),
-            radius = radius,
-            center = center
+            radius = drawR,
+            center = drawCenter
         )
 
         // 2. Anillo perimétrico sólido del disco
         drawCircle(
             color = Color(0xFF00FFCC),
-            radius = radius,
-            center = center,
+            radius = drawR,
+            center = drawCenter,
             style = Stroke(width = strokeW)
         )
 
         // 3. Anillo exterior óptico punteado (Guía Kinovea)
         drawCircle(
             color = Color(0x6600FFCC),
-            radius = radius + 6.dp.toPx(),
-            center = center,
+            radius = drawR + 6.dp.toPx(),
+            center = drawCenter,
             style = Stroke(width = 1.5.dp.toPx(), pathEffect = dashEffect)
         )
 
@@ -144,30 +166,30 @@ fun KinoveaCircleReticleCanvas(
         val crosshairSize = 22.dp.toPx()
         drawLine(
             color = Color(0xFF00FFCC),
-            start = Offset(center.x - crosshairSize, center.y),
-            end = Offset(center.x + crosshairSize, center.y),
+            start = Offset(drawCenter.x - crosshairSize, drawCenter.y),
+            end = Offset(drawCenter.x + crosshairSize, drawCenter.y),
             strokeWidth = 2.dp.toPx()
         )
         drawLine(
             color = Color(0xFF00FFCC),
-            start = Offset(center.x, center.y - crosshairSize),
-            end = Offset(center.x, center.y + crosshairSize),
+            start = Offset(drawCenter.x, drawCenter.y - crosshairSize),
+            end = Offset(drawCenter.x, drawCenter.y + crosshairSize),
             strokeWidth = 2.dp.toPx()
         )
         drawCircle(
             color = Color(0xFF00FFCC),
             radius = 4.dp.toPx(),
-            center = center
+            center = drawCenter
         )
 
         // 5. Marcas Cardinales (Norte, Sur, Oeste)
         val tickSize = 10.dp.toPx()
-        drawLine(Color(0xFFFFD600), Offset(center.x, center.y - radius - tickSize), Offset(center.x, center.y - radius + tickSize), 2.5.dp.toPx())
-        drawLine(Color(0xFFFFD600), Offset(center.x, center.y + radius - tickSize), Offset(center.x, center.y + radius + tickSize), 2.5.dp.toPx())
-        drawLine(Color(0xFFFFD600), Offset(center.x - radius - tickSize, center.y), Offset(center.x - radius + tickSize, center.y), 2.5.dp.toPx())
+        drawLine(Color(0xFFFFD600), Offset(drawCenter.x, drawCenter.y - drawR - tickSize), Offset(drawCenter.x, drawCenter.y - drawR + tickSize), 2.5.dp.toPx())
+        drawLine(Color(0xFFFFD600), Offset(drawCenter.x, drawCenter.y + drawR - tickSize), Offset(drawCenter.x, drawCenter.y + drawR + tickSize), 2.5.dp.toPx())
+        drawLine(Color(0xFFFFD600), Offset(drawCenter.x - drawR - tickSize, drawCenter.y), Offset(drawCenter.x - drawR + tickSize, drawCenter.y), 2.5.dp.toPx())
 
         // 6. Tirador de Radio en el borde Este (Arrastrable directamente con el dedo)
-        val handleCenter = Offset(center.x + radius, center.y)
+        val handleCenter = Offset(drawCenter.x + drawR, drawCenter.y)
         drawCircle(
             color = Color(0xFFFFD600),
             radius = 14.dp.toPx(),

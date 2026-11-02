@@ -505,7 +505,7 @@ fun VideoAnalysisScreen(
     // Video playback control & scrubber (Módulo 4: Frame a Frame)
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
     var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
-    var isPlaying by remember { mutableStateOf(true) }
+    var isPlaying by remember { mutableStateOf(false) }
     var isVideoMuted by remember { mutableStateOf(true) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var videoDurationMs by remember { mutableLongStateOf(0L) }
@@ -624,8 +624,17 @@ fun VideoAnalysisScreen(
                     val bounds = calculateVideoRenderBounds(effectiveW, effectiveH, videoNativeWidth, videoNativeHeight)
                     val scaleX = bounds.renderWidth / videoNativeWidth.toFloat()
                     val scaleY = bounds.renderHeight / videoNativeHeight.toFloat()
-                    val screenCenter = Offset(result.center.x * scaleX, result.center.y * scaleY)
-                    val screenRadius = result.radiusPx * scaleX
+                    val padPx = 28f
+                    val maxR = (minOf(bounds.renderWidth, bounds.renderHeight) / 2f - padPx).coerceAtLeast(22f)
+                    val screenRadius = (result.radiusPx * scaleX).coerceIn(22f, maxR)
+                    val minX = (screenRadius + padPx).coerceAtMost(bounds.renderWidth / 2f)
+                    val maxX = (bounds.renderWidth - screenRadius - padPx).coerceAtLeast(bounds.renderWidth / 2f)
+                    val minY = (screenRadius + padPx).coerceAtMost(bounds.renderHeight / 2f)
+                    val maxY = (bounds.renderHeight - screenRadius - padPx).coerceAtLeast(bounds.renderHeight / 2f)
+                    val screenCenter = Offset(
+                        (result.center.x * scaleX).coerceIn(minX, maxX),
+                        (result.center.y * scaleY).coerceIn(minY, maxY)
+                    )
 
                     circleCenter = screenCenter
                     circleRadiusPx = screenRadius
@@ -828,16 +837,10 @@ fun VideoAnalysisScreen(
                                                             mp.playbackParams = params
                                                         } catch (e: Exception) { }
                                                     }
-                                                    if (showTutorialDialog) {
-
-                                                        pause()
-                                                        isPlaying = false
-                                                        seekVideoAccurate(mp, this, trimStartMs)
-                                                        updateStillFrame(trimStartMs)
-                                                    } else {
-                                                        start()
-                                                        isPlaying = true
-                                                    }
+                                                    pause()
+                                                    isPlaying = false
+                                                    seekVideoAccurate(mp, this, trimStartMs)
+                                                    updateStillFrame(trimStartMs)
                                                 }
                                                 videoViewRef = this
                                             }
@@ -1475,11 +1478,48 @@ fun VideoAnalysisScreen(
                                 val bounds = calculateVideoRenderBounds(boxW, boxH, videoNativeWidth, videoNativeHeight)
                                 val rWDp = with(LocalDensity.current) { bounds.renderWidth.toDp() }
                                 val rHDp = with(LocalDensity.current) { bounds.renderHeight.toDp() }
+                                val edgePadPx = with(LocalDensity.current) { 14.dp.toPx() }
 
-                                // Contenedor exactamente del tamaño del video renderizado
+                                // Reajustar centro y radio al tamaño exacto del cuadro de video de Calibración para que jamás quede afuera
+                                LaunchedEffect(bounds.renderWidth, bounds.renderHeight, calibratedPlateCenterVideo, calibratedPlateRadiusVideo) {
+                                    if (bounds.renderWidth > 0f && bounds.renderHeight > 0f) {
+                                        val maxR = (minOf(bounds.renderWidth, bounds.renderHeight) / 2f - edgePadPx).coerceAtLeast(22f)
+                                        val vidCenter = calibratedPlateCenterVideo
+                                        val vidRad = calibratedPlateRadiusVideo
+                                        if (vidCenter != null && vidRad > 5f && videoNativeWidth > 0 && videoNativeHeight > 0) {
+                                            val sx = bounds.renderWidth / videoNativeWidth.toFloat()
+                                            val sy = bounds.renderHeight / videoNativeHeight.toFloat()
+                                            val sr = (vidRad * sx).coerceIn(22f, maxR)
+                                            val minX = (sr + edgePadPx).coerceAtMost(bounds.renderWidth / 2f)
+                                            val maxX = (bounds.renderWidth - sr - edgePadPx).coerceAtLeast(bounds.renderWidth / 2f)
+                                            val minY = (sr + edgePadPx).coerceAtMost(bounds.renderHeight / 2f)
+                                            val maxY = (bounds.renderHeight - sr - edgePadPx).coerceAtLeast(bounds.renderHeight / 2f)
+                                            circleRadiusPx = sr
+                                            circleCenter = Offset(
+                                                (vidCenter.x * sx).coerceIn(minX, maxX),
+                                                (vidCenter.y * sy).coerceIn(minY, maxY)
+                                            )
+                                        } else {
+                                            val sr = circleRadiusPx.coerceIn(22f, maxR)
+                                            val minX = (sr + edgePadPx).coerceAtMost(bounds.renderWidth / 2f)
+                                            val maxX = (bounds.renderWidth - sr - edgePadPx).coerceAtLeast(bounds.renderWidth / 2f)
+                                            val minY = (sr + edgePadPx).coerceAtMost(bounds.renderHeight / 2f)
+                                            val maxY = (bounds.renderHeight - sr - edgePadPx).coerceAtLeast(bounds.renderHeight / 2f)
+                                            val c = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight * 0.65f)
+                                            circleRadiusPx = sr
+                                            circleCenter = Offset(
+                                                c.x.coerceIn(minX, maxX),
+                                                c.y.coerceIn(minY, maxY)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Contenedor exactamente del tamaño del video renderizado (con clip estricto a los bordes)
                                 Box(
                                     modifier = Modifier
                                         .size(rWDp, rHDp)
+                                        .clip(RoundedCornerShape(0.dp))
                                         .align(Alignment.Center)
                                 ) {
                                     AndroidView(
@@ -1549,12 +1589,22 @@ fun VideoAnalysisScreen(
                                         )
                                     }
 
-                                    // Retícula Circular Kinovea sobre el marco centrado
-                                    var hasUserInteractedWithTracker by remember { mutableStateOf(false) }
-                                    val activeCenter = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight / 2f)
+                                    // Retícula Circular Kinovea sobre el marco centrado y estrictamente contenida en el video
+                                    var hasUserInteractedWithTracker by remember(analysisSetupStep) { mutableStateOf(false) }
+                                    val maxAllowedRadius = (minOf(bounds.renderWidth, bounds.renderHeight) / 2f - edgePadPx).coerceAtLeast(20f)
+                                    val clampedRadius = circleRadiusPx.coerceIn(20f, maxAllowedRadius)
+                                    val minCX = (clampedRadius + edgePadPx).coerceAtMost(bounds.renderWidth / 2f)
+                                    val maxCX = (bounds.renderWidth - clampedRadius - edgePadPx).coerceAtLeast(bounds.renderWidth / 2f)
+                                    val minCY = (clampedRadius + edgePadPx).coerceAtMost(bounds.renderHeight / 2f)
+                                    val maxCY = (bounds.renderHeight - clampedRadius - edgePadPx).coerceAtLeast(bounds.renderHeight / 2f)
+                                    val rawCenter = circleCenter ?: Offset(bounds.renderWidth / 2f, bounds.renderHeight * 0.65f)
+                                    val activeCenter = Offset(
+                                        rawCenter.x.coerceIn(minCX, maxCX),
+                                        rawCenter.y.coerceIn(minCY, maxCY)
+                                    )
                                     KinoveaCircleReticleCanvas(
                                         center = activeCenter,
-                                        radius = circleRadiusPx,
+                                        radius = clampedRadius,
                                         onCenterChange = {
                                             circleCenter = it
                                             hasUserInteractedWithTracker = true
@@ -1568,71 +1618,159 @@ fun VideoAnalysisScreen(
                                         }
                                     )
 
-                                    // Indicador parpadeante y animado que enseña a deslizar el dedo sobre el tracker
-                                    if (!hasUserInteractedWithTracker && !isCalibrated) {
-                                        val infiniteTransition = rememberInfiniteTransition(label = "pulseTrackerHint")
-                                        val hintAlpha by infiniteTransition.animateFloat(
-                                            initialValue = 0.35f,
+                                    // Shader negro translúcido + Símbolo táctil intermitente para enseñar a mover y cambiar tamaño del tracker.
+                                    // Al pinchar en cualquier parte se oculta de inmediato y se ve el video normal.
+                                    if (!hasUserInteractedWithTracker) {
+                                        val infiniteTransition = rememberInfiniteTransition(label = "pulseTouchShader")
+                                        val blinkAlpha by infiniteTransition.animateFloat(
+                                            initialValue = 0.25f,
                                             targetValue = 1.0f,
                                             animationSpec = infiniteRepeatable(
-                                                animation = tween(700, easing = FastOutSlowInEasing),
+                                                animation = tween(650, easing = FastOutSlowInEasing),
                                                 repeatMode = RepeatMode.Reverse
                                             ),
-                                            label = "hintAlpha"
+                                            label = "blinkAlpha"
                                         )
-                                        val handSwipeX by infiniteTransition.animateFloat(
-                                            initialValue = -16f,
-                                            targetValue = 16f,
+                                        val handOffsetX by infiniteTransition.animateFloat(
+                                            initialValue = -14f,
+                                            targetValue = 14f,
                                             animationSpec = infiniteRepeatable(
-                                                animation = tween(1100, easing = LinearEasing),
+                                                animation = tween(1100, easing = FastOutSlowInEasing),
                                                 repeatMode = RepeatMode.Reverse
                                             ),
-                                            label = "handSwipeX"
+                                            label = "handOffsetX"
                                         )
-                                        val hintScale by infiniteTransition.animateFloat(
-                                            initialValue = 0.94f,
-                                            targetValue = 1.06f,
+                                        val handScale by infiniteTransition.animateFloat(
+                                            initialValue = 0.92f,
+                                            targetValue = 1.08f,
                                             animationSpec = infiniteRepeatable(
-                                                animation = tween(700, easing = FastOutSlowInEasing),
+                                                animation = tween(650, easing = FastOutSlowInEasing),
                                                 repeatMode = RepeatMode.Reverse
                                             ),
-                                            label = "hintScale"
+                                            label = "handScale"
                                         )
-
-                                        val density = LocalDensity.current
-                                        val hintX = with(density) { (activeCenter.x - 70.dp.toPx()).coerceIn(10f, (bounds.renderWidth - 150.dp.toPx()).coerceAtLeast(10f)) }
-                                        val hintY = with(density) { (activeCenter.y - circleRadiusPx - 48.dp.toPx()).coerceIn(10f, (bounds.renderHeight - 55.dp.toPx()).coerceAtLeast(10f)) }
 
                                         Box(
                                             modifier = Modifier
-                                                .offset { IntOffset(hintX.toInt(), hintY.toInt()) }
-                                                .graphicsLayer {
-                                                    alpha = hintAlpha
-                                                    scaleX = hintScale
-                                                    scaleY = hintScale
-                                                }
-                                                .background(Color(0xD90D1117), RoundedCornerShape(20.dp))
-                                                .border(1.5.dp, Color(0xFF00FFCC), RoundedCornerShape(20.dp))
-                                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                .fillMaxSize()
+                                                .background(Color(0xA6000000))
+                                                .pointerInput(Unit) {
+                                                    detectTapGestures(
+                                                        onPress = {
+                                                            hasUserInteractedWithTracker = true
+                                                        }
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                                modifier = Modifier
+                                                    .padding(20.dp)
+                                                    .graphicsLayer {
+                                                        alpha = blinkAlpha
+                                                        scaleX = handScale
+                                                        scaleY = handScale
+                                                    }
                                             ) {
-                                                Icon(
-                                                    Icons.Default.TouchApp,
-                                                    contentDescription = "Desliza para mover",
-                                                    tint = Color(0xFF00FFCC),
+                                                // Dibujo vectorial de la mano táctil con ondas concéntricas (igual a la referencia) y flechas de desplazamiento
+                                                Canvas(
                                                     modifier = Modifier
-                                                        .size(20.dp)
-                                                        .graphicsLayer { translationX = handSwipeX }
-                                                )
-                                                Text(
-                                                    "Desliza para mover",
-                                                    color = Color.White,
-                                                    fontSize = 11.5.sp,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
+                                                        .size(110.dp)
+                                                        .graphicsLayer { translationX = handOffsetX }
+                                                ) {
+                                                    val w = size.width
+                                                    val h = size.height
+                                                    val strokeWhite = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                                    val strokeCyan = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+
+                                                    // Ondas táctiles concéntricas superiores (arcos alrededor de la punta del dedo índice)
+                                                    val tipX = w * 0.44f
+                                                    val tipY = h * 0.30f
+                                                    drawArc(
+                                                        color = Color(0xFF00FFCC),
+                                                        startAngle = 155f,
+                                                        sweepAngle = 230f,
+                                                        useCenter = false,
+                                                        topLeft = Offset(tipX - 16.dp.toPx(), tipY - 16.dp.toPx()),
+                                                        size = Size(32.dp.toPx(), 32.dp.toPx()),
+                                                        style = strokeCyan
+                                                    )
+                                                    drawArc(
+                                                        color = Color(0xFF00FFCC).copy(alpha = 0.75f),
+                                                        startAngle = 160f,
+                                                        sweepAngle = 220f,
+                                                        useCenter = false,
+                                                        topLeft = Offset(tipX - 25.dp.toPx(), tipY - 25.dp.toPx()),
+                                                        size = Size(50.dp.toPx(), 50.dp.toPx()),
+                                                        style = strokeCyan
+                                                    )
+
+                                                    // Silueta de la mano táctil (índice extendido, nudillos y palma redondeada)
+                                                    val handPath = Path().apply {
+                                                        // Dedo índice subiendo y redondeando en la punta
+                                                        moveTo(w * 0.38f, h * 0.56f)
+                                                        lineTo(w * 0.38f, h * 0.30f)
+                                                        cubicTo(w * 0.38f, h * 0.22f, w * 0.50f, h * 0.22f, w * 0.50f, h * 0.30f)
+                                                        lineTo(w * 0.50f, h * 0.50f)
+
+                                                        // Dedo medio
+                                                        cubicTo(w * 0.50f, h * 0.43f, w * 0.61f, h * 0.43f, w * 0.61f, h * 0.50f)
+                                                        lineTo(w * 0.61f, h * 0.55f)
+
+                                                        // Dedo anular
+                                                        cubicTo(w * 0.61f, h * 0.47f, w * 0.72f, h * 0.47f, w * 0.72f, h * 0.54f)
+                                                        lineTo(w * 0.72f, h * 0.59f)
+
+                                                        // Dedo meñique y borde derecho de la palma
+                                                        cubicTo(w * 0.72f, h * 0.52f, w * 0.82f, h * 0.53f, w * 0.82f, h * 0.61f)
+                                                        lineTo(w * 0.82f, h * 0.74f)
+
+                                                        // Base redondeada de la palma
+                                                        cubicTo(w * 0.82f, h * 0.92f, w * 0.32f, h * 0.94f, w * 0.27f, h * 0.76f)
+
+                                                        // Pulgar izquierdo
+                                                        lineTo(w * 0.23f, h * 0.58f)
+                                                        cubicTo(w * 0.22f, h * 0.48f, w * 0.33f, h * 0.47f, w * 0.35f, h * 0.56f)
+                                                        lineTo(w * 0.38f, h * 0.62f)
+                                                    }
+                                                    drawPath(
+                                                        path = handPath,
+                                                        color = Color(0x33000000)
+                                                    )
+                                                    drawPath(
+                                                        path = handPath,
+                                                        color = Color.White,
+                                                        style = strokeWhite
+                                                    )
+                                                }
+
+                                                Surface(
+                                                    color = Color(0xE610151C),
+                                                    shape = RoundedCornerShape(14.dp),
+                                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF00FFCC))
+                                                ) {
+                                                    Column(
+                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                                                    ) {
+                                                        Text(
+                                                            "Toca y desliza para mover el Tracker",
+                                                            color = Color.White,
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 13.sp,
+                                                            textAlign = TextAlign.Center
+                                                        )
+                                                        Spacer(modifier = Modifier.height(3.dp))
+                                                        Text(
+                                                            "Arrastra el punto amarillo para ajustar al tamaño del disco",
+                                                            color = Color(0xFF00FFCC),
+                                                            fontSize = 11.sp,
+                                                            textAlign = TextAlign.Center
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -3272,8 +3410,8 @@ fun VideoAnalysisScreen(
                 onStepChange = { tutorialStep = it },
                 onDismiss = {
                     showTutorialDialog = false
-                    videoViewRef?.start()
-                    isPlaying = true
+                    videoViewRef?.pause()
+                    isPlaying = false
                 }
             )
         }
@@ -4269,12 +4407,41 @@ fun AnalysisResultVideoPreview(
     onCurrentPositionChange: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val previewContext = androidx.compose.ui.platform.LocalContext.current
     var previewPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
     var previewVideoViewRef by remember { mutableStateOf<VideoView?>(null) }
-    var isPlaying by remember { mutableStateOf(true) }
+    var isPlaying by remember { mutableStateOf(false) }
     var isPreviewMuted by remember { mutableStateOf(true) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var currentPosMs by remember { mutableLongStateOf(trimStartMs) }
+    var previewStillBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    val previewRetriever = remember(videoUriString) {
+        MediaMetadataRetriever().apply {
+            try {
+                setDataSource(previewContext, Uri.parse(videoUriString))
+            } catch (e: Exception) {}
+        }
+    }
+    DisposableEffect(previewRetriever) {
+        onDispose {
+            try { previewRetriever.release() } catch (e: Exception) {}
+        }
+    }
+    LaunchedEffect(currentPosMs, isPlaying) {
+        if (!isPlaying) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val bm = previewRetriever.getFrameAtTime(currentPosMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                    if (bm != null) {
+                        withContext(Dispatchers.Main) {
+                            previewStillBitmap = bm
+                        }
+                    }
+                } catch (e: Exception) {}
+            }
+        }
+    }
     var isUserSeeking by remember { mutableStateOf(false) }
     var showTelemetryOverlay by remember { mutableStateOf(false) }
 
@@ -4315,12 +4482,13 @@ fun AnalysisResultVideoPreview(
                 e.printStackTrace()
             }
         }
-        previewVideoViewRef?.let { vv ->
-            if (!vv.isPlaying) {
-                vv.start()
+        if (isPlaying) {
+            previewVideoViewRef?.let { vv ->
+                if (!vv.isPlaying) {
+                    vv.start()
+                }
             }
         }
-        isPlaying = true
     }
 
     LaunchedEffect(isPreviewMuted, previewPlayerRef) {
@@ -4407,19 +4575,6 @@ fun AnalysisResultVideoPreview(
                     modifier = Modifier
                         .size(rWDp, rHDp)
                         .align(Alignment.Center)
-                        .clickable {
-                            previewVideoViewRef?.let { vv ->
-                                if (vv.isPlaying) {
-                                    vv.pause()
-                                    isPlaying = false
-                                } else {
-                                    lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
-                                    lastSyncPositionMs = currentPosMs
-                                    vv.start()
-                                    isPlaying = true
-                                }
-                            }
-                        }
                 ) {
                     AndroidView(
                         factory = { ctx ->
@@ -4429,9 +4584,6 @@ fun AnalysisResultVideoPreview(
                                     previewPlayerRef = mp
                                     mp.isLooping = false
                                     if (isPreviewMuted) mp.setVolume(0f, 0f) else mp.setVolume(1f, 1f)
-                                    seekTo(trimStartMs.toInt())
-                                    lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
-                                    lastSyncPositionMs = trimStartMs
                                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                                         try {
                                             val params = mp.playbackParams
@@ -4439,14 +4591,23 @@ fun AnalysisResultVideoPreview(
                                             mp.playbackParams = params
                                         } catch (e: Exception) {}
                                     }
-                                    start()
-                                    isPlaying = true
+                                    // Iniciar siempre en pausa en el primer frame; solo reproduce al presionar el botón Play
+                                    seekVideoAccurate(mp, this, trimStartMs)
+                                    pause()
+                                    isPlaying = false
+                                    currentPosMs = trimStartMs
+                                    lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+                                    lastSyncPositionMs = trimStartMs
                                 }
                                 setOnCompletionListener {
                                     seekTo(trimStartMs.toInt())
                                     lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
                                     lastSyncPositionMs = trimStartMs
-                                    start()
+                                    if (isPlaying) {
+                                        start()
+                                    } else {
+                                        pause()
+                                    }
                                 }
                                 previewVideoViewRef = this
                             }
@@ -4456,6 +4617,15 @@ fun AnalysisResultVideoPreview(
                             try { vv.stopPlayback() } catch (e: Exception) {}
                         }
                     )
+
+                    if (!isPlaying && previewStillBitmap != null) {
+                        Image(
+                            bitmap = previewStillBitmap!!.asImageBitmap(),
+                            contentDescription = "Fotograma en pausa",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
 
                     // Capa Canvas: Bar Path dinámico y mira telescópica en tiempo real con alineación exacta 1:1
                     Canvas(modifier = Modifier.fillMaxSize()) {
@@ -5508,6 +5678,7 @@ fun PreCalibrationSetupDialog(
     onDismiss: () -> Unit,
     onConfirmAndCalibrate: () -> Unit
 ) {
+    var showExerciseTypePickerPopup by remember { mutableStateOf(false) }
     var showExercisePickerPopup by remember { mutableStateOf(false) }
     var showAthletePickerPopup by remember { mutableStateOf(false) }
 
@@ -5520,6 +5691,16 @@ fun PreCalibrationSetupDialog(
     }
     val nowTimeStr = remember {
         java.text.SimpleDateFormat("hh:mm a", Locale.getDefault()).format(java.util.Date())
+    }
+
+    // 3 Tipos de Ejercicio definidos:
+    // 1. Tradicionales (Ley de Hill)
+    // 2. Olímpicos (DLP)
+    // 3. Balísticos-Explosivos (Saltos)
+    val currentExerciseTypeLabel = when {
+        currentMode == "JUMP" -> "Balísticos-Explosivos (Saltos)"
+        setupFamily == VBTExerciseFamily.HILL_TRADITIONAL -> "Tradicionales (Ley de Hill)"
+        else -> "Olímpicos (DLP)"
     }
 
     val currentExerciseText = if (currentMode == "VBT") {
@@ -5562,7 +5743,7 @@ fun PreCalibrationSetupDialog(
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp, vertical = 22.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Título centrado limpio
                 Text(
@@ -5576,7 +5757,42 @@ fun PreCalibrationSetupDialog(
 
                 Spacer(modifier = Modifier.height(2.dp))
 
-                // 1. Campo: Ejercicio (abre Pop-up seleccionable al tocar)
+                // 1. Campo: Tipo de Ejercicio (Tradicionales Hill | Olímpicos DLP | Balísticos-Explosivos Saltos)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showExerciseTypePickerPopup = true }
+                ) {
+                    Text(
+                        text = "Tipo de Ejercicio",
+                        color = labelColor,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = currentExerciseTypeLabel,
+                            color = valueColor,
+                            fontSize = 17.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = "Seleccionar tipo de ejercicio",
+                            tint = labelColor
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Divider(color = lineColor, thickness = 1.dp)
+                }
+
+                // 2. Campo: Ejercicio Específico (filtrado automáticamente según el Tipo de Ejercicio elegido)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -5611,7 +5827,7 @@ fun PreCalibrationSetupDialog(
                     Divider(color = lineColor, thickness = 1.dp)
                 }
 
-                // 2. Campo: Atleta (abre Pop-up seleccionable al tocar)
+                // 3. Campo: Atleta (abre Pop-up seleccionable al tocar)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -5646,7 +5862,7 @@ fun PreCalibrationSetupDialog(
                     Divider(color = lineColor, thickness = 1.dp)
                 }
 
-                // 3. Campo: Peso (kg)
+                // 4. Campo: Peso (kg)
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "Peso (kg)",
@@ -5674,7 +5890,7 @@ fun PreCalibrationSetupDialog(
                     Divider(color = lineColor, thickness = 1.dp)
                 }
 
-                // 4. Campo: Notas
+                // 5. Campo: Notas
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "Notas",
@@ -5697,7 +5913,7 @@ fun PreCalibrationSetupDialog(
                     Divider(color = lineColor, thickness = 1.dp)
                 }
 
-                // 5. Campo: Diámetro del Disco (mm)
+                // 6. Campo: Diámetro del Disco (mm)
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "Diámetro del Disco (mm) - Disco estándar es 450mm",
@@ -5746,7 +5962,7 @@ fun PreCalibrationSetupDialog(
                     )
                 }
 
-                // 6. Fecha
+                // 7. Fecha
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "Fecha",
@@ -5761,7 +5977,7 @@ fun PreCalibrationSetupDialog(
                     )
                 }
 
-                // 7. Hora
+                // 8. Hora
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "Hora",
@@ -5808,16 +6024,16 @@ fun PreCalibrationSetupDialog(
         }
     }
 
-    // ── POP-UP SECUNDARIO: LISTA SELECCIONABLE DE EJERCICIOS ──
-    if (showExercisePickerPopup) {
+    // ── POP-UP SECUNDARIO 1: SELECCIONAR TIPO DE EJERCICIO (3 CATEGORÍAS) ──
+    if (showExerciseTypePickerPopup) {
         androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showExercisePickerPopup = false },
+            onDismissRequest = { showExerciseTypePickerPopup = false },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth(0.86f)
-                    .heightIn(max = 520.dp),
+                    .wrapContentHeight(),
                 shape = RoundedCornerShape(8.dp),
                 color = Color(0xFF21262E),
                 tonalElevation = 12.dp
@@ -5828,12 +6044,146 @@ fun PreCalibrationSetupDialog(
                         .padding(vertical = 18.dp)
                 ) {
                     Text(
-                        text = "Seleccionar Ejercicio",
+                        text = "Seleccionar Tipo de Ejercicio",
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp)
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Divider(color = Color(0xFF333C48), thickness = 1.dp)
+
+                    val typeOptions = listOf(
+                        Triple(
+                            "HILL",
+                            "Tradicionales (Ley de Hill)",
+                            "Sentadilla, Press de Banca, Peso Muerto, Press Militar, Remo, Hip Thrust"
+                        ),
+                        Triple(
+                            "DLP",
+                            "Olímpicos (DLP)",
+                            "Snatch Suelo, Hang Snatch, Power Snatch, Clean, Power Clean, Tirón, Jerk"
+                        ),
+                        Triple(
+                            "JUMP",
+                            "Balísticos-Explosivos (Saltos)",
+                            "Salto Contramovimiento (CMJ), Squat Jump (SJ), Drop Jump (Reactivo)"
+                        )
+                    )
+
+                    typeOptions.forEach { (key, title, subtitle) ->
+                        val isSelected = when (key) {
+                            "HILL" -> currentMode == "VBT" && setupFamily == VBTExerciseFamily.HILL_TRADITIONAL
+                            "DLP" -> currentMode == "VBT" && setupFamily == VBTExerciseFamily.DLP_OLYMPIC
+                            else -> currentMode == "JUMP"
+                        }
+
+                        val selectAction = {
+                            when (key) {
+                                "HILL" -> {
+                                    onModeChange("VBT")
+                                    onFamilyChange(VBTExerciseFamily.HILL_TRADITIONAL)
+                                    if (selectedVBTExercise.family != VBTExerciseFamily.HILL_TRADITIONAL) {
+                                        val firstHill = VBTExerciseModel.values().first { it.family == VBTExerciseFamily.HILL_TRADITIONAL }
+                                        onVBTExerciseChange(firstHill)
+                                    }
+                                }
+                                "DLP" -> {
+                                    onModeChange("VBT")
+                                    onFamilyChange(VBTExerciseFamily.DLP_OLYMPIC)
+                                    if (selectedVBTExercise.family != VBTExerciseFamily.DLP_OLYMPIC) {
+                                        val firstDlp = VBTExerciseModel.values().first { it.family == VBTExerciseFamily.DLP_OLYMPIC }
+                                        onVBTExerciseChange(firstDlp)
+                                    }
+                                }
+                                "JUMP" -> {
+                                    onModeChange("JUMP")
+                                }
+                            }
+                            showExerciseTypePickerPopup = false
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectAction() }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = { selectAction() },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = accentColor,
+                                    unselectedColor = labelColor
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = title,
+                                    color = Color.White,
+                                    fontSize = 15.5.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                                Text(
+                                    text = subtitle,
+                                    color = labelColor,
+                                    fontSize = 11.5.sp
+                                )
+                            }
+                        }
+                    }
+
+                    Divider(color = Color(0xFF333C48), thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showExerciseTypePickerPopup = false }) {
+                            Text("CERRAR", color = accentColor, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── POP-UP SECUNDARIO 2: LISTA DE EJERCICIOS FILTRADA POR EL TIPO DE EJERCICIO ACTIVO ──
+    if (showExercisePickerPopup) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showExercisePickerPopup = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.86f)
+                    .heightIn(max = 500.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF21262E),
+                tonalElevation = 12.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 18.dp)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp)) {
+                        Text(
+                            text = "Seleccionar Ejercicio",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = currentExerciseTypeLabel,
+                            color = accentColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Divider(color = Color(0xFF333C48), thickness = 1.dp)
 
@@ -5843,158 +6193,96 @@ fun PreCalibrationSetupDialog(
                             .weight(1f, fill = false)
                             .verticalScroll(rememberScrollState())
                     ) {
-                        // Categoría 1: Levantamiento Olímpico (DLP)
-                        Text(
-                            text = "LEVANTAMIENTO OLÍMPICO (DLP)",
-                            color = accentColor,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 14.dp, bottom = 4.dp)
-                        )
-                        VBTExerciseModel.values().filter { it.family == VBTExerciseFamily.DLP_OLYMPIC }.forEach { model ->
-                            val isSelected = currentMode == "VBT" && selectedVBTExercise == model
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onModeChange("VBT")
-                                        onFamilyChange(VBTExerciseFamily.DLP_OLYMPIC)
-                                        onVBTExerciseChange(model)
-                                        showExercisePickerPopup = false
+                        if (currentMode == "JUMP") {
+                            // Solo aparecen los Saltos cuando el Tipo es Balísticos-Explosivos (Saltos)
+                            listOf(
+                                JumpType.CMJ to ("Salto Contramovimiento (CMJ)" to "Evaluación elástico-explosiva con fase excéntrica"),
+                                JumpType.SJ to ("Squat Jump (SJ)" to "Potencia concéntrica pura desde flexión estática de 90°"),
+                                JumpType.DROP_JUMP to ("Drop Jump (Reactivo)" to "Índice de fuerza reactiva (RSI) y ciclo estiramiento-acortamiento")
+                            ).forEach { (jType, info) ->
+                                val (title, desc) = info
+                                val isSelected = selectedJumpType == jType
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onJumpTypeChange(jType)
+                                            showExercisePickerPopup = false
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = {
+                                            onJumpTypeChange(jType)
+                                            showExercisePickerPopup = false
+                                        },
+                                        colors = RadioButtonDefaults.colors(
+                                            selectedColor = accentColor,
+                                            unselectedColor = labelColor
+                                        )
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = title,
+                                            color = Color.White,
+                                            fontSize = 15.5.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        Text(
+                                            text = desc,
+                                            color = labelColor,
+                                            fontSize = 11.5.sp
+                                        )
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        onModeChange("VBT")
-                                        onFamilyChange(VBTExerciseFamily.DLP_OLYMPIC)
-                                        onVBTExerciseChange(model)
-                                        showExercisePickerPopup = false
-                                    },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = accentColor,
-                                        unselectedColor = labelColor
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = model.displayName,
-                                        color = Color.White,
-                                        fontSize = 15.5.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                    Text(
-                                        text = "Velocidad Pico • MVT ${model.mvt} m/s",
-                                        color = labelColor,
-                                        fontSize = 11.5.sp
-                                    )
                                 }
                             }
-                        }
-
-                        Divider(color = Color(0xFF2D3540), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
-
-                        // Categoría 2: Fuerza Tradicional (Ley de Hill)
-                        Text(
-                            text = "FUERZA / POWERLIFTING (LEY DE HILL)",
-                            color = Color(0xFFFFB300),
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 10.dp, bottom = 4.dp)
-                        )
-                        VBTExerciseModel.values().filter { it.family == VBTExerciseFamily.HILL_TRADITIONAL }.forEach { model ->
-                            val isSelected = currentMode == "VBT" && selectedVBTExercise == model
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onModeChange("VBT")
-                                        onFamilyChange(VBTExerciseFamily.HILL_TRADITIONAL)
-                                        onVBTExerciseChange(model)
-                                        showExercisePickerPopup = false
+                        } else {
+                            // Solo aparecen los ejercicios de la familia seleccionada (Tradicionales Ley de Hill o Olímpicos DLP)
+                            val filteredExercises = VBTExerciseModel.values().filter { it.family == setupFamily }
+                            filteredExercises.forEach { model ->
+                                val isSelected = selectedVBTExercise == model
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onVBTExerciseChange(model)
+                                            showExercisePickerPopup = false
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = {
+                                            onVBTExerciseChange(model)
+                                            showExercisePickerPopup = false
+                                        },
+                                        colors = RadioButtonDefaults.colors(
+                                            selectedColor = accentColor,
+                                            unselectedColor = labelColor
+                                        )
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = model.displayName,
+                                            color = Color.White,
+                                            fontSize = 15.5.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        Text(
+                                            text = if (model.usesPeakVelocity)
+                                                "Velocidad Pico (PV) • Umbral MVT ${model.mvt} m/s"
+                                            else
+                                                "Velocidad Media (VM) • Umbral MVT ${model.mvt} m/s",
+                                            color = labelColor,
+                                            fontSize = 11.5.sp
+                                        )
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        onModeChange("VBT")
-                                        onFamilyChange(VBTExerciseFamily.HILL_TRADITIONAL)
-                                        onVBTExerciseChange(model)
-                                        showExercisePickerPopup = false
-                                    },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = accentColor,
-                                        unselectedColor = labelColor
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = model.displayName,
-                                        color = Color.White,
-                                        fontSize = 15.5.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                    Text(
-                                        text = "Velocidad Media • MVT ${model.mvt} m/s",
-                                        color = labelColor,
-                                        fontSize = 11.5.sp
-                                    )
                                 }
-                            }
-                        }
-
-                        Divider(color = Color(0xFF2D3540), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
-
-                        // Categoría 3: Salto Vertical
-                        Text(
-                            text = "SALTO VERTICAL (PLIOMETRÍA)",
-                            color = Color(0xFF64B5F6),
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 10.dp, bottom = 4.dp)
-                        )
-                        listOf(
-                            JumpType.CMJ to "Salto Contramovimiento (CMJ)",
-                            JumpType.SJ to "Squat Jump (SJ)",
-                            JumpType.DROP_JUMP to "Drop Jump (Reactivo)"
-                        ).forEach { (jType, title) ->
-                            val isSelected = currentMode == "JUMP" && selectedJumpType == jType
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onModeChange("JUMP")
-                                        onJumpTypeChange(jType)
-                                        showExercisePickerPopup = false
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        onModeChange("JUMP")
-                                        onJumpTypeChange(jType)
-                                        showExercisePickerPopup = false
-                                    },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = accentColor,
-                                        unselectedColor = labelColor
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = title,
-                                    color = Color.White,
-                                    fontSize = 15.5.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                )
                             }
                         }
                     }
@@ -6015,7 +6303,7 @@ fun PreCalibrationSetupDialog(
         }
     }
 
-    // ── POP-UP SECUNDARIO: LISTA SELECCIONABLE DE ATLETAS ──
+    // ── POP-UP SECUNDARIO 3: LISTA SELECCIONABLE DE ATLETAS ──
     if (showAthletePickerPopup) {
         var isAddingAthlete by remember { mutableStateOf(allUsers.isEmpty()) }
         var newName by remember { mutableStateOf("") }
