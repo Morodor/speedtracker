@@ -5508,783 +5508,672 @@ fun PreCalibrationSetupDialog(
     onDismiss: () -> Unit,
     onConfirmAndCalibrate: () -> Unit
 ) {
-    var isCreatingNewUser by remember { mutableStateOf(allUsers.isEmpty()) }
-    var newAthleteName by remember { mutableStateOf("") }
-    var newAthleteWeight by remember { mutableStateOf("75") }
-    var athleteDropdownExpanded by remember { mutableStateOf(false) }
-    var exerciseDropdownExpanded by remember { mutableStateOf(false) }
-    var jumpDropdownExpanded by remember { mutableStateOf(false) }
+    var showExercisePickerPopup by remember { mutableStateOf(false) }
+    var showAthletePickerPopup by remember { mutableStateOf(false) }
 
+    var notesText by remember { mutableStateOf("") }
+    var plateDiameterMm by remember { mutableStateOf("450") }
+    var defaultPlateDiameter by remember { mutableStateOf(true) }
+
+    val nowDateStr = remember {
+        java.text.SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(java.util.Date())
+    }
+    val nowTimeStr = remember {
+        java.text.SimpleDateFormat("hh:mm a", Locale.getDefault()).format(java.util.Date())
+    }
+
+    val currentExerciseText = if (currentMode == "VBT") {
+        selectedVBTExercise.displayName
+    } else {
+        when (selectedJumpType) {
+            JumpType.CMJ -> "Salto Contramovimiento (CMJ)"
+            JumpType.SJ -> "Squat Jump (SJ)"
+            JumpType.DROP_JUMP -> "Drop Jump (Reactivo)"
+        }
+    }
+
+    val selectedAthlete = activeUser ?: allUsers.firstOrNull()
+    val currentAthleteText = if (selectedAthlete != null) {
+        "${selectedAthlete.name} (${selectedAthlete.bodyWeightKg} kg)"
+    } else {
+        "Seleccionar o crear atleta..."
+    }
+
+    val labelColor = Color(0xFF9EABB8)
+    val valueColor = Color.White
+    val lineColor = Color(0xFF455161)
+    val accentColor = Color(0xFF00FFCC)
+
+    // ── POP-UP PRINCIPAL ESTILO "VIDEO INFO" MINIMALISTA ──
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.92f)
+                .fillMaxWidth(0.88f)
                 .wrapContentHeight(),
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF161B22),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2B3543)),
-            tonalElevation = 8.dp
+            shape = RoundedCornerShape(6.dp),
+            color = Color(0xFF1C2128),
+            tonalElevation = 10.dp
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 24.dp, vertical = 22.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                // ── CABECERA PROFESIONAL ──
+                // Título centrado limpio
+                Text(
+                    text = "Información del Video",
+                    color = valueColor,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // 1. Campo: Ejercicio (abre Pop-up seleccionable al tocar)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showExercisePickerPopup = true }
+                ) {
+                    Text(
+                        text = "Ejercicio",
+                        color = labelColor,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = currentExerciseText,
+                            color = valueColor,
+                            fontSize = 17.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = "Seleccionar ejercicio",
+                            tint = labelColor
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Divider(color = lineColor, thickness = 1.dp)
+                }
+
+                // 2. Campo: Atleta (abre Pop-up seleccionable al tocar)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAthletePickerPopup = true }
+                ) {
+                    Text(
+                        text = "Atleta",
+                        color = labelColor,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = currentAthleteText,
+                            color = valueColor,
+                            fontSize = 17.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = "Seleccionar atleta",
+                            tint = labelColor
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Divider(color = lineColor, thickness = 1.dp)
+                }
+
+                // 3. Campo: Peso (kg)
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Peso (kg)",
+                        color = labelColor,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    BasicTextField(
+                        value = barbellLoadKg,
+                        onValueChange = { newVal ->
+                            if (newVal.isEmpty() || newVal.all { it.isDigit() || it == '.' }) {
+                                onLoadChange(newVal)
+                            }
+                        },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = valueColor,
+                            fontSize = 17.sp
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        cursorBrush = SolidColor(accentColor),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Divider(color = lineColor, thickness = 1.dp)
+                }
+
+                // 4. Campo: Notas
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Notas",
+                        color = labelColor,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    BasicTextField(
+                        value = notesText,
+                        onValueChange = { notesText = it },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = valueColor,
+                            fontSize = 16.sp
+                        ),
+                        cursorBrush = SolidColor(accentColor),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Divider(color = lineColor, thickness = 1.dp)
+                }
+
+                // 5. Campo: Diámetro del Disco (mm)
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Diámetro del Disco (mm) - Disco estándar es 450mm",
+                        color = labelColor,
+                        fontSize = 12.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    BasicTextField(
+                        value = plateDiameterMm,
+                        onValueChange = { newVal ->
+                            if (newVal.isEmpty() || newVal.all { it.isDigit() }) {
+                                plateDiameterMm = newVal
+                            }
+                        },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = valueColor,
+                            fontSize = 17.sp
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        cursorBrush = SolidColor(accentColor),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Divider(color = lineColor, thickness = 1.dp)
+                }
+
+                // Switch de diámetro por defecto
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Surface(
-                        color = Color(0xFF00FFCC).copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.4f))
-                    ) {
-                        Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Default.FitnessCenter,
-                                contentDescription = null,
-                                tint = Color(0xFF00FFCC),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Configurar Levantamiento",
-                            color = Color.White,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 16.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                    Text(
+                        text = "Fijar como diámetro por defecto",
+                        color = labelColor,
+                        fontSize = 14.sp
+                    )
+                    Switch(
+                        checked = defaultPlateDiameter,
+                        onCheckedChange = { defaultPlateDiameter = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = accentColor,
+                            checkedTrackColor = accentColor.copy(alpha = 0.35f)
                         )
+                    )
+                }
+
+                // 6. Fecha
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Fecha",
+                        color = labelColor,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = nowDateStr,
+                        color = valueColor,
+                        fontSize = 16.sp
+                    )
+                }
+
+                // 7. Hora
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Hora",
+                        color = labelColor,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = nowTimeStr,
+                        color = valueColor,
+                        fontSize = 16.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Botones inferiores a la derecha: CANCELAR / GUARDAR
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
                         Text(
-                            "Selecciona atleta, ejercicio y carga antes de calibrar",
-                            color = Color(0xFF9BA8B8),
-                            fontSize = 11.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            text = "CANCELAR",
+                            color = accentColor,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    TextButton(onClick = onConfirmAndCalibrate) {
+                        Text(
+                            text = "GUARDAR",
+                            color = accentColor,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp
                         )
                     }
                 }
+            }
+        }
+    }
 
-                Divider(color = Color(0xFF252E3A), thickness = 1.dp)
-
-                // ── CUERPO SCROLLEABLE ──
+    // ── POP-UP SECUNDARIO: LISTA SELECCIONABLE DE EJERCICIOS ──
+    if (showExercisePickerPopup) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showExercisePickerPopup = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.86f)
+                    .heightIn(max = 520.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF21262E),
+                tonalElevation = 12.dp
+            ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 460.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .padding(vertical = 18.dp)
                 ) {
-                    // ── 1. ATLETA (LISTA DESPLEGABLE) ──
-                    Surface(
-                        color = Color(0xFF0F1318),
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF232B36)),
-                        modifier = Modifier.fillMaxWidth()
+                    Text(
+                        text = "Seleccionar Ejercicio",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Divider(color = Color(0xFF333C48), thickness = 1.dp)
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Person,
-                                        contentDescription = null,
-                                        tint = Color(0xFF00FFCC),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        "Atleta Evaluado",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                                Surface(
-                                    onClick = {
-                                        isCreatingNewUser = !isCreatingNewUser
-                                        athleteDropdownExpanded = false
-                                    },
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = Color(0xFF1A2629),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.4f))
-                                ) {
-                                    Text(
-                                        text = if (isCreatingNewUser) "✕ Cancelar" else "+ Nuevo Atleta",
-                                        color = Color(0xFF00FFCC),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-
-                            if (!isCreatingNewUser && allUsers.isNotEmpty()) {
-                                val selectedAthlete = activeUser ?: allUsers.first()
-                                // Selector Desplegable de Atleta
-                                Surface(
-                                    onClick = { athleteDropdownExpanded = !athleteDropdownExpanded },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFF181F28),
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.2.dp,
-                                        if (athleteDropdownExpanded) Color(0xFF00FFCC) else Color(0xFF323C4A)
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                selectedAthlete.name,
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                "Peso corporal: ${selectedAthlete.bodyWeightKg} kg",
-                                                color = Color(0xFF00FFCC),
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Surface(
-                                                color = Color(0xFF232C38),
-                                                shape = RoundedCornerShape(6.dp)
-                                            ) {
-                                                Text(
-                                                    "${allUsers.size} disp.",
-                                                    color = Color(0xFFAAB6C5),
-                                                    fontSize = 10.sp,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                                                )
-                                            }
-                                            Icon(
-                                                if (athleteDropdownExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                                contentDescription = "Desplegar atletas",
-                                                tint = Color(0xFF00FFCC)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                AnimatedVisibility(visible = athleteDropdownExpanded) {
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = Color(0xFF141A22),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2D3846)),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            allUsers.forEachIndexed { idx, user ->
-                                                val isSel = selectedAthlete.id == user.id
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .background(if (isSel) Color(0xFF172D29) else Color.Transparent)
-                                                        .clickable {
-                                                            onSelectUser(user)
-                                                            athleteDropdownExpanded = false
-                                                        }
-                                                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Column(modifier = Modifier.weight(1f)) {
-                                                        Text(
-                                                            user.name,
-                                                            color = if (isSel) Color(0xFF00FFCC) else Color.White,
-                                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                                            fontSize = 13.sp
-                                                        )
-                                                        Text(
-                                                            "${user.bodyWeightKg} kg corporal",
-                                                            color = Color.Gray,
-                                                            fontSize = 10.5.sp
-                                                        )
-                                                    }
-                                                    if (isSel) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = null,
-                                                            tint = Color(0xFF00FFCC),
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
-                                                }
-                                                if (idx < allUsers.lastIndex) {
-                                                    Divider(color = Color(0xFF222A35), thickness = 0.7.dp)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedTextField(
-                                        value = newAthleteName,
-                                        onValueChange = { newAthleteName = it },
-                                        placeholder = { Text("Nombre del atleta", fontSize = 11.5.sp, color = Color.Gray) },
-                                        singleLine = true,
-                                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 12.5.sp),
-                                        modifier = Modifier.weight(1.4f)
-                                    )
-                                    OutlinedTextField(
-                                        value = newAthleteWeight,
-                                        onValueChange = { if (it.isEmpty() || it.all { ch -> ch.isDigit() || ch == '.' }) newAthleteWeight = it },
-                                        placeholder = { Text("Kg", fontSize = 11.5.sp, color = Color.Gray) },
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 12.5.sp),
-                                        modifier = Modifier.weight(0.75f)
-                                    )
-                                    Button(
-                                        onClick = {
-                                            val cleanName = newAthleteName.trim().ifBlank { "Atleta" }
-                                            val w = newAthleteWeight.toDoubleOrNull() ?: 75.0
-                                            onCreateUser(cleanName, w)
-                                            newAthleteName = ""
-                                            isCreatingNewUser = false
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black)
-                                    ) {
-                                        Text("Guardar", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // ── 2. MODALIDAD Y LISTA DESPLEGABLE DE EJERCICIO ──
-                    Surface(
-                        color = Color(0xFF0F1318),
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF232B36)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.FitnessCenter,
-                                    contentDescription = null,
-                                    tint = Color(0xFF00FFCC),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    "Modalidad y Ejercicio",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                )
-                            }
-
-                            // Selector de Modalidad en barra completa de 2 columnas iguales (sin truncar)
+                        // Categoría 1: Levantamiento Olímpico (DLP)
+                        Text(
+                            text = "LEVANTAMIENTO OLÍMPICO (DLP)",
+                            color = accentColor,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 14.dp, bottom = 4.dp)
+                        )
+                        VBTExerciseModel.values().filter { it.family == VBTExerciseFamily.DLP_OLYMPIC }.forEach { model ->
+                            val isSelected = currentMode == "VBT" && selectedVBTExercise == model
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Color(0xFF161C24), RoundedCornerShape(10.dp))
-                                    .padding(3.dp),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                listOf(
-                                    "VBT" to "⚡ Halterofilia / VBT",
-                                    "JUMP" to "↕ Salto Vertical"
-                                ).forEach { (modeKey, modeLabel) ->
-                                    val isMode = currentMode == modeKey
-                                    Surface(
-                                        onClick = {
-                                            onModeChange(modeKey)
-                                            exerciseDropdownExpanded = false
-                                            jumpDropdownExpanded = false
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (isMode) Color(0xFF00FFCC) else Color.Transparent,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp)
-                                        ) {
-                                            Text(
-                                                modeLabel,
-                                                color = if (isMode) Color(0xFF0B1015) else Color(0xFFB0BCCB),
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
+                                    .clickable {
+                                        onModeChange("VBT")
+                                        onFamilyChange(VBTExerciseFamily.DLP_OLYMPIC)
+                                        onVBTExerciseChange(model)
+                                        showExercisePickerPopup = false
                                     }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        onModeChange("VBT")
+                                        onFamilyChange(VBTExerciseFamily.DLP_OLYMPIC)
+                                        onVBTExerciseChange(model)
+                                        showExercisePickerPopup = false
+                                    },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = accentColor,
+                                        unselectedColor = labelColor
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = model.displayName,
+                                        color = Color.White,
+                                        fontSize = 15.5.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    Text(
+                                        text = "Velocidad Pico • MVT ${model.mvt} m/s",
+                                        color = labelColor,
+                                        fontSize = 11.5.sp
+                                    )
                                 }
                             }
+                        }
 
-                            if (currentMode == "VBT") {
-                                // Selector de Categoría / Familia VBT
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    VBTExerciseFamily.values().forEach { family ->
-                                        val famTitle = "${family.icon} ${family.label}" 
-                                        val isFam = setupFamily == family
-                                        val famColor = Color(0xFFFFB300)
-                                        Surface(
-                                            onClick = {
-                                                onFamilyChange(family)
-                                                exerciseDropdownExpanded = false
-                                            },
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = if (isFam) famColor.copy(alpha = 0.18f) else Color(0xFF181F28),
-                                            border = androidx.compose.foundation.BorderStroke(
-                                                1.dp,
-                                                if (isFam) famColor else Color(0xFF2D3744)
-                                            ),
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Box(
-                                                contentAlignment = Alignment.Center,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
-                                            ) {
-                                                Text(
-                                                    famTitle,
-                                                    color = if (isFam) Color(0xFFFFD54F) else Color(0xFFB0BCCB),
-                                                    fontSize = 11.sp,
-                                                    fontWeight = if (isFam) FontWeight.Bold else FontWeight.Medium,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                        Divider(color = Color(0xFF2D3540), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
 
-                                // Lista Desplegable de Ejercicio VBT
-                                val exercises = VBTExerciseModel.values().filter { it.family == setupFamily }
-                                Surface(
-                                    onClick = { exerciseDropdownExpanded = !exerciseDropdownExpanded },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFF181F28),
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.2.dp,
-                                        if (exerciseDropdownExpanded) Color(0xFF00FFCC) else Color(0xFF323C4A)
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                "Ejercicio seleccionado",
-                                                color = Color(0xFF8C99A8),
-                                                fontSize = 10.sp
-                                            )
-                                            Text(
-                                                selectedVBTExercise.displayName,
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Surface(
-                                                color = Color(0xFF162C26),
-                                                shape = RoundedCornerShape(6.dp),
-                                                border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFF00FFCC).copy(alpha = 0.5f))
-                                            ) {
-                                                Text(
-                                                    if (selectedVBTExercise.usesPeakVelocity) "⚡ PV • ${selectedVBTExercise.mvt} m/s"
-                                                    else "🏋️ VM • ${selectedVBTExercise.mvt} m/s",
-                                                    color = Color(0xFF00FFCC),
-                                                    fontSize = 10.5.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                                )
-                                            }
-                                            Icon(
-                                                if (exerciseDropdownExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                                contentDescription = "Desplegar ejercicios",
-                                                tint = Color(0xFF00FFCC)
-                                            )
-                                        }
+                        // Categoría 2: Fuerza Tradicional (Ley de Hill)
+                        Text(
+                            text = "FUERZA / POWERLIFTING (LEY DE HILL)",
+                            color = Color(0xFFFFB300),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 10.dp, bottom = 4.dp)
+                        )
+                        VBTExerciseModel.values().filter { it.family == VBTExerciseFamily.HILL_TRADITIONAL }.forEach { model ->
+                            val isSelected = currentMode == "VBT" && selectedVBTExercise == model
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onModeChange("VBT")
+                                        onFamilyChange(VBTExerciseFamily.HILL_TRADITIONAL)
+                                        onVBTExerciseChange(model)
+                                        showExercisePickerPopup = false
                                     }
-                                }
-
-                                AnimatedVisibility(visible = exerciseDropdownExpanded) {
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = Color(0xFF141A22),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2D3846)),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            exercises.forEachIndexed { idx, model ->
-                                                val isSel = selectedVBTExercise == model
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .background(if (isSel) Color(0xFF172D29) else Color.Transparent)
-                                                        .clickable {
-                                                            onVBTExerciseChange(model)
-                                                            exerciseDropdownExpanded = false
-                                                        }
-                                                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(
-                                                        model.displayName,
-                                                        color = if (isSel) Color(0xFF00FFCC) else Color.White,
-                                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                                        fontSize = 13.sp,
-                                                        modifier = Modifier.weight(1f)
-                                                    )
-                                                    Row(
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                    ) {
-                                                        Text(
-                                                            if (model.usesPeakVelocity) "PV ${model.mvt} m/s" else "VM ${model.mvt} m/s",
-                                                            color = if (isSel) Color(0xFF00FFCC) else Color(0xFF8C99A8),
-                                                            fontSize = 11.sp
-                                                        )
-                                                        if (isSel) {
-                                                            Icon(
-                                                                Icons.Default.Check,
-                                                                contentDescription = null,
-                                                                tint = Color(0xFF00FFCC),
-                                                                modifier = Modifier.size(16.dp)
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                                if (idx < exercises.lastIndex) {
-                                                    Divider(color = Color(0xFF222A35), thickness = 0.7.dp)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                val jumpOptions = listOf(
-                                    JumpType.CMJ to "Salto con Contramovimiento (CMJ)",
-                                    JumpType.SJ to "Squat Jump (SJ)",
-                                    JumpType.DROP_JUMP to "Drop Jump (Reactivo)"
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        onModeChange("VBT")
+                                        onFamilyChange(VBTExerciseFamily.HILL_TRADITIONAL)
+                                        onVBTExerciseChange(model)
+                                        showExercisePickerPopup = false
+                                    },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = accentColor,
+                                        unselectedColor = labelColor
+                                    )
                                 )
-                                val currentJumpLabel = jumpOptions.firstOrNull { it.first == selectedJumpType }?.second ?: "CMJ"
-
-                                Surface(
-                                    onClick = { jumpDropdownExpanded = !jumpDropdownExpanded },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFF181F28),
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.2.dp,
-                                        if (jumpDropdownExpanded) Color(0xFF00FFCC) else Color(0xFF323C4A)
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                "Protocolo de salto",
-                                                color = Color(0xFF8C99A8),
-                                                fontSize = 10.sp
-                                            )
-                                            Text(
-                                                currentJumpLabel,
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp
-                                            )
-                                        }
-                                        Icon(
-                                            if (jumpDropdownExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                            contentDescription = "Desplegar saltos",
-                                            tint = Color(0xFF00FFCC)
-                                        )
-                                    }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = model.displayName,
+                                        color = Color.White,
+                                        fontSize = 15.5.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    Text(
+                                        text = "Velocidad Media • MVT ${model.mvt} m/s",
+                                        color = labelColor,
+                                        fontSize = 11.5.sp
+                                    )
                                 }
+                            }
+                        }
 
-                                AnimatedVisibility(visible = jumpDropdownExpanded) {
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = Color(0xFF141A22),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2D3846)),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            jumpOptions.forEachIndexed { idx, (jType, title) ->
-                                                val isSel = selectedJumpType == jType
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .background(if (isSel) Color(0xFF172D29) else Color.Transparent)
-                                                        .clickable {
-                                                            onJumpTypeChange(jType)
-                                                            jumpDropdownExpanded = false
-                                                        }
-                                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(
-                                                        title,
-                                                        color = if (isSel) Color(0xFF00FFCC) else Color.White,
-                                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                                        fontSize = 13.sp
-                                                    )
-                                                    if (isSel) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = null,
-                                                            tint = Color(0xFF00FFCC),
-                                                            modifier = Modifier.size(16.dp)
-                                                        )
-                                                    }
-                                                }
-                                                if (idx < jumpOptions.lastIndex) {
-                                                    Divider(color = Color(0xFF222A35), thickness = 0.7.dp)
-                                                }
-                                            }
-                                        }
+                        Divider(color = Color(0xFF2D3540), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+
+                        // Categoría 3: Salto Vertical
+                        Text(
+                            text = "SALTO VERTICAL (PLIOMETRÍA)",
+                            color = Color(0xFF64B5F6),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 10.dp, bottom = 4.dp)
+                        )
+                        listOf(
+                            JumpType.CMJ to "Salto Contramovimiento (CMJ)",
+                            JumpType.SJ to "Squat Jump (SJ)",
+                            JumpType.DROP_JUMP to "Drop Jump (Reactivo)"
+                        ).forEach { (jType, title) ->
+                            val isSelected = currentMode == "JUMP" && selectedJumpType == jType
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onModeChange("JUMP")
+                                        onJumpTypeChange(jType)
+                                        showExercisePickerPopup = false
                                     }
-                                }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        onModeChange("JUMP")
+                                        onJumpTypeChange(jType)
+                                        showExercisePickerPopup = false
+                                    },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = accentColor,
+                                        unselectedColor = labelColor
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = title,
+                                    color = Color.White,
+                                    fontSize = 15.5.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
                             }
                         }
                     }
 
-                    // ── 3. PESO A LEVANTAR (CARGA EN KG) ──
-                    if (currentMode == "VBT") {
-                        Surface(
-                            color = Color(0xFF0F1318),
-                            shape = RoundedCornerShape(12.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF232B36)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        "⚖️ Peso a Levantar",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp
-                                    )
-                                    Surface(
-                                        color = Color(0xFF162C26),
-                                        shape = RoundedCornerShape(6.dp),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.5f))
-                                    ) {
-                                        Text(
-                                            "${barbellLoadKg.ifBlank { "0" }} kg",
-                                            color = Color(0xFF00FFCC),
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 13.sp,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                }
-
-                                val currentLoad = barbellLoadKg.toDoubleOrNull() ?: 70.0
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    FilledTonalButton(
-                                        onClick = {
-                                            val next = (currentLoad - 5.0).coerceAtLeast(5.0)
-                                            onLoadChange(if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next))
-                                        },
-                                        contentPadding = PaddingValues(0.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.weight(1f).height(36.dp),
-                                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF212832))
-                                    ) { Text("-5", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.LightGray) }
-
-                                    FilledTonalButton(
-                                        onClick = {
-                                            val next = (currentLoad - 2.5).coerceAtLeast(5.0)
-                                            onLoadChange(if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next))
-                                        },
-                                        contentPadding = PaddingValues(0.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.weight(1f).height(36.dp),
-                                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF212832))
-                                    ) { Text("-2.5", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.LightGray) }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1.7f)
-                                            .height(38.dp)
-                                            .background(Color(0xFF181F28), RoundedCornerShape(8.dp))
-                                            .border(1.5.dp, Color(0xFF00FFCC), RoundedCornerShape(8.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.Center,
-                                            modifier = Modifier.padding(horizontal = 4.dp)
-                                        ) {
-                                            BasicTextField(
-                                                value = barbellLoadKg,
-                                                onValueChange = { newVal ->
-                                                    if (newVal.isEmpty() || newVal.all { it.isDigit() || it == '.' }) {
-                                                        onLoadChange(newVal)
-                                                    }
-                                                },
-                                                singleLine = true,
-                                                textStyle = androidx.compose.ui.text.TextStyle(
-                                                    color = Color.White,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    textAlign = TextAlign.Center,
-                                                    fontSize = 15.5.sp
-                                                ),
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                                cursorBrush = SolidColor(Color(0xFF00FFCC)),
-                                                modifier = Modifier.wrapContentWidth()
-                                            )
-                                            Text(" kg", color = Color(0xFF00FFCC), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-
-                                    FilledTonalButton(
-                                        onClick = {
-                                            val next = currentLoad + 2.5
-                                            onLoadChange(if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next))
-                                        },
-                                        contentPadding = PaddingValues(0.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.weight(1f).height(36.dp),
-                                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF212832))
-                                    ) { Text("+2.5", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00FFCC)) }
-
-                                    FilledTonalButton(
-                                        onClick = {
-                                            val next = currentLoad + 5.0
-                                            onLoadChange(if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next))
-                                        },
-                                        contentPadding = PaddingValues(0.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.weight(1f).height(36.dp),
-                                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF212832))
-                                    ) { Text("+5", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00FFCC)) }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    listOf("20", "40", "60", "70", "80", "100").forEach { preset ->
-                                        val isSel = barbellLoadKg == preset
-                                        Surface(
-                                            onClick = { onLoadChange(preset) },
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = if (isSel) Color(0xFF172D29) else Color(0xFF181F28),
-                                            border = androidx.compose.foundation.BorderStroke(
-                                                1.dp,
-                                                if (isSel) Color(0xFF00FFCC) else Color(0xFF2A3340)
-                                            ),
-                                            modifier = Modifier.weight(1f).height(26.dp)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Text(
-                                                    if (preset == "20") "Barra" else "${preset}k",
-                                                    fontSize = 10.sp,
-                                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                                    color = if (isSel) Color(0xFF00FFCC) else Color(0xFF9BA8B8)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                    Divider(color = Color(0xFF333C48), thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showExercisePickerPopup = false }) {
+                            Text("CERRAR", color = accentColor, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
+            }
+        }
+    }
 
-                Divider(color = Color(0xFF252E3A), thickness = 1.dp)
+    // ── POP-UP SECUNDARIO: LISTA SELECCIONABLE DE ATLETAS ──
+    if (showAthletePickerPopup) {
+        var isAddingAthlete by remember { mutableStateOf(allUsers.isEmpty()) }
+        var newName by remember { mutableStateOf("") }
+        var newWeight by remember { mutableStateOf("75") }
 
-                // ── BOTONES DE ACCIÓN ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showAthletePickerPopup = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.86f)
+                    .heightIn(max = 480.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF21262E),
+                tonalElevation = 12.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 18.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        shape = RoundedCornerShape(10.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF344050)),
-                        modifier = Modifier.weight(1f).height(44.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 22.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Cancelar", color = Color(0xFFB0BCCB), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(
+                            text = if (isAddingAthlete) "Nuevo Atleta" else "Seleccionar Atleta",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        TextButton(onClick = { isAddingAthlete = !isAddingAthlete }) {
+                            Text(
+                                text = if (isAddingAthlete) "Ver Lista" else "+ Nuevo",
+                                color = accentColor,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
                     }
-                    Button(
-                        onClick = onConfirmAndCalibrate,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color(0xFF0B1015)),
-                        modifier = Modifier.weight(1.5f).height(44.dp)
+                    Divider(color = Color(0xFF333C48), thickness = 1.dp)
+
+                    if (!isAddingAthlete && allUsers.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            allUsers.forEach { user ->
+                                val isSel = selectedAthlete?.id == user.id
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onSelectUser(user)
+                                            showAthletePickerPopup = false
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = isSel,
+                                        onClick = {
+                                            onSelectUser(user)
+                                            showAthletePickerPopup = false
+                                        },
+                                        colors = RadioButtonDefaults.colors(
+                                            selectedColor = accentColor,
+                                            unselectedColor = labelColor
+                                        )
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = user.name,
+                                            color = Color.White,
+                                            fontSize = 16.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        Text(
+                                            text = "Peso corporal: ${user.bodyWeightKg} kg",
+                                            color = labelColor,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 22.dp, vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text("Nombre del Atleta", color = labelColor, fontSize = 13.sp)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                BasicTextField(
+                                    value = newName,
+                                    onValueChange = { newName = it },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 17.sp),
+                                    cursorBrush = SolidColor(accentColor),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Divider(color = lineColor, thickness = 1.dp)
+                            }
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text("Peso Corporal (kg)", color = labelColor, fontSize = 13.sp)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                BasicTextField(
+                                    value = newWeight,
+                                    onValueChange = { if (it.isEmpty() || it.all { ch -> ch.isDigit() || ch == '.' }) newWeight = it },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 17.sp),
+                                    cursorBrush = SolidColor(accentColor),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Divider(color = lineColor, thickness = 1.dp)
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                Button(
+                                    onClick = {
+                                        val cleanName = newName.trim().ifBlank { "Atleta" }
+                                        val w = newWeight.toDoubleOrNull() ?: 75.0
+                                        onCreateUser(cleanName, w)
+                                        showAthletePickerPopup = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = Color.Black)
+                                ) {
+                                    Text("GUARDAR ATLETA", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
+                    Divider(color = Color(0xFF333C48), thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.End
                     ) {
-                        Text("Pasar a Calibrar ➔", fontWeight = FontWeight.ExtraBold, fontSize = 13.5.sp)
+                        TextButton(onClick = { showAthletePickerPopup = false }) {
+                            Text("CERRAR", color = accentColor, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
