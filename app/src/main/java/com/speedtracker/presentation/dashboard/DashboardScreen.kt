@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Height
@@ -55,7 +57,7 @@ import java.util.*
 @Composable
 fun DashboardScreen(
     userRepository: UserRepository,
-    onNavigateToCamera: () -> Unit,
+    onNavigateToCamera: () -> Unit = {},
     onNavigateToQuickCamera: () -> Unit,
     onNavigateToVideoAnalysis: (String) -> Unit,
     onChangeAthlete: () -> Unit
@@ -64,8 +66,10 @@ fun DashboardScreen(
     val activeUser = remember { userRepository.getActiveUser() }
     var sessions by remember { mutableStateOf(userRepository.getSessionsForActiveUser()) }
 
+    var showTutorialSelectionDialog by remember { mutableStateOf(false) }
     var showTutorialModal by remember { mutableStateOf(false) }
     var tutorialStep by remember { mutableIntStateOf(0) }
+    var selectedTutorialTopic by remember { mutableStateOf("JUMP") }
     var pendingCaptureFile by remember { mutableStateOf<File?>(null) }
 
     // 1. Selector de Video desde Galería -> pasa directo al Trim de Video
@@ -77,7 +81,7 @@ fun DashboardScreen(
         }
     }
 
-    // 2. Grabador de Video Normal desde Cámara -> pasa directo al Trim de Video y se procesa igual que el importado
+    // 2. Grabador de Video Normal desde Cámara -> pasa directo al Trim de Video
     val cameraVideoCaptureLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CaptureVideo()
     ) { success ->
@@ -188,7 +192,7 @@ fun DashboardScreen(
                 }
             }
 
-            // ── CUADRÍCULA 2x2 DE ACCIONES PRINCIPALES ──
+            // ── CUADRÍCULA 2x2 DE ACCIONES PRINCIPALES ALARGADAS (CON TEXTO COMPLETO Y ESPACIO CÓMODO) ──
             item {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -252,8 +256,7 @@ fun DashboardScreen(
                             accentColor = Color(0xFF00E676),
                             containerColor = Color(0xFF17261E),
                             onClick = {
-                                tutorialStep = 0
-                                showTutorialModal = true
+                                showTutorialSelectionDialog = true
                             },
                             modifier = Modifier.weight(1f)
                         )
@@ -318,12 +321,160 @@ fun DashboardScreen(
         }
     }
 
+    // ── POP-UP SELECTOR DE TUTORIAL: PREGUNTA CUÁL SE DESEA VER ──
+    if (showTutorialSelectionDialog) {
+        AlertDialog(
+            onDismissRequest = { showTutorialSelectionDialog = false },
+            containerColor = Color(0xFF1C222A),
+            shape = RoundedCornerShape(16.dp),
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column {
+                        Text(
+                            "Tutoriales Speed Tracker",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                        Text(
+                            "¿Qué tutorial deseas consultar?",
+                            color = Color(0xFF00FFCC),
+                            fontSize = 12.sp
+                        )
+                    }
+                    IconButton(onClick = { showTutorialSelectionDialog = false }) {
+                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.LightGray)
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Opción 1: Salto Vertical & Asimetría
+                    Surface(
+                        onClick = {
+                            selectedTutorialTopic = "JUMP"
+                            tutorialStep = 0
+                            showTutorialSelectionDialog = false
+                            showTutorialModal = true
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF141F1C),
+                        border = BorderStroke(1.5.dp, Color(0xFF00FFCC)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    color = Color(0xFF00FFCC).copy(alpha = 0.2f),
+                                    shape = CircleShape,
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("🦘", fontSize = 22.sp)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        "Salto Vertical & Asimetría",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.5.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        "Tiempo de vuelo, FPS/Slow-Mo, marcado de despegue/aterrizaje con lupa Pies 2x y Test de Asimetría (Izq vs Der).",
+                                        color = Color.LightGray,
+                                        fontSize = 11.sp,
+                                        lineHeight = 15.sp
+                                    )
+                                }
+                            }
+                            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color(0xFF00FFCC))
+                        }
+                    }
+
+                    // Opción 2: Halterofilia / Barra VBT
+                    Surface(
+                        onClick = {
+                            selectedTutorialTopic = "VBT"
+                            tutorialStep = 0
+                            showTutorialSelectionDialog = false
+                            showTutorialModal = true
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF16242B),
+                        border = BorderStroke(1.5.dp, Color(0xFF00E5FF)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    color = Color(0xFF00E5FF).copy(alpha = 0.2f),
+                                    shape = CircleShape,
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("🏋️", fontSize = 22.sp)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        "Halterofilia & Barra VBT",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.5.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        "Recorte concéntrico, calibración de disco olímpico (45 cm), velocidad media/pico, telemetría y 1RM.",
+                                        color = Color.LightGray,
+                                        fontSize = 11.sp,
+                                        lineHeight = 15.sp
+                                    )
+                                }
+                            }
+                            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color(0xFF00E5FF))
+                        }
+                    }
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
     if (showTutorialModal) {
         TutorialGuideDialog(
             step = tutorialStep,
             onStepChange = { tutorialStep = it },
             onDismiss = { showTutorialModal = false },
-            initialTopic = "JUMP",
+            initialTopic = selectedTutorialTopic,
             onTryDemoVideo = {
                 showTutorialModal = false
                 val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v4.mp4")
@@ -345,7 +496,7 @@ fun HomeActionGridCard(
 ) {
     Card(
         modifier = modifier
-            .height(136.dp)
+            .height(180.dp)
             .clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(1.2.dp, accentColor.copy(alpha = 0.55f)),
@@ -360,7 +511,7 @@ fun HomeActionGridCard(
             Surface(
                 color = accentColor.copy(alpha = 0.18f),
                 shape = CircleShape,
-                modifier = Modifier.size(38.dp)
+                modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
@@ -372,22 +523,22 @@ fun HomeActionGridCard(
                 }
             }
 
-            Column {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = title,
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.5.sp,
                     lineHeight = 17.sp,
-                    maxLines = 2
+                    maxLines = 3
                 )
-                Spacer(modifier = Modifier.height(3.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = subtitle,
-                    color = Color.LightGray.copy(alpha = 0.85f),
-                    fontSize = 10.5.sp,
-                    lineHeight = 13.5.sp,
-                    maxLines = 2
+                    color = Color.LightGray.copy(alpha = 0.90f),
+                    fontSize = 11.sp,
+                    lineHeight = 14.5.sp,
+                    maxLines = 3
                 )
             }
         }
