@@ -769,6 +769,7 @@ fun CameraScreen(
                             JumpType.CMJ -> "Párese erguido y realice contramovimiento natural"
                             JumpType.SJ -> "Baje a 90°, mantenga pausa 2s y salte sin rebotar"
                             JumpType.DROP_JUMP -> "Cae del cajón y rebota en el suelo lo más rápido posible"
+                            JumpType.ASYMMETRY_TEST -> "Salte unipodalmente con pierna izquierda y derecha para evaluar asimetría"
                         }
                         Text(prompt, color = Color.White, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                     }

@@ -184,7 +184,9 @@ data class VideoFpsMetadata(
 data class JumpFootSample(
     val timestampMs: Long,
     val footX: Float,
-    val footY: Float
+    val footY: Float,
+    val leftFootY: Float = footY,
+    val rightFootY: Float = footY
 )
 
 /**
@@ -678,6 +680,11 @@ fun VideoAnalysisScreen(
     var jumpContactMs by remember { mutableStateOf<Double?>(null) }
     var jumpTakeoffMs by remember { mutableStateOf<Double?>(null) }
     var jumpLandingMs by remember { mutableStateOf<Double?>(null) }
+    var activeAsymmetryLeg by remember { mutableStateOf("LEFT") } // "LEFT" (Pierna Izq) o "RIGHT" (Pierna Der)
+    var leftJumpTakeoffMs by remember { mutableStateOf<Double?>(null) }
+    var leftJumpLandingMs by remember { mutableStateOf<Double?>(null) }
+    var rightJumpTakeoffMs by remember { mutableStateOf<Double?>(null) }
+    var rightJumpLandingMs by remember { mutableStateOf<Double?>(null) }
     var isSubFrameInterpolated by remember { mutableStateOf(false) }
     var isDetectingJumpEvents by remember { mutableStateOf(false) }
     var jumpFootSamples by remember { mutableStateOf<List<JumpFootSample>>(emptyList()) }
@@ -902,7 +909,7 @@ fun VideoAnalysisScreen(
                                     if (lf != null && rf != null && (lf.inFrameLikelihood > 0.25f || rf.inFrameLikelihood > 0.25f)) {
                                         val fx = (lf.position.x + rf.position.x) / 2f
                                         val fy = maxOf(lf.position.y, rf.position.y)
-                                        samples.add(JumpFootSample(t, fx, fy))
+                                        samples.add(JumpFootSample(t, fx, fy, lf.position.y, rf.position.y))
                                     }
                                 }
                             }
@@ -917,12 +924,8 @@ fun VideoAnalysisScreen(
                 if (scanResult.size >= 4) {
                     jumpFootSamples = scanResult
                     val sortedY = scanResult.map { it.footY }.sorted()
-                    // El percentil 85 de Y representa el nivel firme de la suela en el suelo antes y después de saltar
-                    val autoGroundNativeY = jumpGroundLineNativeY ?: sortedY[(sortedY.size * 0.85).toInt().coerceIn(0, sortedY.size - 1)]
+                    val autoGroundNativeY = sortedY[(sortedY.size * 0.85).toInt().coerceIn(0, sortedY.size - 1)]
                     jumpGroundLineNativeY = autoGroundNativeY
-
-                    val bounds = calculateVideoRenderBounds(effectiveW, effectiveH, videoNativeWidth, videoNativeHeight)
-                    jumpGroundLineScreenY = (bounds.top + autoGroundNativeY * bounds.scale).coerceIn(24f, effectiveH - 24f)
 
                     val (contact, takeoff, landing) = computeSubFrameJumpEvents(
                         samples = scanResult,
@@ -934,6 +937,28 @@ fun VideoAnalysisScreen(
                         jumpContactMs = contact
                         jumpTakeoffMs = takeoff
                         jumpLandingMs = landing
+                        if (selectedJumpType == JumpType.ASYMMETRY_TEST) {
+                            val leftSamples = scanResult.map { it.copy(footY = it.leftFootY) }
+                            val rightSamples = scanResult.map { it.copy(footY = it.rightFootY) }
+                            val leftGround = leftSamples.map { it.footY }.sorted()[(leftSamples.size * 0.85).toInt().coerceIn(0, leftSamples.size - 1)]
+                            val rightGround = rightSamples.map { it.footY }.sorted()[(rightSamples.size * 0.85).toInt().coerceIn(0, rightSamples.size - 1)]
+                            val (_, lTakeoff, lLanding) = computeSubFrameJumpEvents(leftSamples, leftGround, videoNativeHeight, JumpType.CMJ)
+                            val (_, rTakeoff, rLanding) = computeSubFrameJumpEvents(rightSamples, rightGround, videoNativeHeight, JumpType.CMJ)
+                            if (lTakeoff != null && lLanding != null && lLanding > lTakeoff + 80.0) {
+                                leftJumpTakeoffMs = lTakeoff
+                                leftJumpLandingMs = lLanding
+                            } else {
+                                leftJumpTakeoffMs = takeoff
+                                leftJumpLandingMs = landing
+                            }
+                            if (rTakeoff != null && rLanding != null && rLanding > rTakeoff + 80.0) {
+                                rightJumpTakeoffMs = rTakeoff
+                                rightJumpLandingMs = rLanding
+                            } else {
+                                rightJumpTakeoffMs = takeoff
+                                rightJumpLandingMs = landing
+                            }
+                        }
                         isSubFrameInterpolated = true
                         val seekTarget = takeoff.toLong()
                         currentVideoPosMs = seekTarget
@@ -1701,7 +1726,8 @@ fun VideoAnalysisScreen(
                                     listOf(
                                         Triple(JumpType.CMJ, "Salto con Contramovimiento (CMJ)", "Inicio erguido, flexión y despegue explosivo • Altura Sayers y Watts pico"),
                                         Triple(JumpType.SJ, "Squat Jump (SJ)", "Salto concéntrico puro a 90° sin contramovimiento • Fuerza concéntrica y EUR"),
-                                        Triple(JumpType.DROP_JUMP, "Drop Jump (Caída desde Cajón)", "Contacto reactivo mínimo (<250 ms) • Reactividad, tiempo contacto y RSI")
+                                        Triple(JumpType.DROP_JUMP, "Drop Jump (Caída desde Cajón)", "Contacto reactivo mínimo (<250 ms) • Reactividad, tiempo contacto y RSI"),
+                                        Triple(JumpType.ASYMMETRY_TEST, "Test de Asimetría (Izq vs Der)", "Comparación unipodal/bilateral • % Asimetría Inter-Limb y riesgo lesivo")
                                     ).forEach { (jType, title, desc) ->
                                         val isSelected = selectedJumpType == jType
                                         Surface(
@@ -1933,46 +1959,10 @@ fun VideoAnalysisScreen(
                                 Box(
                                     modifier = Modifier.fillMaxSize()
                                 ) {
-                                    var hasUserInteractedWithTracker by remember(analysisSetupStep, currentMode) { mutableStateOf(false) }
+                                    var hasUserInteractedWithTracker by remember(analysisSetupStep, currentMode) { mutableStateOf(currentMode == "JUMP") }
                                     if (currentMode == "JUMP") {
-                                        val activeGroundY = (jumpGroundLineScreenY ?: (boxH * 0.78f)).coerceIn(28f, (boxH - 24f).coerceAtLeast(30f))
-                                        val currentFootPt = remember(jumpFootSamples, currentVideoPosMs) {
-                                            jumpFootSamples.minByOrNull { kotlin.math.abs(it.timestampMs - currentVideoPosMs) }
-                                        }
-                                        JumpGroundLineOverlayCanvas(
-                                            groundY = activeGroundY,
-                                            boxWidth = boxW,
-                                            boxHeight = boxH,
-                                            bounds = bounds,
-                                            currentFootSample = currentFootPt,
-                                            onGroundYChange = { newY ->
-                                                val clampedY = newY.coerceIn(28f, (boxH - 24f).coerceAtLeast(30f))
-                                                jumpGroundLineScreenY = clampedY
-                                                val invScale = if (bounds.scale > 0f) 1f / bounds.scale else 1f
-                                                val natY = ((clampedY - bounds.top) * invScale).coerceIn(0f, videoNativeHeight.toFloat())
-                                                jumpGroundLineNativeY = natY
-                                                hasUserInteractedWithTracker = true
-                                                if (jumpFootSamples.size >= 4) {
-                                                    val (cMs, tMs, lMs) = computeSubFrameJumpEvents(
-                                                        samples = jumpFootSamples,
-                                                        groundNativeY = natY,
-                                                        videoNativeHeight = videoNativeHeight,
-                                                        jumpType = selectedJumpType
-                                                    )
-                                                    if (tMs != null && lMs != null && lMs > tMs + 80.0) {
-                                                        jumpContactMs = cMs
-                                                        jumpTakeoffMs = tMs
-                                                        jumpLandingMs = lMs
-                                                        isSubFrameInterpolated = true
-                                                    }
-                                                }
-                                            },
-                                            onInteraction = {
-                                                hasUserInteractedWithTracker = true
-                                            }
-                                        )
-
-                                        // Badge Superior Izquierdo en Salto: FPS reales detectados + Interpolación Sub-Frame
+                                        // Sin línea de piso (el tiempo de vuelo depende exclusivamente de los frames de Despegue y Aterrizaje).
+                                        // Badge Superior Izquierdo en Salto: FPS reales detectados + Interpolación Sub-Frame + Lupa Pies 2x
                                         Surface(
                                             color = Color(0xD9101620),
                                             shape = RoundedCornerShape(8.dp),
@@ -2197,7 +2187,7 @@ fun VideoAnalysisScreen(
                                         }
                                     }
 
-                                    // Botones Superiores Derechos ÚNICOS: Audio y Reset Zoom (Sin superposición con ningún otro botón)
+                                    // Botones Superiores Derechos ÚNICOS: Lupa Pies 2x (en Salto), Audio y Reset Zoom
                                     Row(
                                         modifier = Modifier
                                             .align(Alignment.TopEnd)
@@ -2205,6 +2195,44 @@ fun VideoAnalysisScreen(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        if (currentMode == "JUMP") {
+                                            Surface(
+                                                onClick = {
+                                                    if (scale > 1.3f) {
+                                                        scale = 1f
+                                                        offsetX = 0f
+                                                        offsetY = 0f
+                                                    } else {
+                                                        scale = 2.2f
+                                                        offsetX = 0f
+                                                        offsetY = -boxH * 0.28f
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(16.dp),
+                                                color = if (scale > 1.3f) Color(0xFF00FFCC) else Color(0xB3000000),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC)),
+                                                modifier = Modifier.height(34.dp)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.ZoomIn,
+                                                        contentDescription = "Lupa a los pies",
+                                                        tint = if (scale > 1.3f) Color.Black else Color(0xFF00FFCC),
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                    Text(
+                                                        if (scale > 1.3f) "1x" else "Pies 2x",
+                                                        color = if (scale > 1.3f) Color.Black else Color.White,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
                                         FilledTonalIconButton(
                                             onClick = {
                                                 isVideoMuted = !isVideoMuted
@@ -2454,7 +2482,70 @@ fun VideoAnalysisScreen(
 
                                     Spacer(modifier = Modifier.height(4.dp))
 
+                                    // Si es Test de Asimetría: Selector rápido de Pierna Izquierda vs Pierna Derecha
+                                    if (selectedJumpType == JumpType.ASYMMETRY_TEST) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 2.dp, vertical = 2.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            val isLeftActive = activeAsymmetryLeg == "LEFT"
+                                            val leftDone = leftJumpTakeoffMs != null && leftJumpLandingMs != null && leftJumpLandingMs!! > leftJumpTakeoffMs!!
+                                            val rightDone = rightJumpTakeoffMs != null && rightJumpLandingMs != null && rightJumpLandingMs!! > rightJumpTakeoffMs!!
+
+                                            Surface(
+                                                onClick = { activeAsymmetryLeg = "LEFT" },
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isLeftActive) Color(0x2600FFCC) else Color(0xFF1A1E24),
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    1.2.dp,
+                                                    if (isLeftActive) Color(0xFF00FFCC) else Color(0xFF3A424E)
+                                                ),
+                                                modifier = Modifier.weight(1f).height(30.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        if (leftDone) "🦵 Pierna Izquierda ✓" else "🦵 Pierna Izquierda (Izq)",
+                                                        color = if (isLeftActive) Color(0xFF00FFCC) else Color.LightGray,
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+
+                                            Surface(
+                                                onClick = { activeAsymmetryLeg = "RIGHT" },
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (!isLeftActive) Color(0x2600E5FF) else Color(0xFF1A1E24),
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    1.2.dp,
+                                                    if (!isLeftActive) Color(0xFF00E5FF) else Color(0xFF3A424E)
+                                                ),
+                                                modifier = Modifier.weight(1f).height(30.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        if (rightDone) "🦵 Pierna Derecha ✓" else "🦵 Pierna Derecha (Der)",
+                                                        color = if (!isLeftActive) Color(0xFF00E5FF) else Color.LightGray,
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                    }
+
                                     // Botones de Marcado de Eventos (Contacto, Despegue, Aterrizaje) + Auto IA Sub-Frame
+                                    val displayedTakeoffMs = if (selectedJumpType == JumpType.ASYMMETRY_TEST) {
+                                        if (activeAsymmetryLeg == "LEFT") leftJumpTakeoffMs else rightJumpTakeoffMs
+                                    } else jumpTakeoffMs
+                                    val displayedLandingMs = if (selectedJumpType == JumpType.ASYMMETRY_TEST) {
+                                        if (activeAsymmetryLeg == "LEFT") leftJumpLandingMs else rightJumpLandingMs
+                                    } else jumpLandingMs
+
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -2494,10 +2585,14 @@ fun VideoAnalysisScreen(
                                         }
 
                                         // Botón 🛫 Despegue (Take-off)
-                                        val hasTakeoff = jumpTakeoffMs != null
+                                        val hasTakeoff = displayedTakeoffMs != null
                                         OutlinedButton(
                                             onClick = {
-                                                jumpTakeoffMs = currentVideoPosMs.toDouble()
+                                                val tNow = currentVideoPosMs.toDouble()
+                                                if (selectedJumpType == JumpType.ASYMMETRY_TEST) {
+                                                    if (activeAsymmetryLeg == "LEFT") leftJumpTakeoffMs = tNow else rightJumpTakeoffMs = tNow
+                                                }
+                                                jumpTakeoffMs = tNow
                                                 isSubFrameInterpolated = false
                                             },
                                             modifier = Modifier.weight(1.1f).height(38.dp),
@@ -2520,7 +2615,7 @@ fun VideoAnalysisScreen(
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text("🛫 Despegue", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                                     Text(
-                                                        if (hasTakeoff) String.format(Locale.US, "%.3fs", (jumpTakeoffMs!! - trimStartMs).coerceAtLeast(0.0) / 1000.0)
+                                                        if (hasTakeoff) String.format(Locale.US, "%.3fs", (displayedTakeoffMs!! - trimStartMs).coerceAtLeast(0.0) / 1000.0)
                                                         else "Toca en frame",
                                                         fontSize = 9.sp,
                                                         color = if (hasTakeoff) Color.White else Color.Gray,
@@ -2535,7 +2630,7 @@ fun VideoAnalysisScreen(
                                                         modifier = Modifier
                                                             .size(15.dp)
                                                             .clickable {
-                                                                val t = jumpTakeoffMs!!.toLong()
+                                                                val t = displayedTakeoffMs!!.toLong()
                                                                 videoViewRef?.pause()
                                                                 isPlaying = false
                                                                 currentVideoPosMs = t
@@ -2548,10 +2643,14 @@ fun VideoAnalysisScreen(
                                         }
 
                                         // Botón 🛬 Aterrizaje (Landing)
-                                        val hasLanding = jumpLandingMs != null
+                                        val hasLanding = displayedLandingMs != null
                                         OutlinedButton(
                                             onClick = {
-                                                jumpLandingMs = currentVideoPosMs.toDouble()
+                                                val tNow = currentVideoPosMs.toDouble()
+                                                if (selectedJumpType == JumpType.ASYMMETRY_TEST) {
+                                                    if (activeAsymmetryLeg == "LEFT") leftJumpLandingMs = tNow else rightJumpLandingMs = tNow
+                                                }
+                                                jumpLandingMs = tNow
                                                 isSubFrameInterpolated = false
                                             },
                                             modifier = Modifier.weight(1.1f).height(38.dp),
@@ -2574,7 +2673,7 @@ fun VideoAnalysisScreen(
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text("🛬 Aterrizaje", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                                     Text(
-                                                        if (hasLanding) String.format(Locale.US, "%.3fs", (jumpLandingMs!! - trimStartMs).coerceAtLeast(0.0) / 1000.0)
+                                                        if (hasLanding) String.format(Locale.US, "%.3fs", (displayedLandingMs!! - trimStartMs).coerceAtLeast(0.0) / 1000.0)
                                                         else "Toca en frame",
                                                         fontSize = 9.sp,
                                                         color = if (hasLanding) Color.White else Color.Gray,
@@ -2589,7 +2688,7 @@ fun VideoAnalysisScreen(
                                                         modifier = Modifier
                                                             .size(15.dp)
                                                             .clickable {
-                                                                val t = jumpLandingMs!!.toLong()
+                                                                val t = displayedLandingMs!!.toLong()
                                                                 videoViewRef?.pause()
                                                                 isPlaying = false
                                                                 currentVideoPosMs = t
@@ -2623,21 +2722,34 @@ fun VideoAnalysisScreen(
 
                                     Spacer(modifier = Modifier.height(5.dp))
 
-                                    // Tarjeta de Vista Previa en Vivo (Tiempo de Vuelo, Altura Sayers, Vel. Despegue / RSI)
-                                    val liveFlightSec = if (jumpTakeoffMs != null && jumpLandingMs != null && jumpLandingMs!! > jumpTakeoffMs!!) {
-                                        ((jumpLandingMs!! - jumpTakeoffMs!!) / 1000.0) / jumpSlowMoFactor.coerceAtLeast(0.25)
+                                    // Tarjeta de Vista Previa en Vivo (Tiempo de Vuelo, Altura Sayers, Vel. Despegue / RSI / Asimetría)
+                                    val safeSlow = jumpSlowMoFactor.coerceAtLeast(0.25)
+                                    val liveFlightSec = if (displayedTakeoffMs != null && displayedLandingMs != null && displayedLandingMs > displayedTakeoffMs) {
+                                        ((displayedLandingMs - displayedTakeoffMs) / 1000.0) / safeSlow
                                     } else null
-                                    val liveHeightCm = if (liveFlightSec != null && liveFlightSec in 0.10..1.35) {
+                                    val liveHeightCm = if (liveFlightSec != null && liveFlightSec in 0.08..1.35) {
                                         0.125 * 9.81 * liveFlightSec * liveFlightSec * 100.0
                                     } else null
-                                    val liveTakeoffVel = if (liveFlightSec != null && liveFlightSec in 0.10..1.35) {
+                                    val liveTakeoffVel = if (liveFlightSec != null && liveFlightSec in 0.08..1.35) {
                                         0.5 * 9.81 * liveFlightSec
                                     } else null
                                     val liveContactMs = if (selectedJumpType == JumpType.DROP_JUMP && jumpContactMs != null && jumpTakeoffMs != null && jumpTakeoffMs!! > jumpContactMs!!) {
-                                        ((jumpTakeoffMs!! - jumpContactMs!!) / jumpSlowMoFactor.coerceAtLeast(0.25)).toLong()
+                                        ((jumpTakeoffMs!! - jumpContactMs!!) / safeSlow).toLong()
                                     } else null
                                     val liveRsi = if (liveHeightCm != null && liveContactMs != null && liveContactMs > 50L) {
                                         (liveHeightCm / 100.0) / (liveContactMs / 1000.0)
+                                    } else null
+
+                                    val leftLiveCm = if (leftJumpTakeoffMs != null && leftJumpLandingMs != null && leftJumpLandingMs!! > leftJumpTakeoffMs!!) {
+                                        val lSec = ((leftJumpLandingMs!! - leftJumpTakeoffMs!!) / 1000.0) / safeSlow
+                                        if (lSec in 0.08..1.35) 0.125 * 9.81 * lSec * lSec * 100.0 else null
+                                    } else null
+                                    val rightLiveCm = if (rightJumpTakeoffMs != null && rightJumpLandingMs != null && rightJumpLandingMs!! > rightJumpTakeoffMs!!) {
+                                        val rSec = ((rightJumpLandingMs!! - rightJumpTakeoffMs!!) / 1000.0) / safeSlow
+                                        if (rSec in 0.08..1.35) 0.125 * 9.81 * rSec * rSec * 100.0 else null
+                                    } else null
+                                    val liveAsymPct = if (leftLiveCm != null && rightLiveCm != null && maxOf(leftLiveCm, rightLiveCm) > 1.0) {
+                                        (kotlin.math.abs(rightLiveCm - leftLiveCm) / maxOf(leftLiveCm, rightLiveCm)) * 100.0
                                     } else null
 
                                     Surface(
@@ -2646,55 +2758,99 @@ fun VideoAnalysisScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x4400FFCC))
                                     ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column {
-                                                Text(
-                                                    if (isSubFrameInterpolated) "TIEMPO DE VUELO (✨ IA SUB-FRAME)" else "TIEMPO DE VUELO (MY JUMP)",
-                                                    color = Color.Gray,
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Text(
-                                                    if (liveFlightSec != null) "${String.format(Locale.US, "%.1f", liveFlightSec * 1000.0)} ms" else "-- ms",
-                                                    color = Color.White,
-                                                    fontSize = 14.sp,
-                                                    fontWeight = FontWeight.Black
-                                                )
-                                            }
-
-                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Text("ALTURA ESTIMADA", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                                Text(
-                                                    if (liveHeightCm != null) "${String.format(Locale.US, "%.1f", liveHeightCm)} cm" else "-- cm",
-                                                    color = Color(0xFF00FFCC),
-                                                    fontSize = 15.sp,
-                                                    fontWeight = FontWeight.Black
-                                                )
-                                            }
-
-                                            Column(horizontalAlignment = Alignment.End) {
-                                                if (selectedJumpType == JumpType.DROP_JUMP && liveRsi != null) {
-                                                    Text("RSI (Tc: ${liveContactMs}ms)", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        if (selectedJumpType == JumpType.ASYMMETRY_TEST) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column {
+                                                    Text("PIERNA IZQUIERDA", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                                     Text(
-                                                        String.format(Locale.US, "%.2f", liveRsi),
-                                                        color = Color(0xFF00E676),
+                                                        if (leftLiveCm != null) "${String.format(Locale.US, "%.1f", leftLiveCm)} cm" else "-- cm",
+                                                        color = Color(0xFF00FFCC),
                                                         fontSize = 14.sp,
                                                         fontWeight = FontWeight.Black
                                                     )
-                                                } else {
-                                                    Text("VEL. DESPEGUE", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Text("PIERNA DERECHA", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                                     Text(
-                                                        if (liveTakeoffVel != null) "${String.format(Locale.US, "%.2f", liveTakeoffVel)} m/s" else "-- m/s",
-                                                        color = Color(0xFF00E676),
+                                                        if (rightLiveCm != null) "${String.format(Locale.US, "%.1f", rightLiveCm)} cm" else "-- cm",
+                                                        color = Color(0xFF00E5FF),
                                                         fontSize = 14.sp,
                                                         fontWeight = FontWeight.Black
                                                     )
+                                                }
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text("% ASIMETRÍA", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                    val asymColor = when {
+                                                        liveAsymPct == null -> Color.Gray
+                                                        liveAsymPct <= 10.0 -> Color(0xFF00E676)
+                                                        liveAsymPct <= 15.0 -> Color(0xFFFFB300)
+                                                        else -> Color(0xFFFF5252)
+                                                    }
+                                                    Text(
+                                                        if (liveAsymPct != null) "${String.format(Locale.US, "%.1f", liveAsymPct)}%" else "-- %",
+                                                        color = asymColor,
+                                                        fontSize = 15.sp,
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column {
+                                                    Text(
+                                                        if (isSubFrameInterpolated) "TIEMPO DE VUELO (✨ IA SUB-FRAME)" else "TIEMPO DE VUELO (MY JUMP)",
+                                                        color = Color.Gray,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        if (liveFlightSec != null) "${String.format(Locale.US, "%.1f", liveFlightSec * 1000.0)} ms" else "-- ms",
+                                                        color = Color.White,
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                }
+
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Text("ALTURA ESTIMADA", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                    Text(
+                                                        if (liveHeightCm != null) "${String.format(Locale.US, "%.1f", liveHeightCm)} cm" else "-- cm",
+                                                        color = Color(0xFF00FFCC),
+                                                        fontSize = 15.sp,
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                }
+
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    if (selectedJumpType == JumpType.DROP_JUMP && liveRsi != null) {
+                                                        Text("RSI (Tc: ${liveContactMs}ms)", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                        Text(
+                                                            String.format(Locale.US, "%.2f", liveRsi),
+                                                            color = Color(0xFF00E676),
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.Black
+                                                        )
+                                                    } else {
+                                                        Text("VEL. DESPEGUE", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                        Text(
+                                                            if (liveTakeoffVel != null) "${String.format(Locale.US, "%.2f", liveTakeoffVel)} m/s" else "-- m/s",
+                                                            color = Color(0xFF00E676),
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.Black
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -3005,7 +3161,11 @@ fun VideoAnalysisScreen(
                         calibratedJumpGroundY = jumpGroundLineNativeY,
                         jumpSlowMoFactor = jumpSlowMoFactor,
                         nativeFrameStepMs = nativeFrameStepMs,
-                        selectedJumpType = selectedJumpType
+                        selectedJumpType = selectedJumpType,
+                        leftJumpTakeoffMs = leftJumpTakeoffMs,
+                        leftJumpLandingMs = leftJumpLandingMs,
+                        rightJumpTakeoffMs = rightJumpTakeoffMs,
+                        rightJumpLandingMs = rightJumpLandingMs
                     ) { p ->
                         progress = p
                     }
@@ -3175,6 +3335,7 @@ fun VideoAnalysisScreen(
                                                         JumpType.CMJ -> "Salto Contramovimiento (CMJ)"
                                                         JumpType.SJ -> "Squat Jump (SJ)"
                                                         JumpType.DROP_JUMP -> "Drop Jump (Reactivo)"
+                                                        JumpType.ASYMMETRY_TEST -> "Test de Asimetría (Izq vs Der)"
                                                     },
                                                     color = Color.White,
                                                     fontWeight = FontWeight.Bold,
@@ -3254,6 +3415,90 @@ fun VideoAnalysisScreen(
                                                     modifier = Modifier.size(11.dp),
                                                     tint = Color(0xFF00FFCC).copy(alpha = 0.7f)
                                                 )
+                                            }
+
+                                            if (metrics?.leftLegHeightMeters != null && metrics.rightLegHeightMeters != null) {
+                                                Spacer(modifier = Modifier.height(12.dp))
+                                                Divider(color = Color(0xFF333333))
+                                                Spacer(modifier = Modifier.height(12.dp))
+                                                val lCm = metrics.leftLegHeightMeters * 100.0
+                                                val rCm = metrics.rightLegHeightMeters * 100.0
+                                                val asym = metrics.asymmetryPercent ?: 0.0
+                                                val asymColor = when {
+                                                    asym <= 10.0 -> Color(0xFF00E676)
+                                                    asym <= 15.0 -> Color(0xFFFFB300)
+                                                    else -> Color(0xFFFF5252)
+                                                }
+                                                val asymStatus = when {
+                                                    asym <= 10.0 -> "✓ Simetría Funcional Óptima (≤ 10%)"
+                                                    asym <= 15.0 -> "⚠ Asimetría Moderada (10% - 15%)"
+                                                    else -> "🚨 Alerta de Asimetría Inter-Limb (> 15%)"
+                                                }
+                                                Text(
+                                                    "⚖️ TEST DE ASIMETRÍA INTER-LIMB (IZQ vs DER)",
+                                                    color = Color(0xFF00FFCC),
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Column {
+                                                        Text("Pierna Izquierda", color = Color.LightGray, fontSize = 11.sp)
+                                                        Text(
+                                                            "${String.format(Locale.US, "%.1f", lCm)} cm",
+                                                            color = Color(0xFF00FFCC),
+                                                            fontWeight = FontWeight.Black,
+                                                            style = MaterialTheme.typography.titleMedium
+                                                        )
+                                                    }
+                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                        Text("Pierna Derecha", color = Color.LightGray, fontSize = 11.sp)
+                                                        Text(
+                                                            "${String.format(Locale.US, "%.1f", rCm)} cm",
+                                                            color = Color(0xFF00E5FF),
+                                                            fontWeight = FontWeight.Black,
+                                                            style = MaterialTheme.typography.titleMedium
+                                                        )
+                                                    }
+                                                    Column(horizontalAlignment = Alignment.End) {
+                                                        Text("Asimetría", color = Color.LightGray, fontSize = 11.sp)
+                                                        Text(
+                                                            "${String.format(Locale.US, "%.1f", asym)}%",
+                                                            color = asymColor,
+                                                            fontWeight = FontWeight.Black,
+                                                            style = MaterialTheme.typography.titleMedium
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Surface(
+                                                    color = asymColor.copy(alpha = 0.14f),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, asymColor.copy(alpha = 0.5f)),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            asymStatus,
+                                                            color = asymColor,
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        Text(
+                                                            "Dom: ${metrics.dominantLeg ?: "--"}",
+                                                            color = Color.White,
+                                                            fontSize = 10.5.sp,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -4344,7 +4589,8 @@ fun VideoAnalysisScreen(
                     showTutorialDialog = false
                     videoViewRef?.pause()
                     isPlaying = false
-                }
+                },
+                initialTopic = if (currentMode == "JUMP") "JUMP" else "VBT"
             )
         }
     }
@@ -6250,6 +6496,10 @@ suspend fun processVideo(
     jumpSlowMoFactor: Double = 1.0,
     nativeFrameStepMs: Long = 33L,
     selectedJumpType: JumpType = JumpType.CMJ,
+    leftJumpTakeoffMs: Double? = null,
+    leftJumpLandingMs: Double? = null,
+    rightJumpTakeoffMs: Double? = null,
+    rightJumpLandingMs: Double? = null,
     onProgress: (Float) -> Unit
 ): ProcessVideoResult = withContext(Dispatchers.IO) {
     var maxResult = 0.0
@@ -6328,7 +6578,7 @@ suspend fun processVideo(
                                 ptX = (lf.position.x + rf.position.x) / 2f
                                 ptY = maxOf(lf.position.y, rf.position.y)
                                 ptLabel = "Pies (Despegue)"
-                                rawJumpFootSamples.add(JumpFootSample(effectiveStartMs + timeOffsetMs, ptX, ptY))
+                                rawJumpFootSamples.add(JumpFootSample(effectiveStartMs + timeOffsetMs, ptX, ptY, lf.position.y, rf.position.y))
                             } else {
                                 val lh = pose.getPoseLandmark(PoseLandmark.LEFT_HIP)
                                 val rh = pose.getPoseLandmark(PoseLandmark.RIGHT_HIP)
@@ -6429,6 +6679,30 @@ suspend fun processVideo(
                     }
                 }
 
+                var finalLeftTakeoff = leftJumpTakeoffMs
+                var finalLeftLanding = leftJumpLandingMs
+                var finalRightTakeoff = rightJumpTakeoffMs
+                var finalRightLanding = rightJumpLandingMs
+
+                if (selectedJumpType == JumpType.ASYMMETRY_TEST && rawJumpFootSamples.size >= 4) {
+                    if (finalLeftTakeoff == null || finalLeftLanding == null) {
+                        val lSamples = rawJumpFootSamples.map { it.copy(footY = it.leftFootY) }
+                        val lGround = lSamples.map { it.footY }.sorted()[(lSamples.size * 0.85).toInt().coerceIn(0, lSamples.size - 1)]
+                        val (_, lT, lL) = computeSubFrameJumpEvents(lSamples, lGround, detectedVideoH, JumpType.CMJ)
+                        finalLeftTakeoff = lT ?: finalTakeoffMs
+                        finalLeftLanding = lL ?: finalLandingMs
+                    }
+                    if (finalRightTakeoff == null || finalRightLanding == null) {
+                        val rSamples = rawJumpFootSamples.map { it.copy(footY = it.rightFootY) }
+                        val rGround = rSamples.map { it.footY }.sorted()[(rSamples.size * 0.85).toInt().coerceIn(0, rSamples.size - 1)]
+                        val (_, rT, rL) = computeSubFrameJumpEvents(rSamples, rGround, detectedVideoH, JumpType.CMJ)
+                        finalRightTakeoff = rT ?: finalTakeoffMs
+                        finalRightLanding = rL ?: finalLandingMs
+                    }
+                    if (finalTakeoffMs == null && finalLeftTakeoff != null) finalTakeoffMs = finalLeftTakeoff
+                    if (finalLandingMs == null && finalLeftLanding != null) finalLandingMs = finalLeftLanding
+                }
+
                 if (finalTakeoffMs != null && finalLandingMs != null && finalLandingMs > finalTakeoffMs) {
                     val preciseMetrics = VerticalJumpAnalyzer.calculateJumpMetricsPrecise(
                         takeoffTimeMs = finalTakeoffMs,
@@ -6436,7 +6710,11 @@ suspend fun processVideo(
                         bodyWeightKg = bodyWeightKg,
                         jumpType = selectedJumpType,
                         contactStartTimeMs = finalContactMs,
-                        slowMoFactor = jumpSlowMoFactor
+                        slowMoFactor = jumpSlowMoFactor,
+                        leftTakeoffTimeMs = finalLeftTakeoff,
+                        leftLandingTimeMs = finalLeftLanding,
+                        rightTakeoffTimeMs = finalRightTakeoff,
+                        rightLandingTimeMs = finalRightLanding
                     )
                     if (preciseMetrics != null) {
                         maxResult = preciseMetrics.heightMeters
@@ -6548,166 +6826,237 @@ fun shareVideoWithReport(context: Context, videoUri: Uri, summary: String) {
 fun TutorialGuideDialog(
     step: Int,
     onStepChange: (Int) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialTopic: String = "JUMP",
+    onTryDemoVideo: (() -> Unit)? = null
 ) {
+    var activeTopic by remember(initialTopic) { mutableStateOf(if (initialTopic == "VBT") "VBT" else "JUMP") }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF1E1E1E),
         title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Surface(
-                    color = Color(0xFF00FFCC).copy(alpha = 0.2f),
-                    shape = CircleShape
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Pestañas selectoras de Tutorial: Salto Vertical vs Barra VBT
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF12161C), RoundedCornerShape(10.dp))
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
-                        Text(
-                            when (step) {
-                                0 -> "✂️"
-                                1 -> "🎯"
-                                else -> "📊"
-                            },
-                            fontSize = 18.sp
-                        )
+                    val isJumpTab = activeTopic == "JUMP"
+                    Surface(
+                        onClick = {
+                            activeTopic = "JUMP"
+                            onStepChange(0)
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isJumpTab) Color(0xFF00FFCC) else Color.Transparent,
+                        modifier = Modifier.weight(1f).height(32.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                "🦘 Salto & Asimetría",
+                                color = if (isJumpTab) Color.Black else Color.LightGray,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            activeTopic = "VBT"
+                            onStepChange(0)
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (!isJumpTab) Color(0xFF00FFCC) else Color.Transparent,
+                        modifier = Modifier.weight(1f).height(32.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                "🏋️ Barra VBT (45cm)",
+                                color = if (!isJumpTab) Color.Black else Color.LightGray,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
-                Column {
-                    Text(
-                        when (step) {
-                            0 -> "Paso 1: Recortar la Repetición"
-                            1 -> "Paso 2: Calibrar el Disco (45 cm)"
-                            else -> "Paso 3: Análisis y Telemetría"
-                        },
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
-                    Text(
-                        "Guía Speed Tracker (${step + 1}/3)",
-                        color = Color(0xFF00FFCC),
-                        fontSize = 11.sp
-                    )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        color = Color(0xFF00FFCC).copy(alpha = 0.2f),
+                        shape = CircleShape
+                    ) {
+                        Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                            Text(
+                                when (step) {
+                                    0 -> if (activeTopic == "JUMP") "🎥" else "✂️"
+                                    1 -> if (activeTopic == "JUMP") "🛫" else "🎯"
+                                    else -> if (activeTopic == "JUMP") "⚖️" else "📊"
+                                },
+                                fontSize = 18.sp
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            if (activeTopic == "JUMP") {
+                                when (step) {
+                                    0 -> "Paso 1: Grabar, Recortar y FPS"
+                                    1 -> "Paso 2: Despegue y Aterrizaje"
+                                    else -> "Paso 3: Asimetría, RSI y Ficha"
+                                }
+                            } else {
+                                when (step) {
+                                    0 -> "Paso 1: Recortar la Repetición"
+                                    1 -> "Paso 2: Calibrar el Disco (45 cm)"
+                                    else -> "Paso 3: Análisis y Telemetría"
+                                }
+                            },
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            if (activeTopic == "JUMP") "Tutorial de Salto Vertical (${step + 1}/3)"
+                            else "Tutorial de Halterofilia / VBT (${step + 1}/3)",
+                            color = Color(0xFF00FFCC),
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                when (step) {
-                    0 -> {
-                        Text(
-                            "Aísla la fase concéntrica del levantamiento para que los cálculos de velocidad y potencia sean exactos:",
-                            color = Color.LightGray,
-                            fontSize = 12.5.sp
-                        )
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("1️⃣ Usa el control deslizante para avanzar al inicio del tirón.", color = Color.White, fontSize = 11.5.sp)
-                                Text("2️⃣ Pulsa ▶| Inicio justo cuando la barra despega del suelo.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                Text("3️⃣ Desplaza al bloqueo final y pulsa |◀ Fin.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                Text("4️⃣ Pulsa Siguiente Paso ➔ para elegir el ejercicio.", color = Color.LightGray, fontSize = 11.5.sp)
-                            }
-                        }
-                    }
-                    1 -> {
-                        Text(
-                            "El disco olímpico mide 45 cm de diámetro estándar. Esto calibra los píxeles a metros reales:",
-                            color = Color.LightGray,
-                            fontSize = 12.5.sp
-                        )
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("1️⃣ Pulsa ⚡ Auto Detectar para detección por IA anatómica.", color = Color.White, fontSize = 11.5.sp)
-                                Text("2️⃣ Desliza tu dedo en la pantalla para mover la cruceta y centrar el círculo en el disco olímpico.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                Text("3️⃣ Ajusta el deslizador hasta que el círculo exterior calce con el borde del disco.", color = Color.White, fontSize = 11.5.sp)
-                                Text("4️⃣ Selecciona o ingresa la carga (kg) y pulsa Iniciar Análisis 🚀.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-                    else -> {
-                        Text(
-                            "Visualiza la telemetría biomecánica en tiempo real y exporta reportes:",
-                            color = Color.LightGray,
-                            fontSize = 12.5.sp
-                        )
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                // Mini gráfico interactivo ilustrativo de ambas curvas (Velocidad en cian + Aceleración en naranja)
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(74.dp)
-                                        .background(Color(0xFF0B0F15), RoundedCornerShape(6.dp))
-                                        .border(1.dp, Color(0x3300FFCC), RoundedCornerShape(6.dp))
-                                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                                ) {
-                                    Canvas(modifier = Modifier.fillMaxSize()) {
-                                        val w = size.width
-                                        val h = size.height
-
-                                        // Líneas de referencia
-                                        drawLine(Color(0x1AFFFFFF), Offset(0f, h * 0.25f), Offset(w, h * 0.25f))
-                                        drawLine(Color(0x22FFFFFF), Offset(0f, h * 0.50f), Offset(w, h * 0.50f))
-                                        drawLine(Color(0x1AFFFFFF), Offset(0f, h * 0.75f), Offset(w, h * 0.75f))
-
-                                        // Curva Aceleración (naranja ámbar)
-                                        val aPath = Path()
-                                        aPath.moveTo(0f, h * 0.55f)
-                                        aPath.cubicTo(w * 0.25f, h * 0.12f, w * 0.40f, h * 0.88f, w * 0.70f, h * 0.50f)
-                                        aPath.lineTo(w, h * 0.50f)
-                                        drawPath(aPath, Color(0xFFFF9100), style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round))
-
-                                        // Curva Velocidad (cian neón con degradado)
-                                        val vPath = Path()
-                                        val vFill = Path()
-                                        vPath.moveTo(0f, h * 0.85f)
-                                        vFill.moveTo(0f, h * 0.85f)
-                                        vPath.cubicTo(w * 0.25f, h * 0.85f, w * 0.46f, h * 0.16f, w * 0.75f, h * 0.82f)
-                                        vFill.cubicTo(w * 0.25f, h * 0.85f, w * 0.46f, h * 0.16f, w * 0.75f, h * 0.82f)
-                                        vPath.lineTo(w, h * 0.82f)
-                                        vFill.lineTo(w, h * 0.82f)
-                                        vFill.lineTo(w, h)
-                                        vFill.lineTo(0f, h)
-                                        vFill.close()
-
-                                        drawPath(vFill, Brush.verticalGradient(listOf(Color(0x3500FFCC), Color(0x0200FFCC)), startY = 0f, endY = h))
-                                        drawPath(vPath, Color(0xFF00FFCC), style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round))
-
-                                        // Marcador VP
-                                        drawCircle(Color(0xFF00FFCC), radius = 3.dp.toPx(), center = Offset(w * 0.48f, h * 0.20f))
-                                    }
-
-                                    // Leyendas
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Box(modifier = Modifier.size(7.dp).background(Color(0xFF00FFCC), CircleShape))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Velocidad (m/s)", color = Color(0xFF00FFCC), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Box(modifier = Modifier.size(7.dp).background(Color(0xFFFF9100), CircleShape))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Aceleración (m/s²)", color = Color(0xFFFF9100), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
+                if (activeTopic == "JUMP") {
+                    when (step) {
+                        0 -> {
+                            Text(
+                                "Cómo grabar o importar un salto para lograr precisión científica (método My Jump + IA):",
+                                color = Color.LightGray,
+                                fontSize = 12.5.sp
+                            )
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("1️⃣ Enfoca los pies de frente o perfil (a ~1.5 m de distancia). Puedes usar Grabar desde Cámara o Importar Video.", color = Color.White, fontSize = 11.5.sp)
+                                    Text("2️⃣ En Trim Video, acorta el rango desde justo antes de despegar hasta después de aterrizar.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("3️⃣ Elige Balísticos-Explosivos (Saltos): CMJ, Squat Jump (SJ), Drop Jump o Test de Asimetría.", color = Color.White, fontSize = 11.5.sp)
+                                    Text("4️⃣ La app detecta automáticamente los FPS reales del video (30/60/120/240 FPS) y el factor Slow-Mo.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                 }
-
-                                Text("📈 Telemetría: Curvas de velocidad (cian) y aceleración (naranja) activas por defecto y sincronizadas con el video.", color = Color.White, fontSize = 11.sp)
-                                Text("⚡ Métricas: Velocidad Pico (PV), Media (MV), Propulsiva (VMP), RFD y Potencia en Watts.", color = Color(0xFF00FFCC), fontSize = 11.sp)
-                                Text("📄 Informe PDF: En Acciones puedes generar y compartir un informe con capturas del levantamiento en proporción natural.", color = Color.LightGray, fontSize = 11.sp)
+                            }
+                        }
+                        1 -> {
+                            Text(
+                                "No necesitas línea de piso: la altura depende exclusivamente del Tiempo de Vuelo entre Despegue y Aterrizaje:",
+                                color = Color.LightGray,
+                                fontSize = 12.5.sp
+                            )
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("1️⃣ Usa el botón 🔍 Pies 2x arriba a la derecha para hacer zoom directo a las zapatillas.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("2️⃣ Avanza frame por frame (⏪ / ⏩) hasta el 1er fotograma donde ambas puntas dejan el suelo y toca 🛫 Despegue.", color = Color.White, fontSize = 11.5.sp)
+                                    Text("3️⃣ Avanza hasta el 1er fotograma en que la punta vuelve a tocar el suelo y presiona 🛬 Aterrizaje.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("4️⃣ También puedes tocar ⚡ Auto IA para detección sub-fotograma automática.", color = Color.LightGray, fontSize = 11.5.sp)
+                                }
+                            }
+                        }
+                        else -> {
+                            Text(
+                                "Evalúa el Test de Asimetría (Izq vs Der), reactividad RSI y guarda todo en la ficha del atleta:",
+                                color = Color.LightGray,
+                                fontSize = 12.5.sp
+                            )
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("🦵 Test de Asimetría: Marca 🛫 Despegue y 🛬 Aterrizaje para Pierna Izquierda y para Pierna Derecha.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("⚖️ Semáforo Clínico: ≤10% Simetría Óptima (Verde) • 10–15% Moderada (Ámbar) • >15% Alerta de Riesgo (Rojo).", color = Color.White, fontSize = 11.5.sp)
+                                    Text("⚡ Potencia Sayers & RSI: En Drop Jump puedes marcar también 🦶 Contacto inicial para obtener el índice reactivo RSI.", color = Color.LightGray, fontSize = 11.5.sp)
+                                    Text("💾 Ficha del Atleta: Al guardar, el Informe PDF, el Video y la Mejor Marca (PB) quedan registrados dentro del perfil del atleta.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    when (step) {
+                        0 -> {
+                            Text(
+                                "Aísla la fase concéntrica del levantamiento para que los cálculos de velocidad y potencia sean exactos:",
+                                color = Color.LightGray,
+                                fontSize = 12.5.sp
+                            )
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("1️⃣ Usa el control deslizante para avanzar al inicio del tirón.", color = Color.White, fontSize = 11.5.sp)
+                                    Text("2️⃣ Pulsa ▶| Inicio justo cuando la barra despega del suelo.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("3️⃣ Desplaza al bloqueo final y pulsa |◀ Fin.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("4️⃣ Pulsa ✔ para elegir ejercicio, atleta y peso.", color = Color.LightGray, fontSize = 11.5.sp)
+                                }
+                            }
+                            if (onTryDemoVideo != null) {
+                                OutlinedButton(
+                                    onClick = onTryDemoVideo,
+                                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
+                                ) {
+                                    Icon(Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("🎬 Probar con Video Demo (Snatch)", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        1 -> {
+                            Text(
+                                "El disco olímpico mide 45 cm de diámetro estándar. Esto calibra los píxeles a metros reales:",
+                                color = Color.LightGray,
+                                fontSize = 12.5.sp
+                            )
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("1️⃣ Pulsa ⚡ Auto Detectar para detección por IA anatómica.", color = Color.White, fontSize = 11.5.sp)
+                                    Text("2️⃣ Desliza tu dedo en la pantalla para mover la cruceta y centrar el círculo en el disco olímpico.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("3️⃣ Arrastra el punto amarillo hasta que el círculo exterior calce con el borde del disco.", color = Color.White, fontSize = 11.5.sp)
+                                    Text("4️⃣ Confirma la carga (kg) y pulsa Iniciar Análisis 🚀.", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                        else -> {
+                            Text(
+                                "Visualiza la telemetría biomecánica en tiempo real y exporta reportes:",
+                                color = Color.LightGray,
+                                fontSize = 12.5.sp
+                            )
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF141922)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("📈 Telemetría: Curvas de velocidad (cian) y aceleración (naranja) sincronizadas cuadro a cuadro con el video.", color = Color.White, fontSize = 11.sp)
+                                    Text("⚡ Métricas: Velocidad Pico (PV), Media (MV), Propulsiva (VMP), RFD y Potencia en Watts.", color = Color(0xFF00FFCC), fontSize = 11.sp)
+                                    Text("📄 Informe PDF y Video: Se guardan automáticamente dentro de la ficha del atleta seleccionado.", color = Color.LightGray, fontSize = 11.sp)
+                                }
                             }
                         }
                     }
@@ -6725,7 +7074,7 @@ fun TutorialGuideDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black)
             ) {
-                Text(if (step < 2) "Siguiente ➔" else "¡Entendido, Practicar! ✓", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text(if (step < 2) "Siguiente ➔" else "¡Entendido! ✓", fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         },
         dismissButton = {
@@ -6735,7 +7084,7 @@ fun TutorialGuideDialog(
                 }
             } else {
                 TextButton(onClick = onDismiss) {
-                    Text("Saltar", color = Color.Gray, fontSize = 12.sp)
+                    Text("Cerrar", color = Color.Gray, fontSize = 12.sp)
                 }
             }
         }
@@ -6794,6 +7143,7 @@ fun PreCalibrationSetupDialog(
             JumpType.CMJ -> "Salto Contramovimiento (CMJ)"
             JumpType.SJ -> "Squat Jump (SJ)"
             JumpType.DROP_JUMP -> "Drop Jump (Reactivo)"
+            JumpType.ASYMMETRY_TEST -> "Test de Asimetría (Izq vs Der)"
         }
     }
 
@@ -7170,7 +7520,7 @@ fun PreCalibrationSetupDialog(
                         Triple(
                             "JUMP",
                             "Balísticos-Explosivos (Saltos)",
-                            "Salto Contramovimiento (CMJ), Squat Jump (SJ), Drop Jump (Reactivo)"
+                            "CMJ, Squat Jump (SJ), Drop Jump (RSI), Test de Asimetría (Izq vs Der)"
                         )
                     )
 
@@ -7333,7 +7683,8 @@ fun PreCalibrationSetupDialog(
                             listOf(
                                 JumpType.CMJ to ("Salto Contramovimiento (CMJ)" to "Evaluación elástico-explosiva con fase excéntrica"),
                                 JumpType.SJ to ("Squat Jump (SJ)" to "Potencia concéntrica pura desde flexión estática de 90°"),
-                                JumpType.DROP_JUMP to ("Drop Jump (Reactivo)" to "Índice de fuerza reactiva (RSI) y ciclo estiramiento-acortamiento")
+                                JumpType.DROP_JUMP to ("Drop Jump (Reactivo)" to "Índice de fuerza reactiva (RSI) y ciclo estiramiento-acortamiento"),
+                                JumpType.ASYMMETRY_TEST to ("Test de Asimetría (Izq vs Der)" to "Comparación de salto Pierna Izquierda vs Derecha (% Asimetría)")
                             ).forEach { (jType, info) ->
                                 val (title, desc) = info
                                 val isSelected = selectedJumpType == jType

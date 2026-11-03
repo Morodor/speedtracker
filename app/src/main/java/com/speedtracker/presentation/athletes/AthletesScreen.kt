@@ -17,7 +17,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.speedtracker.core.report.BiomechanicalPdfReportGenerator
 import com.speedtracker.data.UserRepository
 import com.speedtracker.domain.model.Session
 import com.speedtracker.domain.model.User
@@ -47,7 +46,7 @@ fun AthletesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Gestión de Atletas", fontWeight = FontWeight.Bold) },
+                title = { Text("Fichas de Atletas", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color(0xFF121212),
                     titleContentColor = Color(0xFF00FFCC)
@@ -72,15 +71,15 @@ fun AthletesScreen(
                 .padding(padding)
                 .fillMaxSize()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
                 Text(
-                    text = "Toca un perfil para seleccionarlo como activo y consultar sus informes PDF y videos guardados.",
+                    text = "Toca la ficha de un atleta para ver sus Mejores Marcas (PB), datos registrados, informes PDF y videos.",
                     color = Color.LightGray,
                     style = MaterialTheme.typography.bodySmall
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
             }
 
             if (users.isEmpty()) {
@@ -105,6 +104,10 @@ fun AthletesScreen(
                     val userSessions = allSessions.filter { it.userId == user.id }
                     val isExpanded = expandedUserId == user.id
 
+                    val maxJumpSession = userSessions.filter { it.activityType.startsWith("JUMP") || it.activityType.contains("Salto", ignoreCase = true) }.maxByOrNull { it.result }
+                    val maxVbtSession = userSessions.filter { it.activityType.startsWith("VBT") }.maxByOrNull { it.result }
+                    val maxPowerSession = userSessions.filter { it.powerWatts != null }.maxByOrNull { it.powerWatts ?: 0.0 }
+
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -114,10 +117,10 @@ fun AthletesScreen(
                                 expandedUserId = if (expandedUserId == user.id) null else user.id
                             },
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isCurrent) Color(0xFF1B3830) else Color(0xFF262626)
+                            containerColor = if (isCurrent) Color(0xFF1B322C) else Color(0xFF262626)
                         ),
                         border = if (isCurrent) CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF00FFCC))) else null,
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                             Row(
@@ -133,7 +136,7 @@ fun AthletesScreen(
                                         Icons.Default.Person,
                                         contentDescription = null,
                                         tint = if (isCurrent) Color(0xFF00FFCC) else Color.Gray,
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(34.dp)
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column {
@@ -161,44 +164,153 @@ fun AthletesScreen(
                                             }
                                         }
                                         Text(
-                                            "Peso corporal: ${user.bodyWeightKg} Kg  •  ${userSessions.size} sesiones",
+                                            "Peso corporal: ${user.bodyWeightKg} Kg  •  ${userSessions.size} sesiones registradas",
                                             color = Color.LightGray,
                                             style = MaterialTheme.typography.bodySmall
                                         )
                                     }
                                 }
 
-                                Row {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(onClick = { userToEdit = user }) {
                                         Icon(Icons.Default.Edit, contentDescription = "Editar", tint = Color.LightGray)
                                     }
                                     IconButton(onClick = { userToDelete = user }) {
                                         Icon(Icons.Default.DeleteOutline, contentDescription = "Eliminar", tint = Color(0xFFFF5252))
                                     }
+                                    Icon(
+                                        if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = "Expandir ficha",
+                                        tint = Color(0xFF00FFCC)
+                                    )
                                 }
                             }
 
-                            if (userSessions.isNotEmpty()) {
+                            if (isExpanded) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Divider(color = Color(0xFF32423D), thickness = 1.dp)
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // ── SECCIÓN 1: MEJORES MARCAS (PB) DEL ATLETA ──
+                                Text(
+                                    text = "🏆 Mejores Marcas Personales (PB)",
+                                    color = Color(0xFF00FFCC),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                                 Spacer(modifier = Modifier.height(8.dp))
-                                TextButton(
-                                    onClick = { expandedUserId = if (isExpanded) null else user.id },
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text(
-                                        if (isExpanded) "▴ Ocultar Informes PDF y Videos (${userSessions.size})"
-                                        else "▾ Ver Informes PDF y Videos Guardados (${userSessions.size})",
-                                        color = Color(0xFF00FFCC),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    // PB Salto Vertical
+                                    Surface(
+                                        color = Color(0xFF141A1F),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, Color(0xFF2B3844)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text("Salto Vertical", color = Color.LightGray, fontSize = 10.5.sp)
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                if (maxJumpSession != null) "${String.format(Locale.US, "%.1f", maxJumpSession.result * 100)} cm" else "-- cm",
+                                                color = Color(0xFF00FFCC),
+                                                fontSize = 17.sp,
+                                                fontWeight = FontWeight.Black
+                                            )
+                                            Text(
+                                                if (maxJumpSession != null) formatHistoryDate(maxJumpSession.timestamp) else "Sin registros",
+                                                color = Color.Gray,
+                                                fontSize = 9.5.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+
+                                    // PB Pico VBT
+                                    Surface(
+                                        color = Color(0xFF141A1F),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, Color(0xFF2B3844)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text("Pico VBT", color = Color.LightGray, fontSize = 10.5.sp)
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                if (maxVbtSession != null) "${String.format(Locale.US, "%.2f", maxVbtSession.result)} m/s" else "-- m/s",
+                                                color = Color(0xFF00E5FF),
+                                                fontSize = 17.sp,
+                                                fontWeight = FontWeight.Black
+                                            )
+                                            Text(
+                                                if (maxVbtSession != null) formatHistoryDate(maxVbtSession.timestamp) else "Sin registros",
+                                                color = Color.Gray,
+                                                fontSize = 9.5.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+
+                                    // PB Potencia Pico
+                                    Surface(
+                                        color = Color(0xFF141A1F),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, Color(0xFF2B3844)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text("Potencia Pico", color = Color.LightGray, fontSize = 10.5.sp)
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                if (maxPowerSession?.powerWatts != null) "${maxPowerSession.powerWatts.toInt()} W" else "-- W",
+                                                color = Color(0xFFFFD600),
+                                                fontSize = 17.sp,
+                                                fontWeight = FontWeight.Black
+                                            )
+                                            Text(
+                                                if (maxPowerSession?.powerWattsPerKg != null) "${String.format(Locale.US, "%.1f", maxPowerSession.powerWattsPerKg)} W/kg" else "Sin registros",
+                                                color = Color.Gray,
+                                                fontSize = 9.5.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
                                 }
 
-                                if (isExpanded) {
-                                    Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                // ── SECCIÓN 2: DATOS REGISTRADOS, INFORMES PDF Y VIDEOS ──
+                                Text(
+                                    text = "📋 Historial de Evaluaciones, Informes PDF y Videos (${userSessions.size})",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                if (userSessions.isEmpty()) {
+                                    Surface(
+                                        color = Color(0xFF14181D),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            "Aún no hay mediciones guardadas para ${user.name}.",
+                                            color = Color.Gray,
+                                            fontSize = 11.5.sp,
+                                            modifier = Modifier.padding(12.dp)
+                                        )
+                                    }
+                                } else {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         userSessions.forEach { session ->
                                             val hasVideo = !session.videoExportPath.isNullOrEmpty() && File(session.videoExportPath).exists()
                                             val hasPdf = !session.pdfReportPath.isNullOrEmpty() && File(session.pdfReportPath).exists()
+                                            val isJump = session.activityType.startsWith("JUMP") || session.activityType.contains("Salto", ignoreCase = true)
+
                                             Surface(
                                                 color = Color(0xFF14181D),
                                                 shape = RoundedCornerShape(8.dp),
@@ -216,18 +328,24 @@ fun AthletesScreen(
                                                     ) {
                                                         Column(modifier = Modifier.weight(1f)) {
                                                             Text(
-                                                                session.activityType,
+                                                                if (session.activityType == "JUMP") "Salto Vertical (${session.jumpType ?: "CMJ"})" else session.activityType,
                                                                 color = Color.White,
                                                                 fontWeight = FontWeight.Bold,
                                                                 fontSize = 12.5.sp
                                                             )
+                                                            val subDetails = buildList {
+                                                                add(formatHistoryDate(session.timestamp))
+                                                                if (session.loadKg != null && !isJump) add("${session.loadKg.toInt()} kg")
+                                                                if (session.powerWatts != null) add("${session.powerWatts.toInt()} W")
+                                                                if (session.rsi != null) add("RSI: ${String.format(Locale.US, "%.2f", session.rsi)}")
+                                                            }.joinToString(" • ")
                                                             Text(
-                                                                formatHistoryDate(session.timestamp),
+                                                                subDetails,
                                                                 color = Color.Gray,
                                                                 fontSize = 10.5.sp
                                                             )
                                                         }
-                                                        val valStr = if (session.activityType == "JUMP") {
+                                                        val valStr = if (isJump) {
                                                             "${String.format(Locale.US, "%.1f", session.result * 100)} cm"
                                                         } else {
                                                             "${String.format(Locale.US, "%.2f", session.result)} m/s"
@@ -236,7 +354,7 @@ fun AthletesScreen(
                                                             valStr,
                                                             color = Color(0xFF00FFCC),
                                                             fontWeight = FontWeight.Black,
-                                                            fontSize = 14.sp
+                                                            fontSize = 14.5.sp
                                                         )
                                                     }
 
@@ -349,8 +467,9 @@ fun AthletesScreen(
                         onClick = {
                             val w = weight.toDoubleOrNull() ?: 70.0
                             if (name.isNotBlank()) {
-                                userRepository.saveUser(name.trim(), w)
+                                val created = userRepository.saveUser(name.trim(), w)
                                 users = userRepository.getUsers()
+                                expandedUserId = created.id
                                 showCreateDialog = false
                             }
                         },
