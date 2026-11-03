@@ -197,7 +197,8 @@ fun SpeedTrackerApp() {
                                         activeOverlay = "video_analysis"
                                     },
                                     onChangeAthlete = {
-                                        activeOverlay = "user_select"
+                                        currentTab = "athletes"
+                                        activeOverlay = null
                                     }
                                 )
                             }

@@ -690,8 +690,17 @@ fun VideoAnalysisScreen(
     var jumpFootSamples by remember { mutableStateOf<List<JumpFootSample>>(emptyList()) }
 
     LaunchedEffect(videoUriString) {
-        if (videoUriString.contains("sample_snatch")) {
+        if (videoUriString.contains("sample_jump")) {
+            currentMode = "JUMP"
+            selectedJumpType = JumpType.CMJ
             showTutorialDialog = true
+            tutorialStep = 0
+        } else if (videoUriString.contains("sample_snatch")) {
+            currentMode = "VBT"
+            setupFamily = VBTExerciseFamily.DLP_OLYMPIC
+            selectedVBTExercise = VBTExerciseModel.SNATCH_FLOOR
+            showTutorialDialog = true
+            tutorialStep = 0
         }
         withContext(Dispatchers.IO) {
             val parsedUri = Uri.parse(videoUriString)
