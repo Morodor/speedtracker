@@ -689,7 +689,7 @@ fun AthleteComparisonDialog(
         mutableStateOf(users.take(minOf(4, users.size)).map { it.id }.toSet())
     }
     // Métricas disponibles para comparar
-    var selectedMetricType by remember { mutableStateOf("JUMP") } // "JUMP", "VBT", "POWER", "REL_POWER"
+    var selectedMetricType by remember { mutableStateOf("VBT") } // "JUMP", "VBT", "POWER", "REL_POWER"
 
     val athleteColors = listOf(
         Color(0xFF00FFCC), // Cian Neón
@@ -864,10 +864,11 @@ fun AthleteComparisonDialog(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             listOf(
-                                "JUMP" to "🦘 Salto Vertical (cm)",
                                 "VBT" to "⚡ Velocidad Pico (m/s)",
+                                "VMP" to "🎯 Vel. Propulsiva (m/s)",
                                 "POWER" to "🔥 Potencia (Watts)",
-                                "REL_POWER" to "⚖️ Relativa (W/kg)"
+                                "REL_POWER" to "⚖️ Relativa (W/kg)",
+                                "LOAD" to "🏋️ Carga Levantada (kg)"
                             ).forEach { (key, label) ->
                                 val isSel = selectedMetricType == key
                                 Surface(
@@ -897,17 +898,21 @@ fun AthleteComparisonDialog(
                     val comparisonData = selectedAthletes.mapIndexed { idx, user ->
                         val userSessions = sessions.filter { it.userId == user.id }
                         val value: Double = when (selectedMetricType) {
-                            "JUMP" -> {
-                                val maxJump = userSessions.filter { it.activityType.startsWith("JUMP") || it.activityType.contains("Salto", ignoreCase = true) }.maxByOrNull { it.result }
-                                (maxJump?.result ?: 0.0) * 100.0 // cm
-                            }
                             "VBT" -> {
                                 val maxVbt = userSessions.filter { it.activityType.startsWith("VBT") }.maxByOrNull { it.result }
                                 maxVbt?.result ?: 0.0 // m/s
                             }
+                            "VMP" -> {
+                                val maxVmp = userSessions.mapNotNull { it.vmpVelocity }.maxOrNull()
+                                maxVmp ?: 0.0 // m/s
+                            }
                             "POWER" -> {
                                 val maxPower = userSessions.mapNotNull { it.powerWatts }.maxOrNull()
                                 maxPower ?: 0.0 // Watts
+                            }
+                            "LOAD" -> {
+                                val maxLoad = userSessions.mapNotNull { it.loadKg }.maxOrNull()
+                                maxLoad ?: 0.0 // kg
                             }
                             else -> { // REL_POWER
                                 val maxRel = userSessions.mapNotNull { it.powerWattsPerKg }.maxOrNull()
@@ -940,9 +945,10 @@ fun AthleteComparisonDialog(
                             ) {
                                 Text(
                                     text = when (selectedMetricType) {
-                                        "JUMP" -> "📊 Mejor Salto Vertical (cm)"
                                         "VBT" -> "📊 Máxima Velocidad Pico VBT (m/s)"
+                                        "VMP" -> "📊 Velocidad Media Propulsiva (m/s)"
                                         "POWER" -> "📊 Potencia Pico Máxima (Watts)"
+                                        "LOAD" -> "📊 Carga Máxima Desplazada (kg)"
                                         else -> "📊 Potencia Relativa al Peso (Watts / kg)"
                                     },
                                     color = Color(0xFF00FFCC),
@@ -1018,9 +1024,9 @@ fun AthleteComparisonDialog(
 
                                     // Formatear valor numérico prominente
                                     val textVal = when (selectedMetricType) {
-                                        "JUMP" -> if (valDouble > 0) "${String.format(Locale.US, "%.1f", valDouble)} cm" else "-- cm"
-                                        "VBT" -> if (valDouble > 0) "${String.format(Locale.US, "%.2f", valDouble)} m/s" else "-- m/s"
+                                        "VBT", "VMP" -> if (valDouble > 0) "${String.format(Locale.US, "%.2f", valDouble)} m/s" else "-- m/s"
                                         "POWER" -> if (valDouble > 0) "${valDouble.toInt()} W" else "-- W"
+                                        "LOAD" -> if (valDouble > 0) "${valDouble.toInt()} kg" else "-- kg"
                                         else -> if (valDouble > 0) "${String.format(Locale.US, "%.1f", valDouble)} W/kg" else "-- W/kg"
                                     }
 
@@ -1118,27 +1124,30 @@ fun AthleteComparisonDialog(
 
                                     Divider(color = Color(0xFF222C3A), thickness = 1.dp)
 
-                                    // Cuadrícula 4 Métricas Claras
+                                    val maxVmp = userSessions.mapNotNull { it.vmpVelocity }.maxOrNull()
+                                    val maxLoad = userSessions.mapNotNull { it.loadKg }.maxOrNull()
+
+                                    // Cuadrícula 4 Métricas Claras VBT
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        // Métrica 1: Salto
+                                        // Métrica 1: Vel. Pico
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("🦘 Salto Máx", color = Color.Gray, fontSize = 10.5.sp)
+                                            Text("⚡ Vel. Pico", color = Color.Gray, fontSize = 10.5.sp)
                                             Text(
-                                                if (maxJump != null) "${String.format(Locale.US, "%.1f", maxJump.result * 100)} cm" else "-- cm",
+                                                if (maxVbt != null) "${String.format(Locale.US, "%.2f", maxVbt.result)} m/s" else "-- m/s",
                                                 color = color,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.5.sp
                                             )
                                         }
 
-                                        // Métrica 2: VBT
+                                        // Métrica 2: Vel. Propulsiva
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("⚡ Pico VBT", color = Color.Gray, fontSize = 10.5.sp)
+                                            Text("🎯 VMP", color = Color.Gray, fontSize = 10.5.sp)
                                             Text(
-                                                if (maxVbt != null) "${String.format(Locale.US, "%.2f", maxVbt.result)} m/s" else "-- m/s",
+                                                if (maxVmp != null) "${String.format(Locale.US, "%.2f", maxVmp)} m/s" else "-- m/s",
                                                 color = color,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.5.sp
@@ -1156,11 +1165,11 @@ fun AthleteComparisonDialog(
                                             )
                                         }
 
-                                        // Métrica 4: W / kg
+                                        // Métrica 4: Carga Máx (kg)
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("⚖️ W / kg", color = Color.Gray, fontSize = 10.5.sp)
+                                            Text("🏋️ Carga Máx", color = Color.Gray, fontSize = 10.5.sp)
                                             Text(
-                                                if (maxRelPower != null) "${String.format(Locale.US, "%.1f", maxRelPower)} W/kg" else "-- W/kg",
+                                                if (maxLoad != null) "${maxLoad.toInt()} kg" else "-- kg",
                                                 color = Color.White,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.5.sp

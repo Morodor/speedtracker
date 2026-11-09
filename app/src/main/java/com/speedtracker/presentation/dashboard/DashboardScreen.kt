@@ -66,7 +66,6 @@ fun DashboardScreen(
     val activeUser = remember { userRepository.getActiveUser() }
     var sessions by remember { mutableStateOf(userRepository.getSessionsForActiveUser()) }
 
-    var showTutorialSelectionDialog by remember { mutableStateOf(false) }
     var showTutorialModal by remember { mutableStateOf(false) }
     var tutorialStep by remember { mutableIntStateOf(0) }
     var selectedTutorialTopic by remember { mutableStateOf("JUMP") }
@@ -205,7 +204,7 @@ fun DashboardScreen(
                     ) {
                         HomeActionGridCard(
                             title = "Importar Video desde Galería",
-                            subtitle = "Recorta, calibra y analiza salto o barra",
+                            subtitle = "Recorta la repetición, calibra 45 cm y mide VBT",
                             icon = Icons.Default.VideoLibrary,
                             accentColor = Color(0xFF00FFCC),
                             containerColor = Color(0xFF182825),
@@ -215,7 +214,7 @@ fun DashboardScreen(
 
                         HomeActionGridCard(
                             title = "Grabar desde Cámara",
-                            subtitle = "Graba un video normal y pasa al Trim",
+                            subtitle = "Graba tu serie y pasa al análisis concéntrico",
                             icon = Icons.Default.PhotoCamera,
                             accentColor = Color(0xFF00E5FF),
                             containerColor = Color(0xFF16242C),
@@ -241,7 +240,7 @@ fun DashboardScreen(
                     ) {
                         HomeActionGridCard(
                             title = "Medición Rápida (Velocidad en Vivo)",
-                            subtitle = "Medir saltos o barra al vuelo sin registro",
+                            subtitle = "Medir velocidad de barra al vuelo sin registro",
                             icon = Icons.Default.Bolt,
                             accentColor = Color(0xFFFF9800),
                             containerColor = Color(0xFF2B2211),
@@ -250,13 +249,14 @@ fun DashboardScreen(
                         )
 
                         HomeActionGridCard(
-                            title = "Tutorial",
-                            subtitle = "Guía de Salto Vertical, Asimetría y VBT",
+                            title = "Tutorial VBT",
+                            subtitle = "Guía y práctica interactiva con Snatch Olímpico",
                             icon = Icons.Default.HelpOutline,
                             accentColor = Color(0xFF00E676),
                             containerColor = Color(0xFF17261E),
                             onClick = {
-                                showTutorialSelectionDialog = true
+                                val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v4.mp4")
+                                onNavigateToVideoAnalysis(uri.toString())
                             },
                             modifier = Modifier.weight(1f)
                         )
@@ -319,198 +319,6 @@ fun DashboardScreen(
                 Spacer(modifier = Modifier.height(72.dp))
             }
         }
-    }
-
-    // ── POP-UP SELECTOR DE TUTORIAL: PREGUNTA CUÁL SE DESEA VER ──
-    if (showTutorialSelectionDialog) {
-        AlertDialog(
-            onDismissRequest = { showTutorialSelectionDialog = false },
-            containerColor = Color(0xFF1C222A),
-            shape = RoundedCornerShape(16.dp),
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column {
-                        Text(
-                            "Tutoriales Speed Tracker",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
-                        )
-                        Text(
-                            "¿Qué tutorial deseas consultar?",
-                            color = Color(0xFF00FFCC),
-                            fontSize = 12.sp
-                        )
-                    }
-                    IconButton(onClick = { showTutorialSelectionDialog = false }) {
-                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.LightGray)
-                    }
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Opción 1: Salto Vertical & Asimetría
-                    Surface(
-                        onClick = {
-                            showTutorialSelectionDialog = false
-                            val uri = copyRawVideoToCache(context, R.raw.sample_jump, "sample_jump_v1.mp4")
-                            onNavigateToVideoAnalysis(uri.toString())
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF141F1C),
-                        border = BorderStroke(1.5.dp, Color(0xFF00FFCC)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Surface(
-                                        color = Color(0xFF00FFCC).copy(alpha = 0.2f),
-                                        shape = CircleShape,
-                                        modifier = Modifier.size(42.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text("🦘", fontSize = 22.sp)
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column {
-                                        Text(
-                                            "Salto Vertical & Asimetría",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp
-                                        )
-                                        Text(
-                                            "Video Práctica Demo • 60 FPS",
-                                            color = Color(0xFF00FFCC),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                }
-                                Icon(Icons.Default.PlayCircle, contentDescription = null, tint = Color(0xFF00FFCC), modifier = Modifier.size(28.dp))
-                            }
-                            Text(
-                                "Mide tiempo de vuelo, detecta despegue y aterrizaje con lupa Pies 2x y evalúa la asimetría entre pierna izquierda y derecha.",
-                                color = Color.LightGray,
-                                fontSize = 11.5.sp,
-                                lineHeight = 16.sp
-                            )
-                            Surface(
-                                color = Color(0xFF00FFCC).copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Text("🚀 Cargar Video y Desarrollar Práctica", color = Color(0xFF00FFCC), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-
-                    // Opción 2: Halterofilia / Barra VBT
-                    Surface(
-                        onClick = {
-                            showTutorialSelectionDialog = false
-                            val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v4.mp4")
-                            onNavigateToVideoAnalysis(uri.toString())
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF16242B),
-                        border = BorderStroke(1.5.dp, Color(0xFF00E5FF)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Surface(
-                                        color = Color(0xFF00E5FF).copy(alpha = 0.2f),
-                                        shape = CircleShape,
-                                        modifier = Modifier.size(42.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text("🏋️", fontSize = 22.sp)
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column {
-                                        Text(
-                                            "Halterofilia & Barra VBT",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp
-                                        )
-                                        Text(
-                                            "Video Práctica Demo • Snatch Olímpico",
-                                            color = Color(0xFF00E5FF),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                }
-                                Icon(Icons.Default.PlayCircle, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(28.dp))
-                            }
-                            Text(
-                                "Recorta la fase concéntrica, calibra el disco olímpico de 45 cm y analiza velocidad media/pico, desvío y 1RM en tiempo real.",
-                                color = Color.LightGray,
-                                fontSize = 11.5.sp,
-                                lineHeight = 16.sp
-                            )
-                            Surface(
-                                color = Color(0xFF00E5FF).copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Text("🚀 Cargar Video y Desarrollar Práctica", color = Color(0xFF00E5FF), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {}
-        )
     }
 
     if (showTutorialModal) {

@@ -690,13 +690,8 @@ fun VideoAnalysisScreen(
     var jumpFootSamples by remember { mutableStateOf<List<JumpFootSample>>(emptyList()) }
 
     LaunchedEffect(videoUriString) {
-        if (videoUriString.contains("sample_jump")) {
-            currentMode = "JUMP"
-            selectedJumpType = JumpType.CMJ
-            showTutorialDialog = true
-            tutorialStep = 0
-        } else if (videoUriString.contains("sample_snatch")) {
-            currentMode = "VBT"
+        currentMode = "VBT"
+        if (videoUriString.contains("sample_snatch")) {
             setupFamily = VBTExerciseFamily.DLP_OLYMPIC
             selectedVBTExercise = VBTExerciseModel.SNATCH_FLOOR
             showTutorialDialog = true
@@ -6839,58 +6834,27 @@ fun TutorialGuideDialog(
     initialTopic: String = "JUMP",
     onTryDemoVideo: (() -> Unit)? = null
 ) {
-    var activeTopic by remember(initialTopic) { mutableStateOf(if (initialTopic == "VBT") "VBT" else "JUMP") }
+    var activeTopic by remember(initialTopic) { mutableStateOf("VBT") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF1E1E1E),
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                // Pestañas selectoras de Tutorial: Salto Vertical vs Barra VBT
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF12161C), RoundedCornerShape(10.dp))
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // Encabezado de Tutorial VBT
+                Surface(
+                    color = Color(0xFF00FFCC).copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth().height(34.dp)
                 ) {
-                    val isJumpTab = activeTopic == "JUMP"
-                    Surface(
-                        onClick = {
-                            activeTopic = "JUMP"
-                            onStepChange(0)
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (isJumpTab) Color(0xFF00FFCC) else Color.Transparent,
-                        modifier = Modifier.weight(1f).height(32.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                "🦘 Salto & Asimetría",
-                                color = if (isJumpTab) Color.Black else Color.LightGray,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    Surface(
-                        onClick = {
-                            activeTopic = "VBT"
-                            onStepChange(0)
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (!isJumpTab) Color(0xFF00FFCC) else Color.Transparent,
-                        modifier = Modifier.weight(1f).height(32.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                "🏋️ Barra VBT (45cm)",
-                                color = if (!isJumpTab) Color.Black else Color.LightGray,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            "🏋️ Guía Biomecánica Barra VBT (45 cm)",
+                            color = Color(0xFF00FFCC),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 
@@ -7525,11 +7489,6 @@ fun PreCalibrationSetupDialog(
                             "DLP",
                             "Olímpicos (DLP)",
                             "Snatch Suelo, Hang Snatch, Power Snatch, Clean, Power Clean, Tirón, Jerk"
-                        ),
-                        Triple(
-                            "JUMP",
-                            "Balísticos-Explosivos (Saltos)",
-                            "CMJ, Squat Jump (SJ), Drop Jump (RSI), Test de Asimetría (Izq vs Der)"
                         )
                     )
 
@@ -7558,9 +7517,7 @@ fun PreCalibrationSetupDialog(
                                         onVBTExerciseChange(firstDlp)
                                     }
                                 }
-                                "JUMP" -> {
-                                    onModeChange("JUMP")
-                                }
+
                             }
                             showExerciseTypePickerPopup = false
                         }
