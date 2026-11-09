@@ -113,7 +113,7 @@ fun FramingGuideOverlay(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FramingGuideType.values().forEach { type ->
+            FramingGuideType.values().filter { it != FramingGuideType.VERTICAL_JUMP }.forEach { type ->
                 val isSelected = selectedType == type
                 Surface(
                     onClick = { onTypeSelected(type) },

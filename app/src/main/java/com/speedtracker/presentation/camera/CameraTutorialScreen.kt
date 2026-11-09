@@ -77,9 +77,9 @@ fun CameraTutorialScreen(
                 }
                 item {
                     FramingInstructionCard(
-                        icon = "🦘",
-                        title = "4. Salto Vertical (CMJ / SJ / Drop Jump)",
-                        desc = "• Trípode a 2.5 - 3 metros a la altura de la cintura.\n• Pies apoyados en la línea de despegue.\n• El atleta debe estar 100% visible de pies a cabeza en reposo y en el punto más alto del vuelo."
+                        icon = "🎯",
+                        title = "4. Calibración del Disco Olímpico (45 cm)",
+                        desc = "• Toca la pantalla sobre el disco para centrar la retícula.\n• Ajusta el diámetro hasta que calce con los 45 cm del disco olímpico.\n• Asegura una escala milimétrica exacta (mm/px) para medir la velocidad de la barra."
                     )
                 }
             }
