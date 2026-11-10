@@ -53,9 +53,6 @@ fun SpeedTrackerApp() {
                 SplashScreen(
                     onTimeout = {
                         isSplashFinished = true
-                        if (userRepository.getActiveUser() == null) {
-                            activeOverlay = "user_select"
-                        }
                     }
                 )
             } else if (activeOverlay != null) {
@@ -195,10 +192,6 @@ fun SpeedTrackerApp() {
                                     onNavigateToVideoAnalysis = { uri ->
                                         selectedVideoUri = uri
                                         activeOverlay = "video_analysis"
-                                    },
-                                    onChangeAthlete = {
-                                        currentTab = "athletes"
-                                        activeOverlay = null
                                     }
                                 )
                             }

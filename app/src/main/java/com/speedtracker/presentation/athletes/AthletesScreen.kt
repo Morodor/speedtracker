@@ -48,12 +48,11 @@ fun AthletesScreen(
     val context = LocalContext.current
     var users by remember { mutableStateOf(userRepository.getUsers()) }
     var allSessions by remember { mutableStateOf(userRepository.getSessions().sortedByDescending { it.timestamp }) }
-    var activeUser by remember { mutableStateOf(userRepository.getActiveUser()) }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var userToEdit by remember { mutableStateOf<User?>(null) }
     var userToDelete by remember { mutableStateOf<User?>(null) }
-    var expandedUserId by remember { mutableStateOf<String?>(activeUser?.id) }
+    var expandedUserId by remember { mutableStateOf<String?>(users.firstOrNull()?.id) }
     var videoSessionToPlay by remember { mutableStateOf<Session?>(null) }
     var pdfSessionToView by remember { mutableStateOf<Session?>(null) }
 
@@ -62,7 +61,6 @@ fun AthletesScreen(
 
     fun refreshUsers() {
         users = userRepository.getUsers()
-        activeUser = userRepository.getActiveUser()
         allSessions = userRepository.getSessions().sortedByDescending { it.timestamp }
     }
 
@@ -126,7 +124,7 @@ fun AthletesScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Selecciona o marca el atleta activo y consulta marcas personales, informes PDF y videos.",
+                        text = "Consulta el historial de evaluaciones, marcas personales, informes PDF y videos de cada atleta.",
                         color = Color.LightGray,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.weight(1f)
@@ -153,12 +151,11 @@ fun AthletesScreen(
                 }
             } else {
                 items(users) { user ->
-                    val isCurrent = user.id == activeUser?.id
                     val userSessions = allSessions.filter { it.userId == user.id }
                     val isExpanded = expandedUserId == user.id
 
-                    val maxJumpSession = userSessions.filter { it.activityType.startsWith("JUMP") || it.activityType.contains("Salto", ignoreCase = true) }.maxByOrNull { it.result }
                     val maxVbtSession = userSessions.filter { it.activityType.startsWith("VBT") }.maxByOrNull { it.result }
+                    val maxVmpValue = userSessions.mapNotNull { it.vmpVelocity ?: it.meanVelocity }.maxOrNull()
                     val maxPowerSession = userSessions.filter { it.powerWatts != null }.maxByOrNull { it.powerWatts ?: 0.0 }
 
                     Card(
@@ -168,10 +165,13 @@ fun AthletesScreen(
                                 expandedUserId = if (expandedUserId == user.id) null else user.id
                             },
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isCurrent) Color(0xFF1B322C) else Color(0xFF262626)
+                            containerColor = Color(0xFF1B2228)
                         ),
-                        border = if (isCurrent) CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF00FFCC))) else null,
-                        shape = RoundedCornerShape(12.dp)
+                        border = BorderStroke(
+                            1.2.dp,
+                            if (isExpanded) Color(0xFF00FFCC).copy(alpha = 0.8f) else Color(0xFF2C394A)
+                        ),
+                        shape = RoundedCornerShape(14.dp)
                     ) {
                         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                             // Cabecera de la ficha del atleta
@@ -184,12 +184,20 @@ fun AthletesScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(
-                                        Icons.Default.Person,
-                                        contentDescription = null,
-                                        tint = if (isCurrent) Color(0xFF00FFCC) else Color.Gray,
-                                        modifier = Modifier.size(36.dp)
-                                    )
+                                    Surface(
+                                        color = Color(0xFF00FFCC).copy(alpha = 0.15f),
+                                        shape = CircleShape,
+                                        modifier = Modifier.size(42.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                Icons.Default.Person,
+                                                contentDescription = null,
+                                                tint = Color(0xFF00FFCC),
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column {
                                         Text(
@@ -221,83 +229,10 @@ fun AthletesScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // ── BOTÓN EXPLICITO: MARCAR ATLETA ACTIVO ──
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (isCurrent) {
-                                    Surface(
-                                        color = Color(0x2E00FFCC),
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(1.2.dp, Color(0xFF00FFCC))
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                Icons.Default.CheckCircle,
-                                                contentDescription = null,
-                                                tint = Color(0xFF00FFCC),
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                "Atleta Activo en Mediciones",
-                                                color = Color(0xFF00FFCC),
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    OutlinedButton(
-                                        onClick = {
-                                            userRepository.setActiveUserId(user.id)
-                                            refreshUsers()
-                                            Toast.makeText(context, "'${user.name}' establecido como atleta activo", Toast.LENGTH_SHORT).show()
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.6f)),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC)),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                        modifier = Modifier.height(34.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.RadioButtonUnchecked,
-                                            contentDescription = null,
-                                            tint = Color(0xFF00FFCC),
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            "Marcar como Atleta Activo",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                }
-
-                                TextButton(
-                                    onClick = { expandedUserId = if (isExpanded) null else user.id },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-                                ) {
-                                    Text(
-                                        if (isExpanded) "Ocultar Detalles ▴" else "Ver Detalles ▾",
-                                        color = Color.LightGray,
-                                        fontSize = 11.5.sp
-                                    )
-                                }
-                            }
-
                             if (isExpanded) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Divider(color = Color(0xFF263342), thickness = 1.dp)
                                 Spacer(modifier = Modifier.height(12.dp))
-                                Divider(color = Color(0xFF32423D), thickness = 1.dp)
-                                Spacer(modifier = Modifier.height(10.dp))
 
                                 // ── SECCIÓN 1: MEJORES MARCAS (PB) DEL ATLETA ──
                                 Text(
@@ -312,36 +247,11 @@ fun AthletesScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    // PB Salto Vertical
-                                    Surface(
-                                        color = Color(0xFF141A1F),
-                                        shape = RoundedCornerShape(10.dp),
-                                        border = BorderStroke(1.dp, Color(0xFF2B3844)),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Column(modifier = Modifier.padding(10.dp)) {
-                                            Text("Salto Vertical", color = Color.LightGray, fontSize = 10.5.sp)
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                if (maxJumpSession != null) "${String.format(Locale.US, "%.1f", maxJumpSession.result * 100)} cm" else "-- cm",
-                                                color = Color(0xFF00FFCC),
-                                                fontSize = 17.sp,
-                                                fontWeight = FontWeight.Black
-                                            )
-                                            Text(
-                                                if (maxJumpSession != null) formatHistoryDate(maxJumpSession.timestamp) else "Sin registros",
-                                                color = Color.Gray,
-                                                fontSize = 9.5.sp,
-                                                maxLines = 1
-                                            )
-                                        }
-                                    }
-
                                     // PB Pico VBT
                                     Surface(
                                         color = Color(0xFF141A1F),
                                         shape = RoundedCornerShape(10.dp),
-                                        border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                                        border = BorderStroke(1.dp, Color(0xFF00FFCC)),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Column(modifier = Modifier.padding(10.dp)) {
@@ -349,12 +259,37 @@ fun AthletesScreen(
                                             Spacer(modifier = Modifier.height(4.dp))
                                             Text(
                                                 if (maxVbtSession != null) "${String.format(Locale.US, "%.2f", maxVbtSession.result)} m/s" else "-- m/s",
-                                                color = Color(0xFF00E5FF),
+                                                color = Color(0xFF00FFCC),
                                                 fontSize = 17.sp,
                                                 fontWeight = FontWeight.Black
                                             )
                                             Text(
                                                 if (maxVbtSession != null) formatHistoryDate(maxVbtSession.timestamp) else "Sin registros",
+                                                color = Color.Gray,
+                                                fontSize = 9.5.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+
+                                    // PB Vel. Propulsiva (VMP)
+                                    Surface(
+                                        color = Color(0xFF141A1F),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text("VMP Propulsiva", color = Color.LightGray, fontSize = 10.5.sp)
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                if (maxVmpValue != null && maxVmpValue > 0.0) "${String.format(Locale.US, "%.2f", maxVmpValue)} m/s" else "-- m/s",
+                                                color = Color(0xFF00E5FF),
+                                                fontSize = 17.sp,
+                                                fontWeight = FontWeight.Black
+                                            )
+                                            Text(
+                                                "Vel. Media",
                                                 color = Color.Gray,
                                                 fontSize = 9.5.sp,
                                                 maxLines = 1

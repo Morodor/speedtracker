@@ -59,16 +59,15 @@ fun DashboardScreen(
     userRepository: UserRepository,
     onNavigateToCamera: () -> Unit = {},
     onNavigateToQuickCamera: () -> Unit,
-    onNavigateToVideoAnalysis: (String) -> Unit,
-    onChangeAthlete: () -> Unit
+    onNavigateToVideoAnalysis: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val activeUser = remember { userRepository.getActiveUser() }
-    var sessions by remember { mutableStateOf(userRepository.getSessionsForActiveUser()) }
+    var sessions by remember { mutableStateOf(userRepository.getSessions().sortedByDescending { it.timestamp }) }
+    val usersMap = remember(sessions) { userRepository.getUsers().associateBy { it.id } }
 
     var showTutorialModal by remember { mutableStateOf(false) }
     var tutorialStep by remember { mutableIntStateOf(0) }
-    var selectedTutorialTopic by remember { mutableStateOf("JUMP") }
+    var selectedTutorialTopic by remember { mutableStateOf("VBT") }
     var pendingCaptureFile by remember { mutableStateOf<File?>(null) }
 
     // 1. Selector de Video desde Galería -> pasa directo al Trim de Video
@@ -123,15 +122,6 @@ fun DashboardScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Speed Tracker", fontWeight = FontWeight.Bold) },
-                actions = {
-                    IconButton(onClick = onChangeAthlete) {
-                        Icon(
-                            Icons.Default.SwitchAccount,
-                            contentDescription = "Cambiar Atleta",
-                            tint = Color(0xFF00FFCC)
-                        )
-                    }
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color(0xFF121212),
                     titleContentColor = Color(0xFF00FFCC)
@@ -147,50 +137,6 @@ fun DashboardScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Tarjeta de Perfil Atleta Activo
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF262626)),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Person,
-                                contentDescription = null,
-                                tint = Color(0xFF00FFCC),
-                                modifier = Modifier.size(36.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    text = activeUser?.name ?: "Atleta Invitado",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Text(
-                                    text = "Peso: ${activeUser?.bodyWeightKg ?: 70.0} Kg  •  ${sessions.size} registros",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Gray
-                                )
-                            }
-                        }
-
-                        TextButton(onClick = onChangeAthlete) {
-                            Text("Cambiar", color = Color(0xFF00FFCC))
-                        }
-                    }
-                }
-            }
-
             // ── CUADRÍCULA 2x2 DE ACCIONES PRINCIPALES ALARGADAS (CON TEXTO COMPLETO Y ESPACIO CÓMODO) ──
             item {
                 Column(
@@ -306,9 +252,10 @@ fun DashboardScreen(
                 items(sessions) { session ->
                     SessionItemCard(
                         session = session,
+                        athleteName = usersMap[session.userId]?.name,
                         onDelete = {
                             userRepository.deleteSession(session.id)
-                            sessions = userRepository.getSessionsForActiveUser()
+                            sessions = userRepository.getSessions().sortedByDescending { it.timestamp }
                         }
                     )
                 }
@@ -420,7 +367,11 @@ fun MetricHighlightCard(title: String, value: String, date: String, modifier: Mo
 }
 
 @Composable
-fun SessionItemCard(session: Session, onDelete: () -> Unit) {
+fun SessionItemCard(
+    session: Session,
+    athleteName: String? = null,
+    onDelete: () -> Unit
+) {
     var showVideoDialog by remember { mutableStateOf(false) }
     var showPdfDialog by remember { mutableStateOf(false) }
     val hasVideo = !session.videoExportPath.isNullOrEmpty() && File(session.videoExportPath).exists()
@@ -461,8 +412,9 @@ fun SessionItemCard(session: Session, onDelete: () -> Unit) {
                             fontWeight = FontWeight.SemiBold,
                             style = MaterialTheme.typography.bodyMedium
                         )
+                        val athleteSub = if (!athleteName.isNullOrBlank()) "$athleteName • ${formatDate(session.timestamp)}" else formatDate(session.timestamp)
                         Text(
-                            formatDate(session.timestamp),
+                            athleteSub,
                             color = Color.Gray,
                             style = MaterialTheme.typography.bodySmall
                         )
