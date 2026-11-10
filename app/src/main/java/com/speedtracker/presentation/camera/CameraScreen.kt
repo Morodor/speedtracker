@@ -16,7 +16,6 @@ import androidx.camera.view.video.AudioConfig
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -37,7 +36,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -101,23 +99,12 @@ fun CameraScreen(
     var vbtVelocityResult by remember { mutableStateOf<Double?>(null) }
     var isAthleteInFrame by remember { mutableStateOf(false) }
 
-    // Tipo de Ejercicio VBT: Suelo vs Colgante vs Sentadilla/Banca
-    var vbtExerciseType by remember { mutableStateOf(VBTExerciseType.FLOOR_PULL) }
-
-    // Plantillas de Referencia de Encuadre VBT (Suelo / Colgante / Rack)
+    // Plantillas de Referencia de Encuadre VBT (Opcional)
     var framingGuideType by remember { mutableStateOf(FramingGuideType.FLOOR_BAR) }
     var isFramingGuideVisible by remember { mutableStateOf(false) }
 
-    LaunchedEffect(vbtExerciseType) {
-        framingGuideType = when (vbtExerciseType) {
-            VBTExerciseType.FLOOR_PULL -> FramingGuideType.FLOOR_BAR
-            VBTExerciseType.HANG_PULL -> FramingGuideType.HANG_BAR
-            VBTExerciseType.ECCENTRIC_CONCENTRIC -> FramingGuideType.RACK_BAR
-        }
-    }
-
-    // Métrica VBT Principal: Velocidad Media (MV) vs Velocidad Pico (PV)
-    var vbtPrimaryMetric by remember { mutableStateOf(VBTVelocityMetric.MEAN_VELOCITY) }
+    // Métrica Principal: En Halterofilia la métrica clave es Velocidad Pico (PV)
+    val vbtPrimaryMetric = VBTVelocityMetric.PEAK_VELOCITY
 
     // Dimensiones del frame de la cámara para proyectar el tracker
     var cameraFrameWidth by remember { mutableIntStateOf(0) }
@@ -131,11 +118,11 @@ fun CameraScreen(
     var minVelocityThreshold by remember { mutableStateOf(0.60) }
     var isThresholdEnabled by remember { mutableStateOf(false) }
 
-    // ── CALIBRACIÓN DE DISCO OLÍMPICO (45 CM) CON RETÍCULA TÁCTIL (OPCIÓN A) ──
+    // ── RETÍCULA TÁCTIL PARA CALIBRAR EL DISCO (45 CM) ──
     var circleCenterScreen by remember { mutableStateOf<Offset?>(null) }
     var circleRadiusPx by remember { mutableFloatStateOf(85f) }
     var isPlateCalibrated by remember { mutableStateOf(false) }
-    var isCalibratingPlate by remember { mutableStateOf(true) } // Inicia visible para que el usuario encuadre el disco
+    var isCalibratingPlate by remember { mutableStateOf(true) } // Visible al inicio para ubicar el disco
 
     var showOneRMDialog by remember { mutableStateOf(false) }
     var currentSetLoadKg by remember { mutableStateOf("70") }
@@ -165,15 +152,15 @@ fun CameraScreen(
     val activeUser = remember { userRepository.getActiveUser() }
 
     // Sincronización de parámetros con VBTAnalyzer
-    LaunchedEffect(isThresholdEnabled, minVelocityThreshold, vbtExerciseType, vbtPrimaryMetric) {
-        VBTAnalyzer.exerciseType = vbtExerciseType
+    LaunchedEffect(isThresholdEnabled, minVelocityThreshold) {
+        VBTAnalyzer.exerciseType = VBTExerciseType.FLOOR_PULL
         VBTAnalyzer.primaryMetric = vbtPrimaryMetric
         VBTAnalyzer.cutoffVelocityMps = if (isThresholdEnabled) minVelocityThreshold else null
 
         VBTAnalyzer.onRepCompleted = { rep ->
             repsList = VBTAnalyzer.currentSetReps.toList()
-            val velocityToAnnounce = if (vbtPrimaryMetric == VBTVelocityMetric.MEAN_VELOCITY) rep.meanVelocity else rep.peakVelocity
-            audioCoach.speakVelocity(velocityToAnnounce)
+            // Voz en Español Latinoamericano diciendo la Velocidad Pico de la repetición
+            audioCoach.speakVelocity(rep.peakVelocity)
             if (rep.isCutoffReached) {
                 isCutoffAlarmActive = true
                 audioCoach.speakCutoffAlert()
@@ -181,9 +168,9 @@ fun CameraScreen(
         }
     }
 
-    // Función auxiliar para aplicar la calibración del disco a VBTAnalyzer
+    // Función auxiliar para calibrar disco de 45 cm
     fun applyPlateCalibration(boxW: Float, boxH: Float) {
-        val center = circleCenterScreen ?: Offset(boxW / 2f, boxH * 0.65f)
+        val center = circleCenterScreen ?: Offset(boxW / 2f, boxH * 0.62f)
         if (cameraFrameWidth > 0 && cameraFrameHeight > 0) {
             val scale = maxOf(boxW / cameraFrameWidth.toFloat(), boxH / cameraFrameHeight.toFloat())
             val offX = (boxW - cameraFrameWidth * scale) / 2f
@@ -258,7 +245,6 @@ fun CameraScreen(
             activeRecording = null
             isRecording = false
         } else {
-            // Asegurar que el disco esté calibrado al iniciar la grabación
             if (boxW > 0 && boxH > 0 && !isPlateCalibrated) {
                 applyPlateCalibration(boxW, boxH)
             }
@@ -313,7 +299,7 @@ fun CameraScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Guía de alineación de encuadre profesional VBT (Suelo, Colgante, Rack)
+            // Guía de alineación opcional
             FramingGuideOverlay(
                 selectedType = framingGuideType,
                 isVisible = isFramingGuideVisible,
@@ -329,14 +315,14 @@ fun CameraScreen(
                 barY = VBTAnalyzer.currentBarY,
                 originBaselineY = VBTAnalyzer.originBaselineY,
                 lowestInflectionY = VBTAnalyzer.lowestInflectionY,
-                exerciseType = vbtExerciseType,
+                exerciseType = VBTExerciseType.FLOOR_PULL,
                 velocity = vbtVelocityResult ?: 0.0,
                 trajectoryPoints = livePathPoints,
                 isConcentric = VBTAnalyzer.isConcentricActive,
                 isEccentric = VBTAnalyzer.isEccentricActive
             )
 
-            // ── RETÍCULA TÁCTIL INTERACTIVA PARA CALIBRAR EL DISCO (OPCIÓN A) ──
+            // ── RETÍCULA TÁCTIL PARA CALIBRAR EL DISCO EN VIVO (OPCIÓN A) ──
             if (isCalibratingPlate && !isRecording) {
                 val activeCenter = circleCenterScreen ?: Offset(screenBoxW / 2f, screenBoxH * 0.62f)
 
@@ -353,20 +339,20 @@ fun CameraScreen(
                     }
                 )
 
-                // Barra Flotante de Calibración Rápida
+                // Barra Flotante Compacta de Ajuste de Disco
                 Surface(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 195.dp)
+                        .padding(bottom = 125.dp)
                         .fillMaxWidth(0.92f),
                     color = Color(0xF2121720),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.5.dp, Color(0xFF00FFCC))
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.2.dp, Color(0xFF00FFCC))
                 ) {
                     Column(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -375,38 +361,23 @@ fun CameraScreen(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Surface(
-                                    color = Color(0xFF00FFCC).copy(alpha = 0.2f),
-                                    shape = CircleShape,
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text("🎯", fontSize = 15.sp)
-                                    }
-                                }
-                                Column {
-                                    Text(
-                                        "Calibración de Disco Olímpico (45 cm)",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.5.sp
-                                    )
-                                    val mmPerPx = if (circleRadiusPx > 0) 450.0 / (circleRadiusPx * 2f) else 0.0
-                                    Text(
-                                        "Toca el disco para centrar • Escala: ${String.format(Locale.US, "%.2f", mmPerPx)} mm/px",
-                                        color = Color(0xFF00FFCC),
-                                        fontSize = 11.sp
-                                    )
-                                }
+                                Text("🎯", fontSize = 14.sp)
+                                val mmPerPx = if (circleRadiusPx > 0) 450.0 / (circleRadiusPx * 2f) else 0.0
+                                Text(
+                                    "Disco 45 cm • Toca para centrar • ${String.format(Locale.US, "%.2f", mmPerPx)} mm/px",
+                                    color = Color(0xFF00FFCC),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
 
                             IconButton(
                                 onClick = { isCalibratingPlate = false },
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(24.dp)
                             ) {
-                                Icon(Icons.Default.Close, contentDescription = "Ocultar", tint = Color.LightGray, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Close, contentDescription = "Ocultar", tint = Color.LightGray, modifier = Modifier.size(14.dp))
                             }
                         }
 
@@ -421,13 +392,13 @@ fun CameraScreen(
                                     circleRadiusPx = (circleRadiusPx - 4f).coerceAtLeast(20f)
                                     applyPlateCalibration(screenBoxW, screenBoxH)
                                 },
-                                modifier = Modifier.size(34.dp),
+                                modifier = Modifier.size(30.dp),
                                 colors = IconButtonDefaults.filledTonalIconButtonColors(
                                     containerColor = Color(0xFF202834),
                                     contentColor = Color.White
                                 )
                             ) {
-                                Text("-", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                Text("-", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                             }
 
                             Slider(
@@ -449,13 +420,13 @@ fun CameraScreen(
                                     circleRadiusPx = (circleRadiusPx + 4f).coerceAtMost(220f)
                                     applyPlateCalibration(screenBoxW, screenBoxH)
                                 },
-                                modifier = Modifier.size(34.dp),
+                                modifier = Modifier.size(30.dp),
                                 colors = IconButtonDefaults.filledTonalIconButtonColors(
                                     containerColor = Color(0xFF202834),
                                     contentColor = Color(0xFF00FFCC)
                                 )
                             ) {
-                                Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                             }
 
                             Button(
@@ -467,10 +438,11 @@ fun CameraScreen(
                                     containerColor = Color(0xFF00FFCC),
                                     contentColor = Color.Black
                                 ),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.height(30.dp)
                             ) {
-                                Text("Fijar Disco ✓", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Fijar ✓", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                             }
                         }
                     }
@@ -482,7 +454,7 @@ fun CameraScreen(
             }
         }
 
-        // Panel Superior Unificado: Navegación, Estado y Controles Biomecánicos
+        // Panel Superior Limpio: Botón Cerrar, Estado y Acciones
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -491,7 +463,6 @@ fun CameraScreen(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Fila 1: Botón Cerrar, Badge VBT, Botón Calibrar Disco, Botón Guía, Botón Umbral
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -504,184 +475,71 @@ fun CameraScreen(
                 // Badge de Halterofilia / VBT
                 Surface(
                     color = Color(0xCC111822),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(20.dp),
                     border = BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.5f))
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text("🏋️", fontSize = 14.sp)
-                        Text("VBT HALTEROFILIA", fontWeight = FontWeight.Bold, color = Color(0xFF00FFCC), fontSize = 12.sp)
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .background(
+                                    if (isAthleteInFrame) Color(0xFF00FFCC) else Color(0xFFFF5252),
+                                    shape = CircleShape
+                                )
+                        )
+                        Text(
+                            if (isPlateCalibrated) "🎯 DISCO 45cm CALIBRADO" else "🎯 TOCA EL DISCO PARA CALIBRAR",
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF00FFCC),
+                            fontSize = 11.5.sp
+                        )
                     }
                 }
 
-                // Botones Acciones Superiores: Calibrar Disco, Guía de Encuadre, Umbral
+                // Botones Acciones Superiores: Calibrar Disco, Umbral, 1RM
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    // Botón para Activar/Desactivar Retícula del Disco
                     IconButton(
                         onClick = { isCalibratingPlate = !isCalibratingPlate },
-                        modifier = Modifier.background(
-                            if (isCalibratingPlate) Color(0xFF00FFCC).copy(alpha = 0.25f) else Color.Transparent,
-                            CircleShape
-                        )
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(
+                                if (isCalibratingPlate) Color(0xFF00FFCC).copy(alpha = 0.25f) else Color(0x661A222D),
+                                CircleShape
+                            )
                     ) {
-                        Icon(
-                            Icons.Default.Place,
-                            contentDescription = "Calibrar Disco",
-                            tint = if (isCalibratingPlate || isPlateCalibrated) Color(0xFF00FFCC) else Color.White
-                        )
+                        Text("🎯", fontSize = 15.sp)
                     }
 
-                    IconButton(onClick = { isFramingGuideVisible = !isFramingGuideVisible }) {
-                        Icon(
-                            if (isFramingGuideVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = "Guía de Encuadre",
-                            tint = if (isFramingGuideVisible) Color(0xFF00FFCC) else Color.LightGray
-                        )
-                    }
-
-                    IconButton(onClick = { showThresholdDialog = true }) {
+                    IconButton(
+                        onClick = { showThresholdDialog = true },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(Color(0x661A222D), CircleShape)
+                    ) {
                         Icon(
                             Icons.Default.Settings,
                             contentDescription = "Umbral",
-                            tint = if (isThresholdEnabled) Color(0xFF00FFCC) else Color.White
+                            tint = if (isThresholdEnabled) Color(0xFF00FFCC) else Color.White,
+                            modifier = Modifier.size(18.dp)
                         )
+                    }
+
+                    IconButton(
+                        onClick = { showOneRMDialog = true },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(Color(0x661A222D), CircleShape)
+                    ) {
+                        Text("1RM", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF4081))
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Fila 2: Banner de Estado, Detección del Atleta y Estado del Disco
-            Surface(
-                color = if (isQuickMode) Color(0xCCFF9800) else Color(0x99000000),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .background(
-                                if (isAthleteInFrame) Color(0xFF00FFCC) else Color(0xFFFF5252),
-                                shape = CircleShape
-                            )
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        if (isQuickMode) {
-                            "⚡ VBT Rápido • ${if (isPlateCalibrated) "Disco Calibrado (45 cm)" else "Toca el disco para calibrar"}"
-                        } else {
-                            "VBT • ${activeUser?.name ?: "Atleta"} • ${if (isPlateCalibrated) "Disco Calibrado (45 cm)" else "Toca el disco para calibrar"}"
-                        },
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Fila 3: Selectores VBT de Ejercicio y Métrica (Scroll horizontal)
-            Row(
-                modifier = Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .background(Color(0xCC1A1A1A), shape = RoundedCornerShape(20.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Ejercicio: Suelo vs Colgante vs Sentadilla/Banca
-                FilterChip(
-                    selected = vbtExerciseType == VBTExerciseType.FLOOR_PULL,
-                    onClick = { vbtExerciseType = VBTExerciseType.FLOOR_PULL },
-                    label = { Text("Suelo / Snatch", style = MaterialTheme.typography.labelSmall) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFF00FFCC),
-                        selectedLabelColor = Color.Black
-                    )
-                )
-                FilterChip(
-                    selected = vbtExerciseType == VBTExerciseType.HANG_PULL,
-                    onClick = { vbtExerciseType = VBTExerciseType.HANG_PULL },
-                    label = { Text("Colgante", style = MaterialTheme.typography.labelSmall) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFF00FFCC),
-                        selectedLabelColor = Color.Black
-                    )
-                )
-                FilterChip(
-                    selected = vbtExerciseType == VBTExerciseType.ECCENTRIC_CONCENTRIC,
-                    onClick = { vbtExerciseType = VBTExerciseType.ECCENTRIC_CONCENTRIC },
-                    label = { Text("Sentadilla / Banca", style = MaterialTheme.typography.labelSmall) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFF00FFCC),
-                        selectedLabelColor = Color.Black
-                    )
-                )
-
-                // Métrica: MV (Media) vs PV (Pico)
-                FilterChip(
-                    selected = vbtPrimaryMetric == VBTVelocityMetric.MEAN_VELOCITY,
-                    onClick = {
-                        vbtPrimaryMetric = if (vbtPrimaryMetric == VBTVelocityMetric.MEAN_VELOCITY)
-                            VBTVelocityMetric.PEAK_VELOCITY else VBTVelocityMetric.MEAN_VELOCITY
-                    },
-                    label = {
-                        Text(
-                            if (vbtPrimaryMetric == VBTVelocityMetric.MEAN_VELOCITY) "MV (Media)" else "PV (Pico)",
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFF00E5FF),
-                        selectedLabelColor = Color.Black
-                    )
-                )
-
-                // Botón Fijar Inicio (Cero)
-                FilledTonalIconButton(
-                    onClick = { VBTAnalyzer.setManualOrigin() },
-                    modifier = Modifier.size(30.dp),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = Color(0xFF333333),
-                        contentColor = Color(0xFF00FFCC)
-                    )
-                ) {
-                    Icon(Icons.Default.Place, contentDescription = "Fijar Cero", modifier = Modifier.size(15.dp))
-                }
-
-                // Botón Calibrar Disco
-                FilledTonalIconButton(
-                    onClick = { isCalibratingPlate = !isCalibratingPlate },
-                    modifier = Modifier.size(30.dp),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = if (isCalibratingPlate) Color(0xFF00FFCC) else Color(0xFF333333),
-                        contentColor = if (isCalibratingPlate) Color.Black else Color(0xFFFFD600)
-                    )
-                ) {
-                    Text("🎯", style = MaterialTheme.typography.labelSmall)
-                }
-
-                // Botón Estimador 1RM
-                FilledTonalIconButton(
-                    onClick = { showOneRMDialog = true },
-                    modifier = Modifier.size(30.dp),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = Color(0xFF333333),
-                        contentColor = Color(0xFFFF4081)
-                    )
-                ) {
-                    Text("1RM", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFFFF4081))
-                }
-            }
-
-            // Alerta visual de fatiga / umbral (Cutoff) en el flujo vertical
+            // Alerta visual de fatiga / umbral (Cutoff)
             if (isCutoffAlarmActive) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Surface(
@@ -708,72 +566,99 @@ fun CameraScreen(
             }
         }
 
-        // Panel Inferior: Mediciones en Vivo y Registro de Serie
-        Box(
+        // ── PANEL INFERIOR COMPACTO: MEDICIONES EN VIVO Y REGISTRO ──
+        Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(Color(0xE60A0A0A))
-                .padding(18.dp),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .navigationBarsPadding(),
+            color = Color(0xD90D1219),
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, Color(0xFF263342))
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    if (vbtPrimaryMetric == VBTVelocityMetric.MEAN_VELOCITY) "Velocidad Media (MV)" else "Velocidad Pico (PV)",
-                    color = Color.LightGray,
-                    style = MaterialTheme.typography.labelMedium
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        "${String.format("%.2f", vbtVelocityResult ?: 0.0)} m/s",
-                        color = Color(0xFF00FFCC),
-                        style = MaterialTheme.typography.displayMedium,
-                        fontWeight = FontWeight.Black
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        if (vbtPrimaryMetric == VBTVelocityMetric.MEAN_VELOCITY) "(MV)" else "(PV)",
-                        color = Color.LightGray,
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Fila Superior: Métrica Principal en Grande (Velocidad Pico PV) + Velocidad Media (VMP)
+                val displayPeak = VBTAnalyzer.currentPeakVelocity.takeIf { it > 0.05 } ?: (vbtVelocityResult ?: 0.0)
+                val displayMean = VBTAnalyzer.currentMeanVelocity
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Velocidad Pico (PV)
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            text = String.format(Locale.US, "%.2f", displayPeak),
+                            color = Color(0xFF00FFCC),
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Black,
+                            lineHeight = 34.sp
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Column(modifier = Modifier.padding(bottom = 2.dp)) {
+                            Text("m/s", color = Color(0xFF00FFCC), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Surface(
+                                color = Color(0xFF00FFCC).copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    "PICO (PV)",
+                                    color = Color(0xFF00FFCC),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Velocidad Media Propulsiva (VMP) y Repeticiones
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            "VMP: ${String.format(Locale.US, "%.2f", displayMean)} m/s",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Reps en serie: ${repsList.size}",
+                            color = Color.LightGray,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
 
-                // Lista de Reps realizadas en la serie con desglose MV / PV / ROM
+                // Chips horizontales compactos de repeticiones realizadas
                 if (repsList.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
                     LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         items(repsList) { rep ->
                             Surface(
-                                color = if (rep.isCutoffReached) Color(0xFFFF1744) else Color(0xFF1E1E1E),
-                                shape = RoundedCornerShape(8.dp),
-                                border = CardDefaults.outlinedCardBorder()
+                                color = if (rep.isCutoffReached) Color(0xCCFF1744) else Color(0xFF18202A),
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(0.8.dp, if (rep.isCutoffReached) Color(0xFFFF1744) else Color(0xFF2C394A))
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Rep ${rep.repNumber}", color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                                    Text("R${rep.repNumber}:", color = Color.Gray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                     Text(
-                                        "MV: ${String.format("%.2f", rep.meanVelocity)}",
-                                        color = if (rep.isCutoffReached) Color.White else Color(0xFF00E5FF),
+                                        "${String.format(Locale.US, "%.2f", rep.peakVelocity)} m/s",
+                                        color = if (rep.isCutoffReached) Color.White else Color(0xFF00FFCC),
                                         fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                    Text(
-                                        "PV: ${String.format("%.2f", rep.peakVelocity)}",
-                                        color = Color.LightGray,
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                    Text(
-                                        "${(rep.romMeters * 100).toInt()} cm" +
-                                                (if (rep.velocityLossPercent > 0) " • -${rep.velocityLossPercent.toInt()}%" else ""),
-                                        color = Color.Gray,
-                                        style = MaterialTheme.typography.labelSmall
+                                        fontSize = 11.sp
                                     )
                                 }
                             }
@@ -781,13 +666,13 @@ fun CameraScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Acciones inferiores: Nueva Serie, Grabar REC, Guardar Sesión
+                // Fila Inferior de Acciones: [Nueva] | [● REC Compacto] | [Guardar]
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Botón Nueva Serie
                     OutlinedButton(
                         onClick = {
                             vbtVelocityResult = null
@@ -796,38 +681,44 @@ fun CameraScreen(
                             repsList = emptyList()
                             livePathPoints = emptyList()
                         },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray),
+                        border = BorderStroke(1.dp, Color(0xFF334050))
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Nueva Serie")
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Nueva", fontSize = 11.5.sp)
                     }
 
-                    // Botón Grabar Serie (CameraX VideoCapture)
+                    // Botón REC Más Pequeño y Estilizado
                     Button(
                         onClick = { toggleRecording(screenBoxW, screenBoxH) },
+                        modifier = Modifier.height(38.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isRecording) Color(0xFFFF1744) else Color(0xFFD32F2F),
                             contentColor = Color.White
                         ),
-                        shape = RoundedCornerShape(20.dp)
+                        shape = RoundedCornerShape(19.dp)
                     ) {
-                        Icon(
-                            if (isRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = Color.White
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(if (isRecording) Color.White else Color.Red, if (isRecording) RoundedCornerShape(2.dp) else CircleShape)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            if (isRecording)
-                                String.format("%02d:%02d", recordingDurationSeconds / 60, recordingDurationSeconds % 60)
+                            text = if (isRecording)
+                                String.format(Locale.US, "%02d:%02d", recordingDurationSeconds / 60, recordingDurationSeconds % 60)
                             else
                                 "REC",
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
                         )
                     }
 
+                    // Botón Guardar Serie
                     if (!isQuickMode && repsList.isNotEmpty()) {
                         Button(
                             onClick = {
@@ -853,10 +744,15 @@ fun CameraScreen(
                                     onCloseClick()
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black)
+                            modifier = Modifier.height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black),
+                            shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Guardar Serie", fontWeight = FontWeight.Bold)
+                            Text("Guardar", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
                         }
+                    } else {
+                        Spacer(modifier = Modifier.width(65.dp))
                     }
                 }
             }
@@ -887,7 +783,7 @@ fun CameraScreen(
                         if (isThresholdEnabled) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                "Velocidad mínima: ${String.format("%.2f", minVelocityThreshold)} m/s",
+                                "Velocidad mínima: ${String.format(Locale.US, "%.2f", minVelocityThreshold)} m/s",
                                 color = Color(0xFF00FFCC),
                                 fontWeight = FontWeight.Bold
                             )
@@ -949,8 +845,8 @@ fun CameraScreen(
                                 Column(modifier = Modifier.padding(10.dp)) {
                                     Text("Resumen de la Serie:", fontWeight = FontWeight.Bold, color = Color(0xFF00FFCC), style = MaterialTheme.typography.labelSmall)
                                     Text("• Repeticiones: ${repsList.size}", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                                    Text("• Mejor MV: ${String.format("%.2f", best?.meanVelocity ?: 0.0)} m/s", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                                    Text("• Mejor PV: ${String.format("%.2f", best?.peakVelocity ?: 0.0)} m/s", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                                    Text("• Mejor PV (Pico): ${String.format(Locale.US, "%.2f", best?.peakVelocity ?: 0.0)} m/s", color = Color(0xFF00FFCC), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    Text("• Mejor MV (Media): ${String.format(Locale.US, "%.2f", best?.meanVelocity ?: 0.0)} m/s", color = Color.White, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         }
@@ -973,11 +869,10 @@ fun CameraScreen(
                                 val summary = buildString {
                                     append("⚡ Speed Tracker - Análisis de Video VBT\n")
                                     append("Atleta: ${activeUser?.name ?: "Atleta"}\n")
-                                    append("Ejercicio: ${vbtExerciseType.name}\n")
                                     val best = repsList.maxByOrNull { it.peakVelocity }
                                     append("Reps: ${repsList.size}\n")
-                                    append("Mejor MV: ${String.format("%.2f", best?.meanVelocity ?: 0.0)} m/s\n")
-                                    append("Mejor PV: ${String.format("%.2f", best?.peakVelocity ?: 0.0)} m/s\n")
+                                    append("Mejor PV: ${String.format(Locale.US, "%.2f", best?.peakVelocity ?: 0.0)} m/s\n")
+                                    append("Mejor MV: ${String.format(Locale.US, "%.2f", best?.meanVelocity ?: 0.0)} m/s\n")
                                 }
 
                                 showPostRecordDialog = false
@@ -988,7 +883,7 @@ fun CameraScreen(
                                         val exportDir = File(context.cacheDir, "videos").apply { mkdirs() }
                                         val outputFile = File(exportDir, "SpeedTracker_Export_${System.currentTimeMillis()}.mp4")
                                         val best = repsList.maxByOrNull { it.peakVelocity }
-                                        val metricSummary = "MV: ${String.format("%.2f", best?.meanVelocity ?: 0.0)} m/s"
+                                        val metricSummary = "PV: ${String.format(Locale.US, "%.2f", best?.peakVelocity ?: 0.0)} m/s"
 
                                         val finalVideoFile = VideoOverlayExporter.exportVideoWithOverlay(
                                             context = context,
@@ -996,7 +891,7 @@ fun CameraScreen(
                                             outputFile = outputFile,
                                             mode = "VBT",
                                             trackingPoints = liveRecordedTrackingPoints.toList(),
-                                            exerciseName = vbtExerciseType.name,
+                                            exerciseName = "VBT Halterofilia",
                                             athleteName = activeUser?.name ?: "Atleta",
                                             bestMetricSummary = metricSummary,
                                             originBaselineY = VBTAnalyzer.originBaselineY,
@@ -1098,7 +993,6 @@ fun OneRMCalculatorDialog(
                     color = Color.LightGray
                 )
 
-                // Carga actual ingresada
                 OutlinedTextField(
                     value = inputLoadText,
                     onValueChange = { inputLoadText = it },
@@ -1108,7 +1002,6 @@ fun OneRMCalculatorDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Selector de Ejercicio de Referencia
                 Text("Ejercicio:", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                 Row(
                     modifier = Modifier
@@ -1136,7 +1029,6 @@ fun OneRMCalculatorDialog(
                     }
                 }
 
-                // Resultado Proyectado
                 Surface(
                     color = Color(0xFF1E1E1E),
                     shape = RoundedCornerShape(10.dp),
@@ -1154,7 +1046,7 @@ fun OneRMCalculatorDialog(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Intensidad: ${String.format("%.1f", percent1RM)}% 1RM (a ${String.format("%.2f", currentBestVelocity)} m/s)",
+                            "Intensidad: ${String.format(Locale.US, "%.1f", percent1RM)}% 1RM (a ${String.format(Locale.US, "%.2f", currentBestVelocity)} m/s)",
                             color = Color(0xFF00E5FF),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold
@@ -1179,9 +1071,6 @@ fun OneRMCalculatorDialog(
     )
 }
 
-/**
- * Función auxiliar para compartir el video grabado
- */
 fun shareRecordedVideo(context: Context, videoUri: Uri, summary: String) {
     val shareUri = if (videoUri.scheme == "file") {
         val file = File(videoUri.path ?: "")
@@ -1206,13 +1095,6 @@ fun shareRecordedVideo(context: Context, videoUri: Uri, summary: String) {
     })
 }
 
-/**
- * Lienzo en vivo que proyecta:
- * 1. El disco calibrado y el tracker actual.
- * 2. La línea de partida (Cero / Inicio).
- * 3. El punto más bajo en sentadilla o banca.
- * 4. La línea de trayectoria (Bar Path) con colores según velocidad.
- */
 @Composable
 fun BarPathLiveOverlay(
     frameWidth: Int,
@@ -1241,7 +1123,7 @@ fun BarPathLiveOverlay(
             return Offset(x * scale + offsetX, y * scale + offsetY)
         }
 
-        // 1. Línea horizontal de partida (Cero / Inicio)
+        // Línea horizontal de partida (Cero / Inicio)
         originBaselineY?.let { origY ->
             val screenOrigY = origY * scale + offsetY
             drawLine(
@@ -1253,7 +1135,7 @@ fun BarPathLiveOverlay(
             )
         }
 
-        // 2. Línea de fondo en sentadilla / banca / dip en colgante
+        // Línea de fondo en sentadilla / banca / dip en colgante
         if ((exerciseType == VBTExerciseType.ECCENTRIC_CONCENTRIC || exerciseType == VBTExerciseType.HANG_PULL) && lowestInflectionY != null) {
             val screenInflectY = lowestInflectionY * scale + offsetY
             drawLine(
@@ -1265,7 +1147,7 @@ fun BarPathLiveOverlay(
             )
         }
 
-        // 3. Dibujar la línea de trayectoria (Bar Path) coloreada por velocidad
+        // Trayectoria coloreada por velocidad
         if (trajectoryPoints.size > 1) {
             for (i in 0 until trajectoryPoints.size - 1) {
                 val p1 = trajectoryPoints[i]
@@ -1290,7 +1172,7 @@ fun BarPathLiveOverlay(
             }
         }
 
-        // 4. Dibujar el punto o disco actual de la barra
+        // Punto o disco actual de la barra
         if (barX != null && barY != null) {
             val screenBar = mapToScreen(barX, barY)
             val trackerColor = when {
