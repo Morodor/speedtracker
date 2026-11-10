@@ -193,10 +193,12 @@ object VBTAnalyzer {
         if (diameterPx > 5f) {
             pxToMetersRatio = 0.45 / diameterPx.toDouble()
         }
-        originBaselineX = center.x
-        originBaselineY = center.y
-        lowestInflectionX = center.x
-        lowestInflectionY = center.y
+        // No congelamos la línea de salida en la posición de calibración,
+        // para permitir que el levantador inicie desde el suelo, colgante o rack libremente.
+        originBaselineX = null
+        originBaselineY = null
+        lowestInflectionX = null
+        lowestInflectionY = null
         currentBarX = center.x
         currentBarY = center.y
         initialHandsPos = null
@@ -399,19 +401,18 @@ object VBTAnalyzer {
         var candidateBarX = if (plateOffset != null) rawHandsPos.x + plateOffset!!.x else rawHandsPos.x
         var candidateBarY = if (plateOffset != null) rawHandsPos.y + plateOffset!!.y else rawHandsPos.y
 
-        // 4. Invariante Antigravedad de Ascenso Concéntrico:
-        // Durante el tirón concéntrico (subida), la barra NO puede saltar abruptamente hacia abajo (>20 px en 33ms)
+        // 4. Invariante Cinemática de Continuidad:
+        // Si el atleta está bajando la barra deliberadamente (ej. descendiendo al piso para un clean),
+        // liberamos la fase concéntrica previa para permitir todo el rango de movimiento hacia abajo.
         val prevY = previousY
         val prevT = previousTime
         if (prevY != null && prevT != null) {
             val dt = (timestampMs - prevT) / 1000.0
             if (dt in 0.005..0.30) {
                 val dy = candidateBarY - prevY
-                if (isConcentricActive && dy > 20f) {
-                    // Rechazar alucinación hacia la rodilla; continuar inercia ascendente
-                    val upwardStep = previousDisplacementY.coerceIn(12f, 75f)
-                    candidateBarY = (prevY - upwardStep).coerceAtLeast(10f)
-                    candidateBarX = currentBarX ?: candidateBarX
+                if (dy > 12f) {
+                    isConcentricActive = false
+                    isEccentricActive = true
                 }
             }
         }
@@ -438,8 +439,8 @@ object VBTAnalyzer {
         currentBarX = barX
         currentBarY = barY
 
-        // Auto-establecer origen si aún no se ha fijado y está en reposo
-        if (originBaselineY == null) {
+        // Auto-establecer o expandir el origen dinámicamente si la barra baja más en el encuadre
+        if (originBaselineY == null || (!isConcentricActive && barY > originBaselineY!!)) {
             originBaselineX = barX
             originBaselineY = barY
         }
@@ -465,31 +466,40 @@ object VBTAnalyzer {
             // Filtro de zona muerta (< 0.18 m/s se trata como 0.0)
             val filteredVelocity = if (smoothedVelocity > VELOCITY_DEADBAND) smoothedVelocity else 0.0
 
-            // 1. Manejo de fase excéntrica (bajada) para Sentadilla / Banca o Dip en Colgante
-            val allowEccentric = exerciseType == VBTExerciseType.ECCENTRIC_CONCENTRIC || exerciseType == VBTExerciseType.HANG_PULL
-            if (pxMoved < -2f && allowEccentric && !isConcentricActive) {
+            // 1. Manejo universal de fase descendente / excéntrica (bajada al piso, colgante, sentadilla, etc.)
+            // Independiente del ejercicio: cualquier descenso de la barra se registra para encontrar el punto de despegue real
+            if (pxMoved < -1.5f) {
+                if (!isEccentricActive && !isConcentricActive) {
+                    currentRepPath.clear()
+                }
                 isEccentricActive = true
+                isConcentricActive = false
                 if (lowestInflectionY == null || barY > lowestInflectionY!!) {
                     lowestInflectionY = barY
                     lowestInflectionX = barX
+                    originBaselineY = barY
+                    originBaselineX = barX
                 }
+                // Guardar punto para la trayectoria en vivo durante la bajada/descenso
+                val eccentricVelocity = kotlin.math.abs(smoothedVelocity)
+                val point = BarPathPoint(barX, barY, eccentricVelocity, timestampMs)
+                barPath.add(point)
+                currentRepPath.add(point)
             }
 
-            // 2. Manejo de fase concéntrica (subida)
-            if (pxMoved > 2f && filteredVelocity > 0.0) {
+            // 2. Manejo universal de fase concéntrica (subida / tirón)
+            if (pxMoved > 1.5f && filteredVelocity > 0.0) {
                 if (!isConcentricActive) {
                     isConcentricActive = true
                     
-                    // El inicio exacto de la trayectoria concéntrica depende del ejercicio:
-                    if (isEccentricActive && lowestInflectionY != null) {
-                        concentricStartY = lowestInflectionY!!
-                        concentricMinY = lowestInflectionY!!
-                        currentRepPath.clear()
-                        currentRepPath.add(BarPathPoint(lowestInflectionX ?: barX, lowestInflectionY!!, 0.0, timestampMs))
-                    } else {
-                        concentricStartY = barY
-                        concentricMinY = barY
-                        currentRepPath.clear()
+                    // El inicio exacto es el punto más bajo alcanzado (sea suelo, rodilla o cadera)
+                    concentricStartY = lowestInflectionY ?: barY
+                    concentricMinY = barY
+                    originBaselineY = concentricStartY
+                    originBaselineX = lowestInflectionX ?: barX
+
+                    if (currentRepPath.isEmpty()) {
+                        currentRepPath.add(BarPathPoint(lowestInflectionX ?: barX, concentricStartY, 0.0, timestampMs))
                     }
 
                     concentricStartTimeMs = timestampMs

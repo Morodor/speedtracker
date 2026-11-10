@@ -227,7 +227,7 @@ fun CameraScreen(
 
                     val velocity = VBTAnalyzer.processPose(pose, System.currentTimeMillis())
                     vbtVelocityResult = velocity ?: 0.0
-                    livePathPoints = if (VBTAnalyzer.isConcentricActive) {
+                    livePathPoints = if (VBTAnalyzer.isConcentricActive || VBTAnalyzer.isEccentricActive || VBTAnalyzer.currentRepPath.isNotEmpty()) {
                         VBTAnalyzer.currentRepPath.toList()
                     } else {
                         VBTAnalyzer.lastCompletedRepPath.toList()
@@ -336,7 +336,7 @@ fun CameraScreen(
                 frameHeight = cameraFrameHeight,
                 barX = VBTAnalyzer.currentBarX,
                 barY = VBTAnalyzer.currentBarY,
-                originBaselineY = VBTAnalyzer.originBaselineY,
+                originBaselineY = VBTAnalyzer.lowestInflectionY ?: VBTAnalyzer.originBaselineY,
                 lowestInflectionY = VBTAnalyzer.lowestInflectionY,
                 exerciseType = VBTExerciseType.FLOOR_PULL,
                 velocity = vbtVelocityResult ?: 0.0,
@@ -1317,8 +1317,9 @@ fun BarPathLiveOverlay(
             return Offset(x * scale + offsetX, y * scale + offsetY)
         }
 
-        // Línea horizontal de partida (Cero / Inicio)
-        originBaselineY?.let { origY ->
+        // Línea horizontal dinámica de inicio / despegue (Cero universal de salida)
+        val dynamicBaselineY = lowestInflectionY ?: originBaselineY
+        dynamicBaselineY?.let { origY ->
             val screenOrigY = origY * scale + offsetY
             drawLine(
                 color = Color(0x6600FFCC),
@@ -1326,18 +1327,6 @@ fun BarPathLiveOverlay(
                 end = Offset(canvasWidth, screenOrigY),
                 strokeWidth = 2.dp.toPx(),
                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(15f, 15f), 0f)
-            )
-        }
-
-        // Línea de fondo en sentadilla / banca / dip en colgante
-        if ((exerciseType == VBTExerciseType.ECCENTRIC_CONCENTRIC || exerciseType == VBTExerciseType.HANG_PULL) && lowestInflectionY != null) {
-            val screenInflectY = lowestInflectionY * scale + offsetY
-            drawLine(
-                color = Color(0xFFFFD600),
-                start = Offset(0f, screenInflectY),
-                end = Offset(canvasWidth, screenInflectY),
-                strokeWidth = 2.dp.toPx(),
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
             )
         }
 
