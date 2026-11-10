@@ -49,6 +49,7 @@ import com.speedtracker.core.math.*
 import com.speedtracker.core.ml.PoseAnalyzer
 import com.speedtracker.data.UserRepository
 import com.speedtracker.domain.model.Session
+import com.speedtracker.presentation.components.ExportReportDataDialog
 import com.speedtracker.presentation.video.KinoveaCircleReticleCanvas
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -146,6 +147,7 @@ fun CameraScreen(
     val coroutineScope = rememberCoroutineScope()
     var lastRecordedVideoUri by remember { mutableStateOf<Uri?>(null) }
     var showPostRecordDialog by remember { mutableStateOf(false) }
+    var showExportDataDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(isRecording) {
         if (isRecording) {
@@ -1060,46 +1062,8 @@ fun CameraScreen(
 
                         OutlinedButton(
                             onClick = {
-                                val summary = buildString {
-                                    append("⚡ Speed Tracker - Análisis de Video VBT\n")
-                                    append("Atleta: ${activeUser?.name ?: "Atleta"}\n")
-                                    val best = repsList.maxByOrNull { it.peakVelocity }
-                                    append("Reps: ${repsList.size}\n")
-                                    append("Mejor PV: ${String.format(Locale.US, "%.2f", best?.peakVelocity ?: 0.0)} m/s\n")
-                                    append("Mejor MV: ${String.format(Locale.US, "%.2f", best?.meanVelocity ?: 0.0)} m/s\n")
-                                }
-
                                 showPostRecordDialog = false
-                                coroutineScope.launch {
-                                    isExportingVideo = true
-                                    exportProgress = 0f
-                                    try {
-                                        val exportDir = File(context.cacheDir, "videos").apply { mkdirs() }
-                                        val outputFile = File(exportDir, "SpeedTracker_Export_${System.currentTimeMillis()}.mp4")
-                                        val best = repsList.maxByOrNull { it.peakVelocity }
-                                        val metricSummary = "PV: ${String.format(Locale.US, "%.2f", best?.peakVelocity ?: 0.0)} m/s"
-
-                                        val finalVideoFile = VideoOverlayExporter.exportVideoWithOverlay(
-                                            context = context,
-                                            inputUri = lastRecordedVideoUri!!,
-                                            outputFile = outputFile,
-                                            mode = "VBT",
-                                            trackingPoints = liveRecordedTrackingPoints.toList(),
-                                            exerciseName = "VBT Halterofilia",
-                                            athleteName = activeUser?.name ?: "Atleta",
-                                            bestMetricSummary = metricSummary,
-                                            originBaselineY = VBTAnalyzer.originBaselineY,
-                                            lowestInflectionY = VBTAnalyzer.lowestInflectionY,
-                                            onProgress = { p -> exportProgress = p }
-                                        )
-                                        shareRecordedVideo(context, Uri.fromFile(finalVideoFile), summary)
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                        shareRecordedVideo(context, lastRecordedVideoUri!!, summary)
-                                    } finally {
-                                        isExportingVideo = false
-                                    }
-                                }
+                                showExportDataDialog = true
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -1112,6 +1076,80 @@ fun CameraScreen(
                 confirmButton = {
                     TextButton(onClick = { showPostRecordDialog = false }) {
                         Text("Cerrar", color = Color.LightGray)
+                    }
+                }
+            )
+        }
+
+        // Diálogo para solicitar datos del informe antes de exportar el video
+        if (showExportDataDialog && lastRecordedVideoUri != null) {
+            ExportReportDataDialog(
+                initialAthleteName = activeUser?.name ?: "",
+                initialLoadKg = 70.0,
+                initialExerciseName = "Clean Suelo",
+                availableAthletes = remember { userRepository.getUsers() },
+                onDismiss = { showExportDataDialog = false },
+                onConfirmExport = { athleteName, loadKg, exerciseName ->
+                    showExportDataDialog = false
+                    coroutineScope.launch {
+                        isExportingVideo = true
+                        exportProgress = 0f
+                        try {
+                            val exportDir = File(context.cacheDir, "videos").apply { mkdirs() }
+                            val outputFile = File(exportDir, "SpeedTracker_Export_${System.currentTimeMillis()}.mp4")
+                            val best = repsList.maxByOrNull { it.peakVelocity }
+                            val bestPeak = best?.peakVelocity ?: 0.0
+                            val bestMean = best?.meanVelocity ?: 0.0
+                            val metricSummary = "$exerciseName • ${loadKg.toInt()} kg • VP: ${String.format(Locale.US, "%.2f", bestPeak)} m/s"
+
+                            val finalVideoFile = VideoOverlayExporter.exportVideoWithOverlay(
+                                context = context,
+                                inputUri = lastRecordedVideoUri!!,
+                                outputFile = outputFile,
+                                mode = "VBT",
+                                trackingPoints = liveRecordedTrackingPoints.toList(),
+                                exerciseName = exerciseName,
+                                athleteName = athleteName,
+                                bestMetricSummary = metricSummary,
+                                originBaselineY = VBTAnalyzer.lowestInflectionY ?: VBTAnalyzer.originBaselineY,
+                                lowestInflectionY = VBTAnalyzer.lowestInflectionY,
+                                onProgress = { p -> exportProgress = p }
+                            )
+
+                            // Guardar en el perfil del atleta
+                            val targetUser = userRepository.getUsers().find { it.name.equals(athleteName, ignoreCase = true) }
+                                ?: userRepository.saveUser(athleteName, 75.0)
+
+                            userRepository.saveSession(
+                                Session(
+                                    id = UUID.randomUUID().toString(),
+                                    userId = targetUser.id,
+                                    activityType = "VBT ($exerciseName)",
+                                    result = bestPeak,
+                                    timestamp = System.currentTimeMillis(),
+                                    meanVelocity = bestMean,
+                                    loadKg = loadKg,
+                                    videoExportPath = finalVideoFile.absolutePath
+                                )
+                            )
+
+                            val summary = buildString {
+                                append("⚡ Speed Tracker - Informe de Video VBT\n")
+                                append("Atleta: $athleteName\n")
+                                append("Ejercicio: $exerciseName\n")
+                                append("Carga en Barra: ${loadKg.toInt()} kg\n")
+                                append("Repeticiones: ${repsList.size}\n")
+                                append("Mejor VP (Pico): ${String.format(Locale.US, "%.2f", bestPeak)} m/s\n")
+                                append("Mejor VM (Media): ${String.format(Locale.US, "%.2f", bestMean)} m/s\n")
+                            }
+
+                            shareRecordedVideo(context, Uri.fromFile(finalVideoFile), summary)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            shareRecordedVideo(context, lastRecordedVideoUri!!, "Speed Tracker VBT")
+                        } finally {
+                            isExportingVideo = false
+                        }
                     }
                 }
             )

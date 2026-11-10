@@ -88,6 +88,7 @@ import com.speedtracker.core.math.VBTExerciseFamily
 import com.speedtracker.core.math.VBTExerciseModel
 import com.speedtracker.core.math.VerticalJumpAnalyzer
 import com.speedtracker.core.report.BiomechanicalPdfReportGenerator
+import com.speedtracker.presentation.components.ExportReportDataDialog
 import com.speedtracker.presentation.history.SavedPdfReportDialog
 import com.speedtracker.data.UserRepository
 import com.speedtracker.presentation.camera.FramingGuideOverlay
@@ -625,6 +626,7 @@ fun VideoAnalysisScreen(
     val activeUser = selectedUserState
     var allUsers by remember { mutableStateOf(userRepository.getUsers()) }
     var showPreCalibrationSetupDialog by remember { mutableStateOf(false) }
+    var showExportDataDialog by remember { mutableStateOf(false) }
 
     var showTutorialDialog by remember { mutableStateOf(false) }
     var tutorialStep by remember { mutableIntStateOf(0) }
@@ -4139,74 +4141,7 @@ fun VideoAnalysisScreen(
 
                                 OutlinedButton(
                                     onClick = {
-                                        val summary = buildString {
-                                            append("⚡ Speed Tracker - Análisis Biomecánico de Video\n")
-                                            append("Atleta: ${activeUser?.name ?: "Invitado"}\n")
-                                            if (currentMode == "VBT") {
-                                                append("Ejercicio: ${selectedExerciseModel.displayName} (${selectedExerciseModel.family.label})\n")
-                                                append("Carga en Barra: ${currentLoadKg.toInt()} kg\n")
-                                                append("Velocidad Pico: ${String.format("%.2f", peakVelocity)} m/s\n")
-                                                append("Velocidad Media: ${String.format("%.2f", meanVelocity)} m/s\n")
-                                                val vmpStr = String.format(Locale.US, "%.2f", vmpVelocity)
-                                                append("Velocidad Propulsiva (VMP): $vmpStr m/s\n")
-                                                append("Tiempo Concéntrico: ${concentricDurationMs} ms\n")
-                                                append("Tiempo a Vel. Pico: ${timeToPeakMs} ms\n")
-                                                append("RFD (Explosividad): ${rfdNPerSec} N/s\n")
-                                                append("1RM Estimado: ${estimatedOneRM.toInt()} kg (@ ${pctOneRM.toInt()}% 1RM)\n")
-                                                append("Métrica Usada: ${if (selectedExerciseModel.usesPeakVelocity) "Velocidad Pico (PV)" else "Velocidad Media (VM)"}\n")
-                                                append("Fórmula: ${selectedExerciseModel.formulaDescription}\n")
-                                                append("Potencia: Pico ${peakPowerWatts.toInt()} W | Media ${meanPowerWatts.toInt()} W (${String.format("%.1f", relativeWattsPerKg)} W/kg)\n")
-                                                append("Fuerza Pico: ${peakForceN.toInt()} N\n")
-                                                append("Trabajo Mecánico: ${workJoules.toInt()} J\n")
-                                                if (vbtDeviationResultCm != null) {
-                                                    append("Desvío de Barra: ${String.format("%.1f", vbtDeviationResultCm)} cm\n")
-                                                }
-                                            } else if (currentMode == "JUMP") {
-                                                append("Altura: ${String.format("%.1f", (finalResult ?: 0.0) * 100)} cm\n")
-                                                if (jumpMetricsResult != null) {
-                                                    append("Potencia Pico: ${jumpMetricsResult?.peakPowerWatts?.toInt()} W\n")
-                                                    append("Potencia Relativa: ${String.format("%.1f", jumpMetricsResult?.relativePowerWattsPerKg ?: 0.0)} W/kg\n")
-                                                }
-                                            }
-                                        }
-
-                                        coroutineScope.launch {
-                                            isExportingVideo = true
-                                            exportProgress = 0f
-                                            try {
-                                                val exportDir = File(context.filesDir, "saved_videos").apply { mkdirs() }
-                                                val exportedFile = File(exportDir, "SpeedTracker_Export_${System.currentTimeMillis()}.mp4")
-                                                val metricSummary = if (currentMode == "VBT") {
-                                                    "${selectedExerciseModel.displayName} • ${currentLoadKg.toInt()} kg • 1RM: ${estimatedOneRM.toInt()}kg • VP: ${String.format("%.2f", peakVelocity)} m/s"
-                                                } else {
-                                                    "Altura: ${String.format("%.1f", (finalResult ?: 0.0) * 100)} cm"
-                                                }
-
-                                                val finalVideoFile = VideoOverlayExporter.exportVideoWithOverlay(
-                                                    context = context,
-                                                    inputUri = Uri.parse(videoUriString),
-                                                    outputFile = exportedFile,
-                                                    mode = currentMode ?: "VBT",
-                                                    trackingPoints = trackingPointsResult,
-                                                    exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical",
-                                                    athleteName = activeUser?.name ?: "Atleta",
-                                                    bestMetricSummary = metricSummary,
-                                                    originBaselineY = VBTAnalyzer.originBaselineY,
-                                                    lowestInflectionY = VBTAnalyzer.lowestInflectionY,
-                                                    calibratedPlateRadius = calibratedPlateRadiusVideo,
-                                                    startMs = trimStartMs,
-                                                    endMs = trimEndMs,
-                                                    onProgress = { p -> exportProgress = p }
-                                                )
-                                                generatedVideoPath = finalVideoFile.absolutePath
-                                                shareVideoWithReport(context, Uri.fromFile(finalVideoFile), summary)
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
-                                                shareVideoWithReport(context, Uri.parse(videoUriString), summary)
-                                            } finally {
-                                                isExportingVideo = false
-                                            }
-                                        }
+                                        showExportDataDialog = true
                                     },
                                     modifier = Modifier.fillMaxWidth().height(48.dp)
                                 ) {
@@ -4240,6 +4175,144 @@ fun VideoAnalysisScreen(
                                 TextButton(onClick = onCloseClick) {
                                     Text("Descartar y Salir", color = Color.Gray)
                                 }
+                            }
+
+                            if (showExportDataDialog) {
+                                val initialExName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical"
+                                ExportReportDataDialog(
+                                    initialAthleteName = activeUser?.name ?: "",
+                                    initialLoadKg = currentLoadKg,
+                                    initialExerciseName = initialExName,
+                                    availableAthletes = allUsers,
+                                    onDismiss = { showExportDataDialog = false },
+                                    onConfirmExport = { athleteName, loadKg, exerciseName ->
+                                        showExportDataDialog = false
+                                        barbellLoadKg = loadKg.toInt().toString()
+
+                                        // Buscar o registrar nuevo atleta
+                                        val targetUser = allUsers.find { it.name.equals(athleteName, ignoreCase = true) }
+                                            ?: userRepository.saveUser(athleteName, 75.0)
+                                        selectedUserState = targetUser
+                                        userRepository.setActiveUserId(targetUser.id)
+                                        allUsers = userRepository.getUsers()
+
+                                        // Sincronizar modelo de ejercicio si coincide
+                                        VBTExerciseModel.values().find { it.displayName.equals(exerciseName, ignoreCase = true) }?.let {
+                                            selectedExerciseModel = it
+                                        }
+
+                                        coroutineScope.launch {
+                                            isExportingVideo = true
+                                            exportProgress = 0f
+                                            try {
+                                                val exportDir = File(context.filesDir, "saved_videos").apply { mkdirs() }
+                                                val sanitizedAthlete = targetUser.name.replace(" ", "_").replace(Regex("[^a-zA-Z0-9_]"), "")
+                                                val exportedFile = File(exportDir, "SpeedTracker_Export_${sanitizedAthlete}_${System.currentTimeMillis()}.mp4")
+
+                                                val metricSummary = if (currentMode == "VBT") {
+                                                    val est1RM = selectedExerciseModel.estimateOneRM(loadKg, peakVelocity, meanVelocity)
+                                                    "$exerciseName • ${loadKg.toInt()} kg • 1RM: ${est1RM.toInt()}kg • VP: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s"
+                                                } else {
+                                                    "Altura: ${String.format(Locale.US, "%.1f", (finalResult ?: 0.0) * 100)} cm"
+                                                }
+
+                                                // 1. Generar Informe PDF con el atleta y carga indicados
+                                                val reportPath = try {
+                                                    val repFile = BiomechanicalPdfReportGenerator.generateReport(
+                                                        context = context,
+                                                        videoUri = Uri.parse(videoUriString),
+                                                        athleteName = targetUser.name,
+                                                        athleteWeightKg = targetUser.bodyWeightKg,
+                                                        exerciseName = exerciseName,
+                                                        exerciseFamily = if (currentMode == "VBT") selectedExerciseModel.family.label else "Salto",
+                                                        loadKg = loadKg,
+                                                        peakVelocity = peakVelocity,
+                                                        meanVelocity = meanVelocity,
+                                                        vmpVelocity = vmpVelocity,
+                                                        concentricDurationMs = concentricDurationMs,
+                                                        timeToPeakMs = timeToPeakMs,
+                                                        rfdNPerSec = rfdNPerSec,
+                                                        peakPowerWatts = peakPowerWatts,
+                                                        relativeWattsPerKg = relativeWattsPerKg,
+                                                        peakForceN = peakForceN,
+                                                        workJoules = workJoules,
+                                                        estimatedOneRM = selectedExerciseModel.estimateOneRM(loadKg, peakVelocity, meanVelocity),
+                                                        pctOneRM = selectedExerciseModel.calculatePercentOneRM(peakVelocity, meanVelocity),
+                                                        horizontalDeviationCm = vbtDeviationResultCm,
+                                                        trackingPoints = trackingPointsResult,
+                                                        trimStartMs = trimStartMs,
+                                                        trimEndMs = trimEndMs
+                                                    )
+                                                    generatedPdfPath = repFile.absolutePath
+                                                    repFile.absolutePath
+                                                } catch (e: Exception) {
+                                                    e.printStackTrace()
+                                                    null
+                                                }
+
+                                                // 2. Exportar Video MP4 con Telemetría e incrustación de Atleta y Carga
+                                                val finalVideoFile = VideoOverlayExporter.exportVideoWithOverlay(
+                                                    context = context,
+                                                    inputUri = Uri.parse(videoUriString),
+                                                    outputFile = exportedFile,
+                                                    mode = currentMode ?: "VBT",
+                                                    trackingPoints = trackingPointsResult,
+                                                    exerciseName = exerciseName,
+                                                    athleteName = targetUser.name,
+                                                    bestMetricSummary = metricSummary,
+                                                    originBaselineY = VBTAnalyzer.originBaselineY,
+                                                    lowestInflectionY = VBTAnalyzer.lowestInflectionY,
+                                                    calibratedPlateRadius = calibratedPlateRadiusVideo,
+                                                    startMs = trimStartMs,
+                                                    endMs = trimEndMs,
+                                                    onProgress = { p -> exportProgress = p }
+                                                )
+                                                generatedVideoPath = finalVideoFile.absolutePath
+
+                                                // 3. Guardar Sesión persistente en el perfil del atleta
+                                                userRepository.saveSession(
+                                                    Session(
+                                                        id = UUID.randomUUID().toString(),
+                                                        userId = targetUser.id,
+                                                        activityType = if (currentMode == "VBT") "VBT ($exerciseName)" else currentMode!!,
+                                                        result = finalResult ?: peakVelocity,
+                                                        timestamp = System.currentTimeMillis(),
+                                                        powerWatts = if (currentMode == "VBT") peakPowerWatts else jumpMetricsResult?.peakPowerWatts,
+                                                        powerWattsPerKg = if (currentMode == "VBT") relativeWattsPerKg else jumpMetricsResult?.relativePowerWattsPerKg,
+                                                        horizontalDeviationCm = vbtDeviationResultCm,
+                                                        meanVelocity = if (currentMode == "VBT") meanVelocity else null,
+                                                        loadKg = if (currentMode == "VBT") loadKg else null,
+                                                        vmpVelocity = if (currentMode == "VBT") vmpVelocity else null,
+                                                        concentricDurationMs = if (currentMode == "VBT") concentricDurationMs else null,
+                                                        timeToPeakMs = if (currentMode == "VBT") timeToPeakMs else null,
+                                                        rfdNPerSec = if (currentMode == "VBT") rfdNPerSec else null,
+                                                        pdfReportPath = reportPath,
+                                                        videoExportPath = finalVideoFile.absolutePath
+                                                    )
+                                                )
+
+                                                val summary = buildString {
+                                                    append("⚡ Speed Tracker - Informe Biomecánico de Video\n")
+                                                    append("Atleta: ${targetUser.name}\n")
+                                                    append("Ejercicio: $exerciseName\n")
+                                                    append("Carga en Barra: ${loadKg.toInt()} kg\n")
+                                                    append("Velocidad Pico: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s\n")
+                                                    append("Velocidad Media: ${String.format(Locale.US, "%.2f", meanVelocity)} m/s\n")
+                                                    val vmpStr = String.format(Locale.US, "%.2f", vmpVelocity)
+                                                    append("Velocidad Propulsiva (VMP): $vmpStr m/s\n")
+                                                    append("1RM Estimado: ${selectedExerciseModel.estimateOneRM(loadKg, peakVelocity, meanVelocity).toInt()} kg\n")
+                                                }
+
+                                                shareVideoWithReport(context, Uri.fromFile(finalVideoFile), summary)
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                                shareVideoWithReport(context, Uri.parse(videoUriString), "Speed Tracker VBT")
+                                            } finally {
+                                                isExportingVideo = false
+                                            }
+                                        }
+                                    }
+                                )
                             }
                         }
 
