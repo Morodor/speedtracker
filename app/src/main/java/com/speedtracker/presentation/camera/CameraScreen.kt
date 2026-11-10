@@ -55,6 +55,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,12 +112,19 @@ fun CameraScreen(
     var cameraFrameHeight by remember { mutableIntStateOf(0) }
     var livePathPoints by remember { mutableStateOf<List<BarPathPoint>>(emptyList()) }
 
-    // Estado de Repeticiones y Umbrales VBT
+    // Estado de Repeticiones y Umbrales VBT (% Pérdida de Velocidad y Corte Absoluto)
     var repsList by remember { mutableStateOf<List<RepResult>>(emptyList()) }
     var isCutoffAlarmActive by remember { mutableStateOf(false) }
+    var cutoffAlertMessage by remember { mutableStateOf("🚨 ¡ALTO! UMBRAL DE FATIGA ALCANZADO") }
     var showThresholdDialog by remember { mutableStateOf(false) }
-    var minVelocityThreshold by remember { mutableStateOf(0.60) }
-    var isThresholdEnabled by remember { mutableStateOf(false) }
+
+    // Control por % de Pérdida de Velocidad (Fatiga VBT Intraserie)
+    var isLossThresholdEnabled by remember { mutableStateOf(true) } // Activo por defecto en 20%
+    var targetLossPercent by remember { mutableDoubleStateOf(20.0) } // 10%, 15%, 20%, 30%
+
+    // Control adicional por Velocidad Mínima Absoluta (m/s)
+    var minVelocityThreshold by remember { mutableDoubleStateOf(0.60) }
+    var isMinVelocityEnabled by remember { mutableStateOf(false) }
 
     // ── RETÍCULA TÁCTIL PARA CALIBRAR EL DISCO (45 CM) ──
     var circleCenterScreen by remember { mutableStateOf<Offset?>(null) }
@@ -152,18 +160,33 @@ fun CameraScreen(
     val activeUser = remember { userRepository.getActiveUser() }
 
     // Sincronización de parámetros con VBTAnalyzer
-    LaunchedEffect(isThresholdEnabled, minVelocityThreshold) {
+    LaunchedEffect(isLossThresholdEnabled, targetLossPercent, isMinVelocityEnabled, minVelocityThreshold) {
         VBTAnalyzer.exerciseType = VBTExerciseType.FLOOR_PULL
         VBTAnalyzer.primaryMetric = vbtPrimaryMetric
-        VBTAnalyzer.cutoffVelocityMps = if (isThresholdEnabled) minVelocityThreshold else null
+        VBTAnalyzer.cutoffVelocityMps = if (isMinVelocityEnabled) minVelocityThreshold else null
+        VBTAnalyzer.cutoffLossPercent = if (isLossThresholdEnabled) targetLossPercent else null
 
         VBTAnalyzer.onRepCompleted = { rep ->
             repsList = VBTAnalyzer.currentSetReps.toList()
-            // Voz en Español Latinoamericano diciendo la Velocidad Pico de la repetición
-            audioCoach.speakVelocity(rep.peakVelocity)
             if (rep.isCutoffReached) {
                 isCutoffAlarmActive = true
-                audioCoach.speakCutoffAlert()
+                cutoffAlertMessage = if (isLossThresholdEnabled && rep.velocityLossPercent >= targetLossPercent) {
+                    "🚨 ¡LÍMITE ALCANZADO! Pérdida del ${rep.velocityLossPercent.toInt()}% (Objetivo: ${targetLossPercent.toInt()}%)"
+                } else {
+                    "🚨 ¡ALTO! VELOCIDAD MÍNIMA ALCANZADA (${String.format(Locale.US, "%.2f", minVelocityThreshold)} m/s)"
+                }
+                audioCoach.speakRepFeedback(
+                    velocity = rep.peakVelocity,
+                    lossPercent = rep.velocityLossPercent,
+                    isCutoffReached = true,
+                    targetLossPercent = if (isLossThresholdEnabled) targetLossPercent else null
+                )
+            } else {
+                audioCoach.speakRepFeedback(
+                    velocity = rep.peakVelocity,
+                    lossPercent = rep.velocityLossPercent,
+                    isCutoffReached = false
+                )
             }
         }
     }
@@ -408,14 +431,26 @@ fun CameraScreen(
                         onClick = { showThresholdDialog = true },
                         modifier = Modifier
                             .size(36.dp)
-                            .background(Color(0x880D1219), CircleShape)
+                            .background(
+                                if (isLossThresholdEnabled || isMinVelocityEnabled) Color(0xFF00FFCC).copy(alpha = 0.22f) else Color(0x880D1219),
+                                CircleShape
+                            )
                     ) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Umbral",
-                            tint = if (isThresholdEnabled) Color(0xFF00FFCC) else Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        if (isLossThresholdEnabled) {
+                            Text(
+                                "-${targetLossPercent.toInt()}%",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF00FFCC)
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Umbral",
+                                tint = if (isMinVelocityEnabled) Color(0xFF00FFCC) else Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
 
                     Surface(
@@ -446,7 +481,7 @@ fun CameraScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "🚨 ¡ALTO! UMBRAL ALCANZADO (Fin de Serie)",
+                            cutoffAlertMessage,
                             color = Color.White,
                             fontWeight = FontWeight.Black,
                             style = MaterialTheme.typography.bodySmall
@@ -648,7 +683,7 @@ fun CameraScreen(
                         }
                     }
 
-                    // Chips horizontales compactos de repeticiones realizadas
+                    // Chips horizontales compactos de repeticiones realizadas con % de Fatiga
                     if (repsList.isNotEmpty()) {
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -662,7 +697,7 @@ fun CameraScreen(
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text("R${rep.repNumber}:", color = Color.Gray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -672,6 +707,19 @@ fun CameraScreen(
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.sp
                                         )
+                                        if (rep.repNumber > 1) {
+                                            val lossVal = rep.velocityLossPercent.roundToInt()
+                                            Text(
+                                                text = if (lossVal > 0) "-$lossVal%" else "0%",
+                                                color = when {
+                                                    rep.isCutoffReached -> Color.Yellow
+                                                    lossVal >= 15 -> Color(0xFFFF9800)
+                                                    else -> Color(0xFF81C784)
+                                                },
+                                                fontWeight = FontWeight.Black,
+                                                fontSize = 10.5.sp
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -772,41 +820,173 @@ fun CameraScreen(
             }
         }
 
-        // Diálogo de Umbral de Velocidad
+        // Diálogo de Control de Fatiga y Umbrales VBT (% Pérdida de Velocidad y Velocidad Mínima)
         if (showThresholdDialog) {
             AlertDialog(
                 onDismissRequest = { showThresholdDialog = false },
-                title = { Text("Umbral de Detención VBT") },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("⚡", fontSize = 18.sp)
+                        Text("Control de Fatiga VBT", fontWeight = FontWeight.Bold)
+                    }
+                },
                 text = {
-                    Column {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
                         Text(
-                            "Detener la serie si la velocidad cae por debajo de este valor para evitar fatiga excesiva:",
+                            "Optimiza la serie deteniéndote antes del fallo neuromuscular cuando caiga la velocidad respecto a la mejor repetición.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.LightGray
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = isThresholdEnabled,
-                                onCheckedChange = { isThresholdEnabled = it }
-                            )
-                            Text("Activar Corte por Velocidad", color = Color.White)
+                        // 1. Control por % de Pérdida de Velocidad (Fatiga Intraserie)
+                        Surface(
+                            color = Color(0xFF1B232D),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, if (isLossThresholdEnabled) Color(0xFF00FFCC) else Color(0xFF2A3644))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Pérdida de Velocidad (% Fatiga)",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(
+                                            if (isLossThresholdEnabled) "Alcanzar -${targetLossPercent.toInt()}% detiene la serie" else "Desactivado",
+                                            color = if (isLossThresholdEnabled) Color(0xFF00FFCC) else Color.Gray,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isLossThresholdEnabled,
+                                        onCheckedChange = { isLossThresholdEnabled = it },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.Black,
+                                            checkedTrackColor = Color(0xFF00FFCC)
+                                        )
+                                    )
+                                }
+
+                                if (isLossThresholdEnabled) {
+                                    // Presets científicos recomendados
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        listOf(
+                                            10.0 to "10% Fuerza",
+                                            15.0 to "15% Óptimo",
+                                            20.0 to "20% Estándar",
+                                            30.0 to "30% Máx"
+                                        ).forEach { (pct, label) ->
+                                            val isSel = targetLossPercent == pct
+                                            Surface(
+                                                onClick = { targetLossPercent = pct },
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isSel) Color(0xFF00FFCC) else Color(0xFF26323F),
+                                                modifier = Modifier.weight(1f).height(32.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        label,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isSel) Color.Black else Color.LightGray
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Slider para ajuste fino
+                                    Text(
+                                        "Límite permitido: -${targetLossPercent.toInt()}%",
+                                        color = Color(0xFF00FFCC),
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp
+                                    )
+
+                                    Slider(
+                                        value = targetLossPercent.toFloat(),
+                                        onValueChange = { targetLossPercent = it.toDouble().roundToInt().toDouble() },
+                                        valueRange = 5f..40f,
+                                        steps = 34,
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = Color(0xFF00FFCC),
+                                            activeTrackColor = Color(0xFF00FFCC)
+                                        )
+                                    )
+                                }
+                            }
                         }
 
-                        if (isThresholdEnabled) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                "Velocidad mínima: ${String.format(Locale.US, "%.2f", minVelocityThreshold)} m/s",
-                                color = Color(0xFF00FFCC),
-                                fontWeight = FontWeight.Bold
-                            )
-                            Slider(
-                                value = minVelocityThreshold.toFloat(),
-                                onValueChange = { minVelocityThreshold = it.toDouble() },
-                                valueRange = 0.30f..1.50f,
-                                steps = 23
-                            )
+                        // 2. Corte adicional por Velocidad Mínima Absoluta (m/s)
+                        Surface(
+                            color = Color(0xFF1B232D),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, if (isMinVelocityEnabled) Color(0xFF00E5FF) else Color(0xFF2A3644))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Corte por Velocidad Mínima",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(
+                                            if (isMinVelocityEnabled) "Detener si cae de ${String.format(Locale.US, "%.2f", minVelocityThreshold)} m/s" else "Desactivado",
+                                            color = if (isMinVelocityEnabled) Color(0xFF00E5FF) else Color.Gray,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isMinVelocityEnabled,
+                                        onCheckedChange = { isMinVelocityEnabled = it },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.Black,
+                                            checkedTrackColor = Color(0xFF00E5FF)
+                                        )
+                                    )
+                                }
+
+                                if (isMinVelocityEnabled) {
+                                    Text(
+                                        "Velocidad mínima: ${String.format(Locale.US, "%.2f", minVelocityThreshold)} m/s",
+                                        color = Color(0xFF00E5FF),
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp
+                                    )
+
+                                    Slider(
+                                        value = minVelocityThreshold.toFloat(),
+                                        onValueChange = { minVelocityThreshold = it.toDouble() },
+                                        valueRange = 0.30f..1.50f,
+                                        steps = 23,
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = Color(0xFF00E5FF),
+                                            activeTrackColor = Color(0xFF00E5FF)
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
                 },
@@ -815,7 +995,7 @@ fun CameraScreen(
                         onClick = { showThresholdDialog = false },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black)
                     ) {
-                        Text("Aceptar")
+                        Text("Guardar Configuración", fontWeight = FontWeight.Bold)
                     }
                 }
             )

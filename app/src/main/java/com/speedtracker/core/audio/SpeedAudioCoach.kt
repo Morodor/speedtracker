@@ -54,6 +54,37 @@ class SpeedAudioCoach(context: Context) : TextToSpeech.OnInitListener {
     }
 
     /**
+     * Anuncia la velocidad y el porcentaje de pérdida / fatiga en español latino:
+     * Ej Rep 1: "1 punto 85"
+     * Ej Rep 2 (con 6% fatiga): "1 punto 74, fatiga 6 por ciento"
+     * Ej Rep con corte de fatiga: "1 punto 48. ¡Atención, umbral del 20 por ciento alcanzado, fin de serie!"
+     */
+    fun speakRepFeedback(
+        velocity: Double,
+        lossPercent: Double = 0.0,
+        isCutoffReached: Boolean = false,
+        targetLossPercent: Double? = null
+    ) {
+        if (!isReady || velocity <= 0.05) return
+        val whole = velocity.toInt()
+        val decimals = ((velocity - whole) * 100.0).roundToInt().coerceIn(0, 99)
+        val decStr = if (decimals < 10) "cero $decimals" else "$decimals"
+        val spokenVelocity = if (whole == 0) "cero punto $decStr" else "$whole punto $decStr"
+
+        val text = if (isCutoffReached) {
+            val lossVal = targetLossPercent?.roundToInt() ?: lossPercent.roundToInt()
+            "$spokenVelocity. ¡Atención, umbral del $lossVal por ciento alcanzado, fin de serie!"
+        } else if (lossPercent >= 4.0) {
+            val lossVal = lossPercent.roundToInt()
+            "$spokenVelocity, fatiga $lossVal por ciento"
+        } else {
+            spokenVelocity
+        }
+
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "vbt_speed")
+    }
+
+    /**
      * Alerta de fatiga en español latino
      */
     fun speakCutoffAlert() {
