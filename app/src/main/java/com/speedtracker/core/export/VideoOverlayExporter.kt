@@ -11,13 +11,18 @@ import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.media.MediaMetadataRetriever
+import android.opengl.GLES20
+import android.opengl.GLUtils
 import android.net.Uri
 import androidx.compose.ui.geometry.Offset
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.GlUtil
 import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
+import androidx.media3.effect.OverlaySettings
+import androidx.media3.effect.TextureOverlay
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.Effects
@@ -249,6 +254,8 @@ object VideoOverlayExporter {
         originBaselineY: Float? = null,
         lowestInflectionY: Float? = null,
         calibratedPlateRadius: Float? = null,
+        sourceFrameWidth: Int? = null,
+        sourceFrameHeight: Int? = null,
         startMs: Long? = null,
         endMs: Long? = null,
         onProgress: (Float) -> Unit
@@ -264,13 +271,18 @@ object VideoOverlayExporter {
             trackingPoints
         }
 
-        // Crear BitmapOverlay con doble búfer para GPU
-        val overlay = object : BitmapOverlay() {
+        // Crear TextureOverlay de alto rendimiento con GPU texture reuse (cero memory churn / sin OOM)
+        val overlay = object : TextureOverlay() {
             private var frameW = 1080
             private var frameH = 1920
-            private var bmpA: Bitmap? = null
-            private var bmpB: Bitmap? = null
-            private var useA = true
+            private var glTextureId = -1
+            private var bmp: Bitmap? = null
+            private var bmpCanvas: Canvas? = null
+
+            // Voltear el eje Y directamente en el shader de la GPU para alinear coordenadas Canvas con OpenGL
+            private val overlaySettings = OverlaySettings.Builder()
+                .setScale(1f, -1f)
+                .build()
 
             // Paints reutilizables
             private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -339,32 +351,40 @@ object VideoOverlayExporter {
             override fun configure(videoFrameSize: Size) {
                 frameW = videoFrameSize.width
                 frameH = videoFrameSize.height
-                bmpA = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
-                bmpB = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
+                bmp?.recycle()
+                bmp = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
+                bmpCanvas = Canvas(bmp!!)
             }
 
-            override fun getBitmap(presentationTimeUs: Long): Bitmap {
-                val currentBmp = if (useA) {
-                    if (bmpA == null || bmpA!!.width != frameW || bmpA!!.height != frameH) {
-                        bmpA = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
-                    }
-                    bmpA!!
-                } else {
-                    if (bmpB == null || bmpB!!.width != frameW || bmpB!!.height != frameH) {
-                        bmpB = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
-                    }
-                    bmpB!!
-                }
-                useA = !useA
+            override fun getTextureSize(presentationTimeUs: Long): Size {
+                return Size(frameW, frameH)
+            }
 
-                val canvas = Canvas(currentBmp)
+            override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+                return overlaySettings
+            }
+
+            override fun getTextureId(presentationTimeUs: Long): Int {
+                val currentBmp = bmp ?: return -1
+                val canvas = bmpCanvas ?: return -1
+
                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
                 val currentMs = presentationTimeUs / 1000L
 
-                // 1. Filtrar puntos hasta el timestamp actual
+                // 1. Escala de coordenadas (mapea desde sourceFrameWidth/Height si viene de la cámara en vivo)
+                val srcW = if (sourceFrameWidth != null && sourceFrameWidth > 0) sourceFrameWidth.toFloat() else frameW.toFloat()
+                val srcH = if (sourceFrameHeight != null && sourceFrameHeight > 0) sourceFrameHeight.toFloat() else frameH.toFloat()
+                val coordScale = maxOf(frameW / srcW, frameH / srcH)
+                val offX = (frameW - srcW * coordScale) / 2f
+                val offY = (frameH - srcH * coordScale) / 2f
+
+                fun mapX(x: Float): Float = x * coordScale + offX
+                fun mapY(y: Float): Float = y * coordScale + offY
+
+                // Puntos de tracking hasta el momento actual
                 val pointsUpToNow = effectivePoints.filter { it.timestampMs <= currentMs }
-                val currentPoint = pointsUpToNow.lastOrNull()
+                val currentPoint = pointsUpToNow.lastOrNull() ?: effectivePoints.firstOrNull()
 
                 val scaleFactor = frameW / 1080f
                 val density = scaleFactor.coerceIn(0.32f, 2.5f)
@@ -372,14 +392,15 @@ object VideoOverlayExporter {
 
                 // 2. Líneas Guía de Referencia
                 originBaselineY?.let { origY ->
-                    canvas.drawLine(0f, origY, frameW.toFloat(), origY, baselinePaint)
+                    val my = mapY(origY)
+                    canvas.drawLine(0f, my, frameW.toFloat(), my, baselinePaint)
                 }
                 lowestInflectionY?.let { inflectY ->
-                    canvas.drawLine(0f, inflectY, frameW.toFloat(), inflectY, inflectionPaint)
+                    val my = mapY(inflectY)
+                    canvas.drawLine(0f, my, frameW.toFloat(), my, inflectionPaint)
                 }
 
-                // 3. Dibujar Trayectoria Dinámica de la Barra (Bar Path suavizado con curvas Catmull-Rom Cubic Bezier y mayor grosor)
-                // Filtramos puntos estáticos para no crear manchas mientras la barra está en el piso
+                // 3. Dibujar Trayectoria Dinámica de la Barra (Bar Path suavizado con Catmull-Rom Bezier)
                 if (pointsUpToNow.size > 1) {
                     val strokeW = 8.5f * lineDensity
                     linePaint.strokeWidth = strokeW
@@ -392,18 +413,22 @@ object VideoOverlayExporter {
                         val p2 = pointsUpToNow[i + 1]
                         val p3 = pointsUpToNow[(i + 2).coerceAtMost(pointsUpToNow.lastIndex)]
 
-                        // Solo conectar si pertenece a movimiento activo
-                        val isMoving = p2.isConcentric || p2.isEccentric || p2.velocityMps > 0.15 || p1.isConcentric
-                        if (!isMoving) continue
+                        val x0 = mapX(p0.x); val y0 = mapY(p0.y)
+                        val x1 = mapX(p1.x); val y1 = mapY(p1.y)
+                        val x2 = mapX(p2.x); val y2 = mapY(p2.y)
+                        val x3 = mapX(p3.x); val y3 = mapY(p3.y)
 
-                        val cp1X = p1.x + (p2.x - p0.x) * 0.20f
-                        val cp1Y = p1.y + (p2.y - p0.y) * 0.20f
-                        val cp2X = p2.x - (p3.x - p1.x) * 0.20f
-                        val cp2Y = p2.y - (p3.y - p1.y) * 0.20f
+                        val dist = kotlin.math.hypot(x2 - x1, y2 - y1)
+                        if (dist < 1.0f && p2.velocityMps < 0.05) continue
+
+                        val cp1X = x1 + (x2 - x0) * 0.20f
+                        val cp1Y = y1 + (y2 - y0) * 0.20f
+                        val cp2X = x2 - (x3 - x1) * 0.20f
+                        val cp2Y = y2 - (y3 - y1) * 0.20f
 
                         segPath.reset()
-                        segPath.moveTo(p1.x, p1.y)
-                        segPath.cubicTo(cp1X, cp1Y, cp2X, cp2Y, p2.x, p2.y)
+                        segPath.moveTo(x1, y1)
+                        segPath.cubicTo(cp1X, cp1Y, cp2X, cp2Y, x2, y2)
 
                         val segColor = when {
                             p2.velocityMps >= 1.10 -> Color.parseColor("#FF3D00") // Rojo máxima aceleración
@@ -424,6 +449,9 @@ object VideoOverlayExporter {
 
                 // 4. Dibujar la Mira / Tracker centrada en el disco con relleno translúcido visible y trazos gruesos
                 if (currentPoint != null) {
+                    val cx = mapX(currentPoint.x)
+                    val cy = mapY(currentPoint.y)
+
                     val trackerColor = when {
                         currentPoint.velocityMps >= 1.10 -> Color.parseColor("#FF3D00")
                         currentPoint.velocityMps >= 0.60 -> Color.parseColor("#00E676")
@@ -439,17 +467,17 @@ object VideoOverlayExporter {
 
                     // Radio exacto del disco olímpico calibrado (45 cm)
                     val plateRadius = if (calibratedPlateRadius != null && calibratedPlateRadius > 10f) {
-                        calibratedPlateRadius
+                        calibratedPlateRadius * coordScale
                     } else {
                         45f * lineDensity
                     }
 
-                    // 1. Relleno translúcido del disco completo (30% opacidad para que destaque sobre discos negros)
+                    // 1. Relleno translúcido del disco completo
                     val plateAuraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         style = Paint.Style.FILL
                         color = Color.argb(78, Color.red(trackerColor), Color.green(trackerColor), Color.blue(trackerColor))
                     }
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, plateRadius, plateAuraPaint)
+                    canvas.drawCircle(cx, cy, plateRadius, plateAuraPaint)
 
                     // Halo perimetral continuo suave + Anillo exterior segmentado grueso
                     val outerGlowRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -457,7 +485,7 @@ object VideoOverlayExporter {
                         strokeWidth = 11f * lineDensity
                         color = Color.argb(90, Color.red(trackerColor), Color.green(trackerColor), Color.blue(trackerColor))
                     }
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, plateRadius, outerGlowRingPaint)
+                    canvas.drawCircle(cx, cy, plateRadius, outerGlowRingPaint)
 
                     val plateRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         style = Paint.Style.STROKE
@@ -465,7 +493,7 @@ object VideoOverlayExporter {
                         color = trackerColor
                         pathEffect = DashPathEffect(floatArrayOf(18f * lineDensity, 12f * lineDensity), 0f)
                     }
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, plateRadius, plateRimPaint)
+                    canvas.drawCircle(cx, cy, plateRadius, plateRimPaint)
 
                     // Marcas cardinales amarillas (N, S, E, O) en el borde del disco
                     val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -475,10 +503,10 @@ object VideoOverlayExporter {
                         color = Color.parseColor("#FFD600")
                     }
                     val tickLen = 10f * lineDensity
-                    canvas.drawLine(currentPoint.x, currentPoint.y - plateRadius - tickLen, currentPoint.x, currentPoint.y - plateRadius + tickLen, tickPaint)
-                    canvas.drawLine(currentPoint.x, currentPoint.y + plateRadius - tickLen, currentPoint.x, currentPoint.y + plateRadius + tickLen, tickPaint)
-                    canvas.drawLine(currentPoint.x - plateRadius - tickLen, currentPoint.y, currentPoint.x - plateRadius + tickLen, currentPoint.y, tickPaint)
-                    canvas.drawLine(currentPoint.x + plateRadius - tickLen, currentPoint.y, currentPoint.x + plateRadius + tickLen, currentPoint.y, tickPaint)
+                    canvas.drawLine(cx, cy - plateRadius - tickLen, cx, cy - plateRadius + tickLen, tickPaint)
+                    canvas.drawLine(cx, cy + plateRadius - tickLen, cx, cy + plateRadius + tickLen, tickPaint)
+                    canvas.drawLine(cx - plateRadius - tickLen, cy, cx - plateRadius + tickLen, cy, tickPaint)
+                    canvas.drawLine(cx + plateRadius - tickLen, cy, cx + plateRadius + tickLen, cy, tickPaint)
 
                     // 2. Collarín interior con relleno translúcido más marcado y borde grueso
                     val collarR = (plateRadius * 0.30f).coerceAtLeast(14f * lineDensity)
@@ -486,23 +514,23 @@ object VideoOverlayExporter {
                         style = Paint.Style.FILL
                         color = Color.argb(115, Color.red(trackerColor), Color.green(trackerColor), Color.blue(trackerColor))
                     }
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, collarR, collarFillPaint)
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, collarR, trackerCirclePaint)
+                    canvas.drawCircle(cx, cy, collarR, collarFillPaint)
+                    canvas.drawCircle(cx, cy, collarR, trackerCirclePaint)
 
                     // 3. Cruz de mira óptica (+) gruesa y punto bullseye central
                     val crossSize = collarR + 14f * lineDensity
-                    canvas.drawLine(currentPoint.x - crossSize, currentPoint.y, currentPoint.x + crossSize, currentPoint.y, crosshairPaint)
-                    canvas.drawLine(currentPoint.x, currentPoint.y - crossSize, currentPoint.x, currentPoint.y + crossSize, crosshairPaint)
+                    canvas.drawLine(cx - crossSize, cy, cx + crossSize, cy, crosshairPaint)
+                    canvas.drawLine(cx, cy - crossSize, cx, cy + crossSize, crosshairPaint)
 
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, 7.5f * lineDensity, trackerDotPaint)
+                    canvas.drawCircle(cx, cy, 7.5f * lineDensity, trackerDotPaint)
                     val centerWhitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         style = Paint.Style.FILL
                         color = Color.WHITE
                     }
-                    canvas.drawCircle(currentPoint.x, currentPoint.y, 3.2f * lineDensity, centerWhitePaint)
+                    canvas.drawCircle(cx, cy, 3.2f * lineDensity, centerWhitePaint)
                 }
 
-                // 5. Dibujar HUD Biomecánico Profesional en 4 filas independientes (Cero superposición de textos)
+                // 5. Dibujar HUD Biomecánico Profesional en 4 filas independientes
                 val hudMarginX = 24f * density
                 val hudMarginY = 24f * density
                 val hudW = frameW - (hudMarginX * 2f)
@@ -603,7 +631,7 @@ object VideoOverlayExporter {
                     )
                 }
 
-                // Fila 3: Resumen Biomecánico (Línea completa independiente para evitar cualquier superposición)
+                // Fila 3: Resumen Biomecánico
                 rowY += 42f * density
                 val cleanSummary = bestMetricSummary
                     .removePrefix("$exerciseName • ")
@@ -633,7 +661,25 @@ object VideoOverlayExporter {
                     y = rowY
                 )
 
-                return currentBmp
+                // 6. Subir textura GL eficiente reutilizando textureId preasignado
+                if (glTextureId == -1) {
+                    glTextureId = GlUtil.createTexture(frameW, frameH, false)
+                }
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, glTextureId)
+                GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, currentBmp)
+                GlUtil.checkGlError()
+
+                return glTextureId
+            }
+
+            override fun release() {
+                if (glTextureId != -1) {
+                    try { GlUtil.deleteTexture(glTextureId) } catch (e: Exception) {}
+                    glTextureId = -1
+                }
+                bmp?.recycle()
+                bmp = null
+                bmpCanvas = null
             }
         }
 
@@ -656,6 +702,7 @@ object VideoOverlayExporter {
             var isResumed = false
 
             val transformer = Transformer.Builder(context)
+                .setVideoMimeType(MimeTypes.VIDEO_H264)
                 .addListener(object : Transformer.Listener {
                     override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                         if (!isResumed) {

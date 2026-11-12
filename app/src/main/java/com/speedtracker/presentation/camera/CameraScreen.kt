@@ -1113,6 +1113,9 @@ fun CameraScreen(
                                 bestMetricSummary = metricSummary,
                                 originBaselineY = VBTAnalyzer.lowestInflectionY ?: VBTAnalyzer.originBaselineY,
                                 lowestInflectionY = VBTAnalyzer.lowestInflectionY,
+                                calibratedPlateRadius = VBTAnalyzer.calibratedPlateRadius,
+                                sourceFrameWidth = cameraFrameWidth,
+                                sourceFrameHeight = cameraFrameHeight,
                                 onProgress = { p -> exportProgress = p }
                             )
 
@@ -1146,6 +1149,7 @@ fun CameraScreen(
                             shareRecordedVideo(context, Uri.fromFile(finalVideoFile), summary)
                         } catch (e: Exception) {
                             e.printStackTrace()
+                            android.widget.Toast.makeText(context, "Aviso exportación: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
                             shareRecordedVideo(context, lastRecordedVideoUri!!, "Speed Tracker VBT")
                         } finally {
                             isExportingVideo = false
