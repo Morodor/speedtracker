@@ -47,6 +47,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
@@ -65,6 +66,15 @@ data class VideoFrameTrackingPoint(
     val currentMeanVelocity: Double = 0.0,
     val currentPeakVelocity: Double = 0.0,
     val labelText: String = ""
+)
+
+/**
+ * Muestra cinemática sincronizada de velocidad y aceleración para la gráfica del video exportado
+ */
+data class KinematicSamplePoint(
+    val timestampMs: Long,
+    val velocityMps: Double,
+    val accelerationMps2: Double
 )
 
 /**
@@ -271,6 +281,38 @@ object VideoOverlayExporter {
             trackingPoints
         }
 
+        // Precalcular aceleración y serie cinemática continua para la gráfica en video
+        val rawKinematicSamples = ArrayList<KinematicSamplePoint>(effectivePoints.size)
+        for (i in effectivePoints.indices) {
+            val pt = effectivePoints[i]
+            val a = if (i > 0) {
+                val dt = (pt.timestampMs - effectivePoints[i - 1].timestampMs) / 1000.0
+                val dv = pt.velocityMps - effectivePoints[i - 1].velocityMps
+                if (dt > 0.005) (dv / dt).coerceIn(-15.0, 25.0) else 0.0
+            } else 0.0
+            rawKinematicSamples.add(KinematicSamplePoint(pt.timestampMs, pt.velocityMps, a))
+        }
+
+        // Suavizado leve de 3 puntos en aceleración para una curva limpia
+        val smoothedKinematics = ArrayList<KinematicSamplePoint>(rawKinematicSamples.size)
+        for (i in rawKinematicSamples.indices) {
+            val prevA = rawKinematicSamples[(i - 1).coerceAtLeast(0)].accelerationMps2
+            val curA = rawKinematicSamples[i].accelerationMps2
+            val nextA = rawKinematicSamples[(i + 1).coerceAtMost(rawKinematicSamples.lastIndex)].accelerationMps2
+            val smoothA = (prevA + curA * 2.0 + nextA) / 4.0
+            smoothedKinematics.add(rawKinematicSamples[i].copy(accelerationMps2 = smoothA))
+        }
+
+        // Localizar el Punto de Máxima Velocidad (Pico / VP)
+        val peakKinematicSample = smoothedKinematics.maxByOrNull { it.velocityMps }
+        val maxVelGlobal = (peakKinematicSample?.velocityMps ?: 1.0).coerceAtLeast(0.5)
+        val maxAccGlobal = (smoothedKinematics.maxOfOrNull { it.accelerationMps2 } ?: 5.0).coerceAtLeast(2.0)
+        val minAccGlobal = (smoothedKinematics.minOfOrNull { it.accelerationMps2 } ?: -5.0).coerceAtMost(-2.0)
+
+        val seriesStartMs = smoothedKinematics.firstOrNull()?.timestampMs ?: 0L
+        val seriesEndMs = smoothedKinematics.lastOrNull()?.timestampMs ?: 1000L
+        val totalSeriesDurationMs = (seriesEndMs - seriesStartMs).coerceAtLeast(300L)
+
         // Crear TextureOverlay de alto rendimiento con GPU texture reuse (cero memory churn / sin OOM)
         val overlay = object : TextureOverlay() {
             private var frameW = 1080
@@ -444,6 +486,32 @@ object VideoOverlayExporter {
                         // Línea central sólida más gruesa
                         linePaint.color = segColor
                         canvas.drawPath(segPath, linePaint)
+                    }
+
+                    // Marcador visual permanente en la trayectoria física donde se alcanzó la Máxima Velocidad
+                    if (peakKinematicSample != null && peakKinematicSample.velocityMps > 0.20) {
+                        val peakPt = effectivePoints.find { it.timestampMs == peakKinematicSample.timestampMs }
+                            ?: effectivePoints.maxByOrNull { it.velocityMps }
+                        if (peakPt != null) {
+                            val px = mapX(peakPt.x)
+                            val py = mapY(peakPt.y)
+                            val glowP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = Color.argb(125, 255, 61, 0)
+                                style = Paint.Style.STROKE
+                                strokeWidth = 5f * lineDensity
+                            }
+                            canvas.drawCircle(px, py, 10f * lineDensity, glowP)
+                            val coreP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = Color.parseColor("#FF3D00")
+                                style = Paint.Style.FILL
+                            }
+                            canvas.drawCircle(px, py, 6f * lineDensity, coreP)
+                            val dotP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = Color.WHITE
+                                style = Paint.Style.FILL
+                            }
+                            canvas.drawCircle(px, py, 2.5f * lineDensity, dotP)
+                        }
                     }
                 }
 
@@ -661,7 +729,216 @@ object VideoOverlayExporter {
                     y = rowY
                 )
 
-                // 6. Subir textura GL eficiente reutilizando textureId preasignado
+                // 6. Gráfica Cinemática Dinámica en el Fondo del Video (Velocidad & Aceleración con Marcador de Velocidad Pico)
+                if (smoothedKinematics.size >= 2) {
+                    val gMarginX = 24f * density
+                    val gW = frameW - (gMarginX * 2f)
+                    val gH = 152f * density
+                    val gBottom = frameH - 30f * density
+                    val gTop = gBottom - gH
+                    val gRect = RectF(gMarginX, gTop, gMarginX + gW, gBottom)
+
+                    // Fondo Obsidian semitransparente
+                    canvas.drawRoundRect(gRect, 18f * density, 18f * density, hudCardPaint)
+                    canvas.drawRoundRect(gRect, 18f * density, 18f * density, hudBorderPaint)
+
+                    // Título y Métrica en Vivo
+                    val gHeaderY = gTop + 24f * density
+                    val gTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor("#00FFCC")
+                        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                        textSize = 17f * density
+                    }
+                    canvas.drawText("📈 CINEMÁTICA: VELOCIDAD & ACELERACIÓN", gRect.left + 18f * density, gHeaderY, gTitlePaint)
+
+                    // Leyenda
+                    val legendPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        textSize = 13f * density
+                        typeface = Typeface.DEFAULT
+                    }
+                    val velLegend = "━ Velocidad (m/s)"
+                    val accLegend = "━ Aceleración (m/s²)"
+
+                    legendPaint.color = Color.parseColor("#00E5FF")
+                    val velLegX = gRect.left + 18f * density
+                    val legY = gHeaderY + 16f * density
+                    canvas.drawText(velLegend, velLegX, legY, legendPaint)
+
+                    legendPaint.color = Color.parseColor("#FFD600")
+                    val accLegX = velLegX + legendPaint.measureText(velLegend) + 16f * density
+                    canvas.drawText(accLegend, accLegX, legY, legendPaint)
+
+                    // Métrica instantánea actual a la derecha
+                    val curSample = smoothedKinematics.filter { it.timestampMs <= currentMs }.lastOrNull() ?: smoothedKinematics.first()
+                    val liveMetricText = "V: ${String.format(Locale.US, "%.2f", curSample.velocityMps)} m/s | A: ${String.format(Locale.US, "%+.1f", curSample.accelerationMps2)} m/s²"
+                    val liveValPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.WHITE
+                        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                        textSize = 14f * density
+                    }
+                    val liveValW = liveValPaint.measureText(liveMetricText)
+                    canvas.drawText(liveMetricText, gRect.right - 18f * density - liveValW, gHeaderY, liveValPaint)
+
+                    // Área de trazado de curvas
+                    val pLeft = gRect.left + 18f * density
+                    val pRight = gRect.right - 18f * density
+                    val pTop = legY + 10f * density
+                    val pBottom = gBottom - 14f * density
+                    val pW = pRight - pLeft
+                    val pH = pBottom - pTop
+
+                    fun timeToX(tMs: Long): Float {
+                        val progress = ((tMs - seriesStartMs).toFloat() / totalSeriesDurationMs.toFloat()).coerceIn(0f, 1f)
+                        return pLeft + progress * pW
+                    }
+
+                    fun velToY(v: Double): Float {
+                        val norm = (v.toFloat() / maxVelGlobal.toFloat()).coerceIn(0f, 1f)
+                        return pBottom - norm * (pH * 0.88f)
+                    }
+
+                    fun accToY(a: Double): Float {
+                        val range = (maxAccGlobal - minAccGlobal).toFloat().coerceAtLeast(1f)
+                        val norm = ((a.toFloat() - minAccGlobal.toFloat()) / range).coerceIn(0f, 1f)
+                        return pBottom - norm * (pH * 0.88f)
+                    }
+
+                    // Línea base de aceleración cero
+                    val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb(60, 255, 255, 255)
+                        style = Paint.Style.STROKE
+                        strokeWidth = 1f * density
+                        pathEffect = DashPathEffect(floatArrayOf(6f * density, 6f * density), 0f)
+                    }
+                    val zeroAccY = accToY(0.0)
+                    canvas.drawLine(pLeft, zeroAccY, pRight, zeroAccY, axisPaint)
+
+                    // 1. Curva de Aceleración (Dorado)
+                    val accPath = android.graphics.Path()
+                    val accPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor("#FFD600")
+                        style = Paint.Style.STROKE
+                        strokeWidth = 2.2f * density
+                        strokeCap = Paint.Cap.ROUND
+                        strokeJoin = Paint.Join.ROUND
+                    }
+                    for (i in smoothedKinematics.indices) {
+                        val sx = timeToX(smoothedKinematics[i].timestampMs)
+                        val sy = accToY(smoothedKinematics[i].accelerationMps2)
+                        if (i == 0) accPath.moveTo(sx, sy) else accPath.lineTo(sx, sy)
+                    }
+                    canvas.drawPath(accPath, accPaint)
+
+                    // 2. Curva de Velocidad (Cyan Neón con relleno translúcido inferior)
+                    val velPath = android.graphics.Path()
+                    val velFillPath = android.graphics.Path()
+                    val velPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor("#00E5FF")
+                        style = Paint.Style.STROKE
+                        strokeWidth = 3.5f * density
+                        strokeCap = Paint.Cap.ROUND
+                        strokeJoin = Paint.Join.ROUND
+                    }
+                    val velGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb(80, 0, 229, 255)
+                        style = Paint.Style.STROKE
+                        strokeWidth = 7f * density
+                        strokeCap = Paint.Cap.ROUND
+                        strokeJoin = Paint.Join.ROUND
+                    }
+
+                    velFillPath.moveTo(timeToX(smoothedKinematics.first().timestampMs), pBottom)
+                    for (i in smoothedKinematics.indices) {
+                        val sx = timeToX(smoothedKinematics[i].timestampMs)
+                        val sy = velToY(smoothedKinematics[i].velocityMps)
+                        if (i == 0) velPath.moveTo(sx, sy) else velPath.lineTo(sx, sy)
+                        velFillPath.lineTo(sx, sy)
+                    }
+                    velFillPath.lineTo(timeToX(smoothedKinematics.last().timestampMs), pBottom)
+                    velFillPath.close()
+
+                    val velFillAreaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb(35, 0, 229, 255)
+                        style = Paint.Style.FILL
+                    }
+                    canvas.drawPath(velFillPath, velFillAreaPaint)
+                    canvas.drawPath(velPath, velGlowPaint)
+                    canvas.drawPath(velPath, velPaint)
+
+                    // 3. INDICADOR DEL PUNTO DE MÁXIMA VELOCIDAD (Punto Pico / VP)
+                    if (peakKinematicSample != null && peakKinematicSample.velocityMps > 0.20) {
+                        val px = timeToX(peakKinematicSample.timestampMs)
+                        val py = velToY(peakKinematicSample.velocityMps)
+
+                        // Línea vertical punteada en el instante de máxima velocidad
+                        val peakLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#FF3D00")
+                            style = Paint.Style.STROKE
+                            strokeWidth = 1.8f * density
+                            pathEffect = DashPathEffect(floatArrayOf(8f * density, 6f * density), 0f)
+                        }
+                        canvas.drawLine(px, pTop - 4f * density, px, pBottom, peakLinePaint)
+
+                        // Anillo blanco y núcleo rojo en el vértice
+                        val peakPointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#FF3D00")
+                            style = Paint.Style.FILL
+                        }
+                        val peakRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.WHITE
+                            style = Paint.Style.STROKE
+                            strokeWidth = 2f * density
+                        }
+                        canvas.drawCircle(px, py, 6f * density, peakPointPaint)
+                        canvas.drawCircle(px, py, 6f * density, peakRingPaint)
+
+                        // Insignia / Badge con el valor exacto de la Máxima Velocidad
+                        val badgeText = "★ MÁX VEL: ${String.format(Locale.US, "%.2f", peakKinematicSample.velocityMps)} m/s"
+                        val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.WHITE
+                            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                            textSize = 11.5f * density
+                        }
+                        val bW = badgeTextPaint.measureText(badgeText) + (14f * density)
+                        val bH = 18f * density
+                        val bLeft = (px - bW / 2f).coerceIn(pLeft, pRight - bW)
+                        val bTop = (py - bH - 6f * density).coerceAtLeast(pTop - 6f * density)
+                        val badgeRect = RectF(bLeft, bTop, bLeft + bW, bTop + bH)
+
+                        val badgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.argb(230, 255, 61, 0) // Naranja/Rojo vivo
+                            style = Paint.Style.FILL
+                        }
+                        canvas.drawRoundRect(badgeRect, 6f * density, 6f * density, badgeBgPaint)
+                        canvas.drawText(badgeText, bLeft + 7f * density, bTop + 13f * density, badgeTextPaint)
+                    }
+
+                    // 4. Cursor Dinámico de Tiempo (Playhead Sync con el video actual)
+                    val cursorX = timeToX(currentMs)
+                    val curY = velToY(curSample.velocityMps)
+
+                    val cursorLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.WHITE
+                        style = Paint.Style.STROKE
+                        strokeWidth = 2.2f * density
+                    }
+                    canvas.drawLine(cursorX, pTop, cursorX, pBottom, cursorLinePaint)
+
+                    // Punto brillante en el cursor actual
+                    val cursorDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor("#00FFCC")
+                        style = Paint.Style.FILL
+                    }
+                    val cursorDotRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.WHITE
+                        style = Paint.Style.STROKE
+                        strokeWidth = 2.5f * density
+                    }
+                    canvas.drawCircle(cursorX, curY, 6.5f * density, cursorDotPaint)
+                    canvas.drawCircle(cursorX, curY, 6.5f * density, cursorDotRingPaint)
+                }
+
+                // 7. Subir textura GL eficiente reutilizando textureId preasignado
                 if (glTextureId == -1) {
                     glTextureId = GlUtil.createTexture(frameW, frameH, false)
                 }

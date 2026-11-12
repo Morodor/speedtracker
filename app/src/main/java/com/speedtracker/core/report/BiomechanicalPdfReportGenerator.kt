@@ -309,16 +309,25 @@ object BiomechanicalPdfReportGenerator {
         }
 
         // 6. Tarjeta de Interpretación Biomecánica & Recomendaciones Técnicas
-        val interpTop = startY + 5 * (rowHeight + 4f) + 12f
-        val interpRect = RectF(20f, interpTop, 575f, interpTop + 160f)
+        val interpTop = startY + 5 * (rowHeight + 4f) + 10f
+        val interpRect = RectF(20f, interpTop, 575f, 810f)
         paint.color = Color.parseColor("#0F172A")
+        paint.style = Paint.Style.FILL
         canvas.drawRoundRect(interpRect, 8f, 8f, paint)
+        paint.color = Color.parseColor("#1E293B")
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1f
+        canvas.drawRoundRect(interpRect, 8f, 8f, paint)
+        paint.style = Paint.Style.FILL
 
-        // Título de la tarjeta
+        // Título de la tarjeta y línea divisoria
         textPaint.color = Color.parseColor("#00FFCC")
-        textPaint.textSize = 10.5f
+        textPaint.textSize = 10f
         textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText("INTERPRETACIÓN BIOMECÁNICA & RECOMENDACIONES", 34f, interpTop + 24f, textPaint)
+        canvas.drawText("⚡ INTERPRETACIÓN BIOMECÁNICA & RECOMENDACIONES TÉCNICAS", 34f, interpTop + 20f, textPaint)
+
+        paint.color = Color.parseColor("#334155")
+        canvas.drawLine(34f, interpTop + 27f, 561f, interpTop + 27f, paint)
 
         val eval = evaluateLift(
             peakVelocity = peakVelocity,
@@ -332,24 +341,72 @@ object BiomechanicalPdfReportGenerator {
             rfdNPerSec = rfdNPerSec
         )
 
-        textPaint.color = Color.parseColor("#F1F5F9")
+        val marginX = 34f
+        val contentW = 527f
+        var curY = interpTop + 41f
+
+        // Bloque 1: Zona de Velocidad y Potencia
+        textPaint.color = Color.parseColor("#00E5FF")
         textPaint.textSize = 8.5f
+        textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        canvas.drawText("• ZONA CINEMÁTICA: ${eval.velocityZoneTag}", marginX, curY, textPaint)
+        curY += 12f
+
+        textPaint.color = Color.parseColor("#E2E8F0")
+        textPaint.textSize = 8f
         textPaint.typeface = Typeface.DEFAULT
+        curY = drawWrappedParagraph(canvas, eval.velocityZoneDetail, marginX + 10f, curY, contentW - 10f, 10.5f, textPaint)
 
-        // Dibujar líneas de texto formateadas
-        canvas.drawText("• ${eval.velocityZoneTag}: ${eval.velocityZoneDetail}", 34f, interpTop + 50f, textPaint)
-        canvas.drawText("  Potencia relativa: ${String.format(Locale.US, "%.1f", relativeWattsPerKg)} W/kg | Fuerza pico: ${peakForceN.toInt()} N | Trabajo: ${workJoules.toInt()} J.", 34f, interpTop + 66f, textPaint)
+        textPaint.color = Color.parseColor("#94A3B8")
+        textPaint.textSize = 7.5f
+        val potLine = "Potencia relativa: ${String.format(Locale.US, "%.1f", relativeWattsPerKg)} W/kg  |  Fuerza pico: ${peakForceN.toInt()} N  |  Trabajo: ${workJoules.toInt()} J"
+        canvas.drawText(potLine, marginX + 10f, curY + 2f, textPaint)
+        curY += 15f
 
-        canvas.drawText("• ${eval.driftTag}: ${eval.driftDetail}", 34f, interpTop + 90f, textPaint)
-        canvas.drawText("  ${eval.rfdDetail}", 34f, interpTop + 106f, textPaint)
+        // Bloque 2: Trayectoria de Barra y RFD
+        textPaint.color = Color.parseColor("#FFD600")
+        textPaint.textSize = 8.5f
+        textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        canvas.drawText("• CONTROL TÉCNICO: ${eval.driftTag}", marginX, curY, textPaint)
+        curY += 12f
 
-        canvas.drawText(eval.loadRecommendation, 34f, interpTop + 132f, textPaint)
+        textPaint.color = Color.parseColor("#E2E8F0")
+        textPaint.textSize = 8f
+        textPaint.typeface = Typeface.DEFAULT
+        curY = drawWrappedParagraph(canvas, eval.driftDetail, marginX + 10f, curY, contentW - 10f, 10.5f, textPaint)
+
+        textPaint.color = Color.parseColor("#94A3B8")
+        textPaint.textSize = 7.5f
+        canvas.drawText(eval.rfdDetail, marginX + 10f, curY + 2f, textPaint)
+        curY += 16f
+
+        // Bloque 3: Caja de Prescripción de Carga Práctica para la Próxima Serie
+        val recBoxTop = curY
+        val recBox = RectF(marginX, recBoxTop, 561f, recBoxTop + 40f)
+        paint.color = Color.parseColor("#1E293B")
+        paint.style = Paint.Style.FILL
+        canvas.drawRoundRect(recBox, 5f, 5f, paint)
+        paint.color = Color.parseColor("#00FFCC")
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 0.8f
+        canvas.drawRoundRect(recBox, 5f, 5f, paint)
+        paint.style = Paint.Style.FILL
+
+        textPaint.color = Color.parseColor("#00FFCC")
+        textPaint.textSize = 8f
+        textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        canvas.drawText("🎯 PRESCRIPCIÓN PARA LA SIGUIENTE SERIE:", marginX + 8f, recBoxTop + 13f, textPaint)
+
+        textPaint.color = Color.parseColor("#F8FAFC")
+        textPaint.textSize = 7.8f
+        textPaint.typeface = Typeface.DEFAULT
+        drawWrappedParagraph(canvas, eval.loadRecommendation, marginX + 8f, recBoxTop + 24f, contentW - 16f, 10f, textPaint)
 
         // 7. Pie de Página
         textPaint.color = Color.parseColor("#94A3B8")
         textPaint.textSize = 8f
         textPaint.typeface = Typeface.DEFAULT
-        canvas.drawText("Speed Tracker v1.5 • Desarrollado para Entrenamiento Basado en la Velocidad (VBT) • Validación Científica", 24f, 825f, textPaint)
+        canvas.drawText("Speed Tracker v1.8 • Desarrollado para Entrenamiento Basado en la Velocidad (VBT) • Validación Científica", 24f, 825f, textPaint)
         val copyRight = "Pág 1 de 1"
         val crW = textPaint.measureText(copyRight)
         canvas.drawText(copyRight, 571f - crW, 825f, textPaint)
@@ -470,6 +527,41 @@ object BiomechanicalPdfReportGenerator {
         }
     }
 
+    /**
+     * Dibuja un párrafo con ajuste automático de línea (text wrapping) respetando márgenes estrictos
+     * para que ninguna palabra se desborde del contenedor. Retorna la coordenada Y final tras el dibujo.
+     */
+    private fun drawWrappedParagraph(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        startY: Float,
+        maxWidth: Float,
+        lineHeight: Float,
+        paint: Paint
+    ): Float {
+        var currentY = startY
+        val words = text.split(" ")
+        var currentLine = StringBuilder()
+
+        for (word in words) {
+            val testLine = if (currentLine.isEmpty()) word else "$currentLine $word"
+            val testWidth = paint.measureText(testLine)
+            if (testWidth > maxWidth && currentLine.isNotEmpty()) {
+                canvas.drawText(currentLine.toString(), x, currentY, paint)
+                currentY += lineHeight
+                currentLine = StringBuilder(word)
+            } else {
+                currentLine.append(if (currentLine.isEmpty()) word else " $word")
+            }
+        }
+        if (currentLine.isNotEmpty()) {
+            canvas.drawText(currentLine.toString(), x, currentY, paint)
+            currentY += lineHeight
+        }
+        return currentY
+    }
+
     data class BiomechanicalEvaluation(
         val velocityZoneTag: String,
         val velocityZoneDetail: String,
@@ -492,41 +584,41 @@ object BiomechanicalPdfReportGenerator {
     ): BiomechanicalEvaluation {
         val (velTag, velDetail) = when {
             peakVelocity >= 2.20 -> Pair(
-                "ZONA DE VELOCIDAD EXPLOSIVA",
-                "Excelente transmisión de potencia neuromuscular en el segundo tirón. La barra aceleró libremente sin puntos de estancamiento."
+                "VELOCIDAD EXPLOSIVA ALTA (VP ≥ 2.20 m/s)",
+                "Excelente aceleración y transmisión de potencia neuromuscular en el segundo tirón. La barra aceleró fluidamente y sin puntos de desaceleración temprana."
             )
             peakVelocity >= 1.70 -> Pair(
-                "ZONA DE FUERZA-POTENCIA",
-                "Velocidad de desplazamiento sólida y controlada para ${loadKg.toInt()} kg (~${pctOneRM.toInt()}% 1RM). Gran sincronización concéntrica."
+                "FUERZA-POTENCIA ÓPTIMA (VP 1.70 - 2.19 m/s)",
+                "Desplazamiento vertical sólido y controlado para ${loadKg.toInt()} kg (~${pctOneRM.toInt()}% 1RM). Gran sincronización concéntrica y reclutamiento motor coordinado."
             )
             else -> Pair(
-                "ZONA DE FUERZA MÁXIMA / LÍMITE",
-                "Carga pesada con velocidad desacelerada. Demanda de reclutamiento neuromuscular muy alta."
+                "FUERZA MÁXIMA / ZONA DE CARGA LÍMITE (VP < 1.70 m/s)",
+                "Carga pesada con velocidad desacelerada. Demanda máxima de reclutamiento neuromuscular y mayor tiempo bajo tensión mecánica."
             )
         }
 
         val drift = horizontalDeviationCm ?: 0.0
         val (driftTag, driftDetail) = when {
             drift <= 10.0 -> Pair(
-                "TRAYECTORIA VERTICAL ÓPTIMA (${String.format(Locale.US, "%.1f", drift)} cm)",
-                "Desvío horizontal mínimo. La barra se mantuvo pegada al eje vertical de gravedad, optimizando el trabajo mecánico."
+                "TRAYECTORIA VERTICAL EFICIENTE (${String.format(Locale.US, "%.1f", drift)} cm)",
+                "Desvío horizontal mínimo. La barra se mantuvo perfectamente alineada con el centro de gravedad corporal, optimizando el trabajo mecánico y la estabilidad."
             )
             drift <= 18.0 -> Pair(
                 "TRAYECTORIA CONTROLADA (${String.format(Locale.US, "%.1f", drift)} cm)",
-                "Desvío moderado hacia adelante. Se sugiere concentrarse en codos altos y contacto cercano al torso en el tirón."
+                "Desvío moderado hacia adelante. Se sugiere enfatizar codos altos en el tirón y mantener la barra próxima al cuerpo en la fase de extensión."
             )
             else -> Pair(
-                "DESVÍO HACIA ADELANTE DETECTADO (${String.format(Locale.US, "%.1f", drift)} cm)",
-                "La barra se despegó del cuerpo en el tirón. Trabajar en extensiones verticales sin proyectar la cadera hacia adelante."
+                "DESVÍO HORIZONTAL ELEVADO (${String.format(Locale.US, "%.1f", drift)} cm)",
+                "La barra se alejó del eje vertical. Trabajar en extensiones verticales completas evitando proyectar la cadera horizontalmente hacia la barra."
             )
         }
 
         val rfdStr = "Tiempo a Vel. Pico: ${timeToPeakMs ?: "--"} ms | RFD: ${rfdNPerSec ?: "--"} N/s | Potencia: ${String.format(Locale.US, "%.1f", relativeWattsPerKg)} W/kg"
 
         val loadRec = when {
-            pctOneRM < 70.0 && peakVelocity > 2.0 -> "• RECOMENDACIÓN: Puedes incrementar +2.5 kg a +5.0 kg para la siguiente serie manteniendo el foco en aceleración explosiva."
-            pctOneRM in 70.0..85.0 -> "• RECOMENDACIÓN: Carga ideal para adaptaciones de potencia máxima. Mantén el peso en las próximas series."
-            else -> "• RECOMENDACIÓN: Mantener o reducir levemente el volumen para evitar la degradación técnica por fatiga neuromuscular acumulada."
+            pctOneRM < 70.0 && peakVelocity > 2.0 -> "Incrementar carga (+2.5 kg a +5.0 kg): La velocidad y aceleración explosiva demuestran gran reserva neuromuscular para admitir mayor peso sin perder dinamismo."
+            pctOneRM in 70.0..85.0 -> "Mantener carga actual: Estás en la franja ideal de Potencia Máxima (70-85% 1RM). Mantén este peso para consolidar adaptaciones neuromusculares rápidas."
+            else -> "Carga límite / submáxima (>85% 1RM): Reclutamiento neuromuscular máximo. No incrementar carga y respetar de 3 a 5 min de descanso entre series para evitar fatiga."
         }
 
         return BiomechanicalEvaluation(
