@@ -46,14 +46,29 @@ enum class VBTExerciseModel(
     val formulaDescription: String
 ) {
     // DLP (Derivados del Levantamiento de Pesas) -> Métrica: Velocidad Pico (PV)
-    SNATCH_FLOOR("Snatch Suelo", VBTExerciseFamily.DLP_OLYMPIC, true, 1.65, "%1RM = 145 - 28.5 * PV"),
-    HANG_SNATCH("Hang Snatch", VBTExerciseFamily.DLP_OLYMPIC, true, 1.60, "%1RM = 142 - 27.0 * PV"),
-    POWER_SNATCH("Power Snatch", VBTExerciseFamily.DLP_OLYMPIC, true, 1.78, "%1RM = 150 - 29.0 * PV"),
-    CLEAN_FLOOR("Clean Suelo", VBTExerciseFamily.DLP_OLYMPIC, true, 1.38, "%1RM = 140 - 29.0 * PV"),
-    HANG_CLEAN("Hang Clean", VBTExerciseFamily.DLP_OLYMPIC, true, 1.35, "%1RM = 138 - 28.0 * PV"),
-    POWER_CLEAN("Power Clean", VBTExerciseFamily.DLP_OLYMPIC, true, 1.52, "%1RM = 145 - 29.5 * PV"),
+    SNATCH_FLOOR("Arranque (Snatch)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.65, "%1RM = 145 - 28.5 * PV"),
+    HANG_SNATCH("Arranque Colgante (Hang Snatch)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.60, "%1RM = 142 - 27.0 * PV"),
+    POWER_SNATCH("Arranque de Potencia (Power Snatch)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.78, "%1RM = 150 - 29.0 * PV"),
+    HANG_POWER_SNATCH("Hang Power Snatch", VBTExerciseFamily.DLP_OLYMPIC, true, 1.70, "%1RM = 146 - 28.0 * PV"),
+    CLEAN_FLOOR("Cargada (Clean)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.38, "%1RM = 140 - 29.0 * PV"),
+    HANG_CLEAN("Cargada Colgante (Hang Clean)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.35, "%1RM = 138 - 28.0 * PV"),
+    POWER_CLEAN("Cargada de Potencia (Power Clean)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.52, "%1RM = 145 - 29.5 * PV"),
+    HANG_POWER_CLEAN("Hang Power Clean", VBTExerciseFamily.DLP_OLYMPIC, true, 1.45, "%1RM = 142 - 28.5 * PV"),
+    JERK("Envión (Jerk)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.40, "%1RM = 142 - 28.0 * PV"),
+    PUSH_JERK("Push Jerk", VBTExerciseFamily.DLP_OLYMPIC, true, 1.42, "%1RM = 144 - 28.5 * PV"),
+    SPLIT_JERK("Split Jerk", VBTExerciseFamily.DLP_OLYMPIC, true, 1.38, "%1RM = 140 - 28.0 * PV"),
+    PUSH_PRESS("Push Press", VBTExerciseFamily.DLP_OLYMPIC, true, 1.30, "%1RM = 136 - 27.5 * PV"),
+    OVERHEAD_SQUAT("Sentadilla de Arranque (Overhead Squat)", VBTExerciseFamily.DLP_OLYMPIC, false, 0.35, "%1RM = -65.0 * VM + 120.0"),
+    SNATCH_PULL("Tirones de Arranque (Snatch Pulls)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.55, "%1RM = 140 - 27.5 * PV"),
+    CLEAN_PULL("Tirones de Cargada (Clean Pulls)", VBTExerciseFamily.DLP_OLYMPIC, true, 1.45, "%1RM = 138 - 27.0 * PV"),
     OLYMPIC_PULL("Tirón Olímpico", VBTExerciseFamily.DLP_OLYMPIC, true, 1.45, "%1RM = 138 - 27.0 * PV"),
     JERK_PUSH_PRESS("Jerk / Push Press", VBTExerciseFamily.DLP_OLYMPIC, true, 1.38, "%1RM = 142 - 28.0 * PV"),
+
+    // Complexes de Halterofilia (Combinaciones Multi-Movimiento)
+    COMPLEX_CLEAN_JERK("Complex: Clean + Jerk", VBTExerciseFamily.DLP_OLYMPIC, true, 1.38, "%1RM = 140 - 28.5 * PV"),
+    COMPLEX_HANG_POWER_CLEAN_JERK("Complex: Hang Power Clean + Jerk", VBTExerciseFamily.DLP_OLYMPIC, true, 1.40, "%1RM = 142 - 28.5 * PV"),
+    COMPLEX_SNATCH_OHS("Complex: Snatch + Overhead Squat", VBTExerciseFamily.DLP_OLYMPIC, true, 1.60, "%1RM = 144 - 28.0 * PV"),
+    CUSTOM_COMPLEX("Complex Personalizado / Mezclar", VBTExerciseFamily.DLP_OLYMPIC, true, 1.40, "%1RM = 140 - 28.0 * PV"),
 
     // Ley de Hill (Fuerza Tradicional) -> Métrica: Velocidad Media (VM)
     SQUAT("Sentadilla", VBTExerciseFamily.HILL_TRADITIONAL, false, 0.30, "%1RM = -59.93 * VM + 128.2"),
@@ -69,11 +84,24 @@ enum class VBTExerciseModel(
             SNATCH_FLOOR -> (145.0 - (28.5 * peakVelocity)).coerceIn(35.0, 98.0)
             HANG_SNATCH -> (142.0 - (27.0 * peakVelocity)).coerceIn(35.0, 98.0)
             POWER_SNATCH -> (150.0 - (29.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            HANG_POWER_SNATCH -> (146.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
             CLEAN_FLOOR -> (140.0 - (29.0 * peakVelocity)).coerceIn(35.0, 98.0)
             HANG_CLEAN -> (138.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
             POWER_CLEAN -> (145.0 - (29.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            HANG_POWER_CLEAN -> (142.0 - (28.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            JERK -> (142.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            PUSH_JERK -> (144.0 - (28.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            SPLIT_JERK -> (140.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            PUSH_PRESS -> (136.0 - (27.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            OVERHEAD_SQUAT -> ((-65.0 * meanVelocity) + 120.0).coerceIn(30.0, 95.0)
+            SNATCH_PULL -> (140.0 - (27.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            CLEAN_PULL -> (138.0 - (27.0 * peakVelocity)).coerceIn(35.0, 98.0)
             OLYMPIC_PULL -> (138.0 - (27.0 * peakVelocity)).coerceIn(35.0, 98.0)
             JERK_PUSH_PRESS -> (142.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            COMPLEX_CLEAN_JERK -> (140.0 - (28.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            COMPLEX_HANG_POWER_CLEAN_JERK -> (142.0 - (28.5 * peakVelocity)).coerceIn(35.0, 98.0)
+            COMPLEX_SNATCH_OHS -> (144.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
+            CUSTOM_COMPLEX -> (140.0 - (28.0 * peakVelocity)).coerceIn(35.0, 98.0)
 
             SQUAT -> ((-59.93 * meanVelocity) + 128.2).coerceIn(30.0, 95.0)
             BENCH_PRESS -> ((-84.07 * meanVelocity) + 115.6).coerceIn(30.0, 95.0)

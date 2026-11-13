@@ -3966,7 +3966,8 @@ fun VideoAnalysisScreen(
                                                             horizontalDeviationCm = vbtDeviationResultCm,
                                                             trackingPoints = trackingPointsResult,
                                                             trimStartMs = trimStartMs,
-                                                            trimEndMs = trimEndMs
+                                                            trimEndMs = trimEndMs,
+                                                            repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList()
                                                         )
                                                         generatedPdfPath = repFile.absolutePath
                                                         repFile.absolutePath
@@ -4094,7 +4095,8 @@ fun VideoAnalysisScreen(
                                                     horizontalDeviationCm = vbtDeviationResultCm,
                                                     trackingPoints = trackingPointsResult,
                                                     trimStartMs = trimStartMs,
-                                                    trimEndMs = trimEndMs
+                                                    trimEndMs = trimEndMs,
+                                                    repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList()
                                                 )
                                                 generatedPdfPath = reportFile.absolutePath
                                                 showPdfPreviewDialog = true
@@ -4241,7 +4243,8 @@ fun VideoAnalysisScreen(
                                                         horizontalDeviationCm = vbtDeviationResultCm,
                                                         trackingPoints = trackingPointsResult,
                                                         trimStartMs = trimStartMs,
-                                                        trimEndMs = trimEndMs
+                                                        trimEndMs = trimEndMs,
+                                                        repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList()
                                                     )
                                                     generatedPdfPath = repFile.absolutePath
                                                     repFile.absolutePath
@@ -7800,11 +7803,12 @@ fun PreCalibrationSetupDialog(
                                         )
                                         Text(
                                             text = if (model.usesPeakVelocity)
-                                                "Velocidad Pico (PV) • Umbral MVT ${model.mvt} m/s"
+                                                "PV (Pico) • MVT: ${model.mvt} m/s"
                                             else
-                                                "Velocidad Media (VM) • Umbral MVT ${model.mvt} m/s",
+                                                "VM (Media) • MVT: ${model.mvt} m/s",
                                             color = labelColor,
-                                            fontSize = 11.5.sp
+                                            fontSize = 11.sp,
+                                            maxLines = 1
                                         )
                                     }
                                 }

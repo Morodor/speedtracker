@@ -45,17 +45,27 @@ fun ExportReportDataDialog(
     var exerciseName by remember { mutableStateOf(initialExerciseName) }
 
     val commonExercises = listOf(
-        "Clean Suelo",
-        "Hang Clean",
-        "Power Clean",
-        "Snatch Suelo",
-        "Hang Snatch",
-        "Power Snatch",
-        "Tirón Olímpico",
+        "Arranque (Snatch)",
+        "Arranque Colgante (Hang Snatch)",
+        "Arranque de Potencia (Power Snatch)",
+        "Hang Power Snatch",
+        "Cargada (Clean)",
+        "Cargada Colgante (Hang Clean)",
+        "Cargada de Potencia (Power Clean)",
+        "Hang Power Clean",
+        "Envión (Jerk)",
+        "Push Jerk",
+        "Split Jerk",
+        "Push Press",
+        "Sentadilla de Arranque (Overhead Squat)",
+        "Tirones de Arranque (Snatch Pulls)",
+        "Tirones de Cargada (Clean Pulls)",
+        "Complex: Clean + Jerk",
+        "Complex: Hang Power Clean + Push Jerk",
+        "Complex: Snatch + Overhead Squat",
         "Sentadilla",
         "Press Banca",
-        "Peso Muerto",
-        "Jerk / Push Press"
+        "Peso Muerto"
     )
 
     val quickLoads = listOf(40, 50, 60, 70, 80, 90, 100, 110, 120)
