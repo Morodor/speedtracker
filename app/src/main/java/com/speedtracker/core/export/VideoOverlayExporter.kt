@@ -866,51 +866,62 @@ object VideoOverlayExporter {
                     canvas.drawPath(velPath, velPaint)
 
                     // 3. INDICADOR DEL PUNTO DE MÁXIMA VELOCIDAD (Punto Pico / VP)
-                    if (peakKinematicSample != null && peakKinematicSample.velocityMps > 0.20) {
+                    if (peakKinematicSample != null && peakKinematicSample.velocityMps > 0.15) {
                         val px = timeToX(peakKinematicSample.timestampMs)
                         val py = velToY(peakKinematicSample.velocityMps)
 
-                        // Línea vertical punteada en el instante de máxima velocidad
+                        // Línea vertical punteada en el instante de máxima velocidad (Cyan neón)
                         val peakLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.parseColor("#FF3D00")
+                            color = Color.parseColor("#8000FFCC")
                             style = Paint.Style.STROKE
                             strokeWidth = 1.8f * density
-                            pathEffect = DashPathEffect(floatArrayOf(8f * density, 6f * density), 0f)
+                            pathEffect = DashPathEffect(floatArrayOf(6f * density, 6f * density), 0f)
                         }
-                        canvas.drawLine(px, pTop - 4f * density, px, pBottom, peakLinePaint)
+                        canvas.drawLine(px, pTop, px, pBottom, peakLinePaint)
 
-                        // Anillo blanco y núcleo rojo en el vértice
-                        val peakPointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.parseColor("#FF3D00")
+                        // Marcador de punto de Velocidad Pico idéntico a la app (Halo cian, punto cian y centro blanco)
+                        val peakHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.argb(90, 0, 255, 204) // Cyan glow
                             style = Paint.Style.FILL
                         }
-                        val peakRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.WHITE
-                            style = Paint.Style.STROKE
-                            strokeWidth = 2f * density
+                        val peakPointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#00FFCC")
+                            style = Paint.Style.FILL
                         }
-                        canvas.drawCircle(px, py, 6f * density, peakPointPaint)
-                        canvas.drawCircle(px, py, 6f * density, peakRingPaint)
-
-                        // Insignia / Badge con el valor exacto de la Máxima Velocidad
-                        val badgeText = "★ MÁX VEL: ${String.format(Locale.US, "%.2f", peakKinematicSample.velocityMps)} m/s"
-                        val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        val peakCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                             color = Color.WHITE
+                            style = Paint.Style.FILL
+                        }
+
+                        canvas.drawCircle(px, py, 9f * density, peakHaloPaint)
+                        canvas.drawCircle(px, py, 5f * density, peakPointPaint)
+                        canvas.drawCircle(px, py, 2.5f * density, peakCorePaint)
+
+                        // Insignia / Badge con el valor exacto de la Máxima Velocidad (estilo app)
+                        val badgeText = "★ VP: ${String.format(Locale.US, "%.2f", peakKinematicSample.velocityMps)} m/s"
+                        val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#00FFCC")
                             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                            textSize = 11.5f * density
+                            textSize = 12f * density
                         }
                         val bW = badgeTextPaint.measureText(badgeText) + (14f * density)
-                        val bH = 18f * density
+                        val bH = 19f * density
                         val bLeft = (px - bW / 2f).coerceIn(pLeft, pRight - bW)
-                        val bTop = (py - bH - 6f * density).coerceAtLeast(pTop - 6f * density)
+                        val bTop = (py - bH - 8f * density).coerceAtLeast(pTop - 8f * density)
                         val badgeRect = RectF(bLeft, bTop, bLeft + bW, bTop + bH)
 
                         val badgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.argb(230, 255, 61, 0) // Naranja/Rojo vivo
+                            color = Color.argb(235, 15, 23, 42) // Obsidian #0F172A
                             style = Paint.Style.FILL
                         }
-                        canvas.drawRoundRect(badgeRect, 6f * density, 6f * density, badgeBgPaint)
-                        canvas.drawText(badgeText, bLeft + 7f * density, bTop + 13f * density, badgeTextPaint)
+                        val badgeBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#00FFCC")
+                            style = Paint.Style.STROKE
+                            strokeWidth = 1.2f * density
+                        }
+                        canvas.drawRoundRect(badgeRect, 5f * density, 5f * density, badgeBgPaint)
+                        canvas.drawRoundRect(badgeRect, 5f * density, 5f * density, badgeBorderPaint)
+                        canvas.drawText(badgeText, bLeft + 7f * density, bTop + 13.5f * density, badgeTextPaint)
                     }
 
                     // 4. Cursor Dinámico de Tiempo (Playhead Sync con el video actual)

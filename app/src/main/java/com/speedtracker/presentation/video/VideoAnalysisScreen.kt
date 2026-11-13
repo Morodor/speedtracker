@@ -3516,7 +3516,10 @@ fun VideoAnalysisScreen(
                                             peakVelocity = trackingPointsResult.maxOfOrNull { it.velocityMps }?.takeIf { it > 0.1 } ?: takeoffV,
                                             meanVelocity = takeoffV * 0.72,
                                             currentVideoPosMs = previewPlaybackPosMs,
-                                            onSeekToTimestamp = { resultSeekPosMs = it },
+                                            onSeekToTimestamp = { relativeOrAbsMs ->
+                                                val absMs = if (relativeOrAbsMs < trimStartMs) trimStartMs + relativeOrAbsMs else relativeOrAbsMs
+                                                resultSeekPosMs = absMs
+                                            },
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }
@@ -3887,7 +3890,10 @@ fun VideoAnalysisScreen(
                                         meanVelocity = meanVelocity,
                                         vmpVelocity = vmpVelocity,
                                         currentVideoPosMs = previewPlaybackPosMs,
-                                        onSeekToTimestamp = { resultSeekPosMs = it },
+                                        onSeekToTimestamp = { relativeOrAbsMs ->
+                                            val absMs = if (relativeOrAbsMs < trimStartMs) trimStartMs + relativeOrAbsMs else relativeOrAbsMs
+                                            resultSeekPosMs = absMs
+                                        },
                                         modifier = Modifier.fillMaxWidth()
                                     )
 
@@ -5352,6 +5358,7 @@ fun RealtimeTelemetryOverlayChart(
     currentVideoPosMs: Long,
     trimStartMs: Long,
     effectiveEndMs: Long,
+    onSeekPositionMs: ((Long) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (trackingPoints.size < 2) return
@@ -5520,11 +5527,39 @@ fun RealtimeTelemetryOverlayChart(
             }
         }
 
-        // 2. Gráfico Limpio con Curva de Velocidad, Gradiente, VM, VP y Cursor
+        // 2. Gráfico Limpio con Curva de Velocidad, Gradiente, VM, VP y Cursor (Interactuable con Touch & Drag para Scrubbing Cuadro a Cuadro)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .pointerInput(totalDurationMs, minTimeMs, trimStartMs, effectiveEndMs) {
+                    val pad = 6.dp.toPx()
+                    fun updateSeek(x: Float) {
+                        val plotW = (size.width - pad * 2f).coerceAtLeast(10f)
+                        val frac = ((x - pad) / plotW).coerceIn(0f, 1f)
+                        val targetMs = trimStartMs + (frac * totalDurationMs).toLong()
+                        onSeekPositionMs?.invoke(targetMs.coerceIn(trimStartMs, effectiveEndMs))
+                    }
+                    detectTapGestures { offset ->
+                        updateSeek(offset.x)
+                    }
+                }
+                .pointerInput(totalDurationMs, minTimeMs, trimStartMs, effectiveEndMs) {
+                    val pad = 6.dp.toPx()
+                    fun updateSeek(x: Float) {
+                        val plotW = (size.width - pad * 2f).coerceAtLeast(10f)
+                        val frac = ((x - pad) / plotW).coerceIn(0f, 1f)
+                        val targetMs = trimStartMs + (frac * totalDurationMs).toLong()
+                        onSeekPositionMs?.invoke(targetMs.coerceIn(trimStartMs, effectiveEndMs))
+                    }
+                    detectDragGestures(
+                        onDragStart = { offset -> updateSeek(offset.x) },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            updateSeek(change.position.x)
+                        }
+                    )
+                }
         ) {
             Canvas(
                 modifier = Modifier
@@ -5624,10 +5659,20 @@ fun RealtimeTelemetryOverlayChart(
                 if (peakPoint != null && peakV > 0.2) {
                     val px = ((peakPoint.timestampMs - minTimeMs).toFloat() / totalDurationMs.toFloat()) * w
                     val py = h - ((peakV / maxV).toFloat().coerceIn(0f, 1f) * h)
-                    // Halo exterior
-                    drawCircle(Color(0x6600FFCC), radius = 5.dp.toPx(), center = Offset(px, py))
-                    // Centro brillante
-                    drawCircle(Color(0xFF00FFCC), radius = 2.5.dp.toPx(), center = Offset(px, py))
+                    // Guía vertical discontinua
+                    drawLine(
+                        color = Color(0x5500FFCC),
+                        start = Offset(px, 0f),
+                        end = Offset(px, h),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
+                    )
+                    // Halo exterior cian
+                    drawCircle(Color(0x6600FFCC), radius = 6.dp.toPx(), center = Offset(px, py))
+                    // Anillo cian brillante
+                    drawCircle(Color(0xFF00FFCC), radius = 3.5.dp.toPx(), center = Offset(px, py))
+                    // Núcleo blanco nítido
+                    drawCircle(Color.White, radius = 1.5.dp.toPx(), center = Offset(px, py))
                 }
 
                 // Cursor vertical dinámico sincronizado en tiempo real con el video
@@ -5718,6 +5763,8 @@ fun AnalysisResultVideoPreview(
     }
     var isUserSeeking by remember { mutableStateOf(false) }
     var showTelemetryOverlay by remember { mutableStateOf(false) }
+    var lastSyncWallClockMs by remember { mutableLongStateOf(0L) }
+    var lastSyncPositionMs by remember { mutableLongStateOf(trimStartMs) }
 
     LaunchedEffect(currentPosMs) {
         onCurrentPositionChange(currentPosMs)
@@ -5729,14 +5776,11 @@ fun AnalysisResultVideoPreview(
         externalSeekPosMs?.let { targetMs ->
             val clamped = targetMs.coerceIn(trimStartMs, effectiveEndMs)
             currentPosMs = clamped
-            if (isPlaying) {
-                previewVideoViewRef?.seekTo(clamped.toInt())
-            }
+            lastSyncPositionMs = clamped
+            lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+            seekVideoAccurate(previewPlayerRef, previewVideoViewRef, clamped)
         }
     }
-
-    var lastSyncWallClockMs by remember { mutableLongStateOf(0L) }
-    var lastSyncPositionMs by remember { mutableLongStateOf(trimStartMs) }
 
     val isVertical = if (videoNativeWidth > 0 && videoNativeHeight > 0) videoNativeHeight > videoNativeWidth else true
     val previewHeight = if (isVertical) 480.dp else 280.dp
@@ -6272,6 +6316,13 @@ fun AnalysisResultVideoPreview(
                             currentVideoPosMs = currentPosMs,
                             trimStartMs = trimStartMs,
                             effectiveEndMs = effectiveEndMs,
+                            onSeekPositionMs = { targetMs ->
+                                val clamped = targetMs.coerceIn(trimStartMs, effectiveEndMs)
+                                currentPosMs = clamped
+                                lastSyncPositionMs = clamped
+                                lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+                                seekVideoAccurate(previewPlayerRef, previewVideoViewRef, clamped)
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
