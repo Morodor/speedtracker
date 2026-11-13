@@ -5,6 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.widget.Toast
+import com.speedtracker.core.update.AppReleaseInfo
+import com.speedtracker.core.update.AppUpdateManager
+import com.speedtracker.core.update.UpdateCheckResult
+import com.speedtracker.presentation.components.AppUpdateDialog
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.video.FileOutputOptions
@@ -16,6 +21,7 @@ import androidx.camera.view.video.AudioConfig
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -118,6 +124,18 @@ fun CameraScreen(
     var isCutoffAlarmActive by remember { mutableStateOf(false) }
     var cutoffAlertMessage by remember { mutableStateOf("🚨 ¡ALTO! UMBRAL DE FATIGA ALCANZADO") }
     var showThresholdDialog by remember { mutableStateOf(false) }
+
+    // Sistema de Actualización de la App (In-App OTA via GitHub Releases)
+    var availableAppUpdate by remember { mutableStateOf<AppReleaseInfo?>(null) }
+    var isCheckingUpdates by remember { mutableStateOf(false) }
+    var showRepoEditDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val updateRes = AppUpdateManager.checkForUpdate(context)
+        if (updateRes is UpdateCheckResult.UpdateAvailable) {
+            availableAppUpdate = updateRes.release
+        }
+    }
 
     // Control por % de Pérdida de Velocidad (Fatiga VBT Intraserie)
     var isLossThresholdEnabled by remember { mutableStateOf(true) } // Activo por defecto en 20%
@@ -990,6 +1008,86 @@ fun CameraScreen(
                                 }
                             }
                         }
+
+                        // 3. Sistema de Auto-Actualización (GitHub Releases)
+                        Surface(
+                            color = Color(0xFF1B232D),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFF2A3644))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Actualización de la App",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(
+                                            "Versión actual: v${AppUpdateManager.getAppVersionName(context)}",
+                                            color = Color(0xFF00FFCC),
+                                            fontSize = 11.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.clickable { showRepoEditDialog = true }
+                                        ) {
+                                            Text(
+                                                "GitHub: ${AppUpdateManager.getRepoOwner(context)}/${AppUpdateManager.getRepoName(context)}",
+                                                color = Color(0xFF64748B),
+                                                fontSize = 9.5.sp
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Editar repositorio",
+                                                tint = Color(0xFF64748B),
+                                                modifier = Modifier.size(11.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                isCheckingUpdates = true
+                                                val res = AppUpdateManager.checkForUpdate(context)
+                                                isCheckingUpdates = false
+                                                when (res) {
+                                                    is UpdateCheckResult.UpdateAvailable -> {
+                                                        availableAppUpdate = res.release
+                                                        showThresholdDialog = false
+                                                    }
+                                                    is UpdateCheckResult.UpToDate -> {
+                                                        Toast.makeText(context, "¡Tienes la última versión instalada (v${AppUpdateManager.getAppVersionName(context)})!", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    is UpdateCheckResult.Error -> {
+                                                        Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        enabled = !isCheckingUpdates
+                                    ) {
+                                        if (isCheckingUpdates) {
+                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                                        } else {
+                                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Buscar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 confirmButton = {
@@ -1012,6 +1110,75 @@ fun CameraScreen(
                 onApplyLoad = { newLoad ->
                     currentSetLoadKg = newLoad.toInt().toString()
                     showOneRMDialog = false
+                }
+            )
+        }
+
+        // Diálogo de Auto-Actualización de la App
+        if (availableAppUpdate != null) {
+            AppUpdateDialog(
+                release = availableAppUpdate!!,
+                onDismiss = { availableAppUpdate = null }
+            )
+        }
+
+        // Diálogo para Configurar Repositorio de GitHub
+        if (showRepoEditDialog) {
+            var ownerInput by remember { mutableStateOf(AppUpdateManager.getRepoOwner(context)) }
+            var repoInput by remember { mutableStateOf(AppUpdateManager.getRepoName(context)) }
+
+            AlertDialog(
+                onDismissRequest = { showRepoEditDialog = false },
+                title = { Text("Configurar Repositorio de GitHub", color = Color(0xFF00FFCC), fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "Indica el usuario/organización y el nombre del repositorio donde subes los releases de la app:",
+                            color = Color.White,
+                            fontSize = 12.sp
+                        )
+                        OutlinedTextField(
+                            value = ownerInput,
+                            onValueChange = { ownerInput = it },
+                            label = { Text("Usuario / Organización (ej: bayron)") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF00FFCC),
+                                focusedLabelColor = Color(0xFF00FFCC),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                        OutlinedTextField(
+                            value = repoInput,
+                            onValueChange = { repoInput = it },
+                            label = { Text("Nombre del Repositorio (ej: SpeedTracker)") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF00FFCC),
+                                focusedLabelColor = Color(0xFF00FFCC),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            AppUpdateManager.setRepoInfo(context, ownerInput, repoInput)
+                            showRepoEditDialog = false
+                            Toast.makeText(context, "Repositorio guardado: $ownerInput/$repoInput", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black)
+                    ) {
+                        Text("Guardar", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRepoEditDialog = false }) {
+                        Text("Cancelar", color = Color.Gray)
+                    }
                 }
             )
         }
