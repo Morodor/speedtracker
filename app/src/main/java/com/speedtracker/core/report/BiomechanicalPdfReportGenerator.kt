@@ -156,25 +156,155 @@ object BiomechanicalPdfReportGenerator {
         }
         canvas.drawText(loadSub, 415f, 127f, textPaint)
 
-        // 4. Extracción y Dibujo de Fotogramas Clave del Levantamiento (Keyframes)
+        // 4. Extracción de Precisión (OPTION_CLOSEST) y Dibujo de 4 Fotogramas Biomecánicos Clave con HUD y Trayectoria
+        val frameCount = 4
+        val frameGap = 6f
+        val frameWidth = (555f - (frameCount - 1) * frameGap) / frameCount // 134.25f
+        val frameHeight = 100f
+        val frameY = 155f
+        val targetAspect = frameWidth / frameHeight
+
+        data class KeyframeSpec(
+            val title: String,
+            val timeUs: Long,
+            val relTimeSec: Double,
+            val metricBadge: String,
+            val accentColor: Int,
+            val pointIndex: Int
+        )
+
+        val keyframeSpecs = mutableListOf<KeyframeSpec>()
+        val accelerations = DoubleArray(trackingPoints.size)
+        if (trackingPoints.isNotEmpty()) {
+            for (idx in trackingPoints.indices) {
+                if (idx > 0) {
+                    val dt = (trackingPoints[idx].timestampMs - trackingPoints[idx - 1].timestampMs) / 1000.0
+                    val dv = trackingPoints[idx].velocityMps - trackingPoints[idx - 1].velocityMps
+                    accelerations[idx] = if (dt > 0.005) (dv / dt).coerceIn(-25.0, 35.0) else 0.0
+                }
+            }
+
+            val firstTs = trackingPoints.first().timestampMs
+            val isRelativeTs = firstTs < trimStartMs || trimStartMs == 0L
+            fun toAbsMs(ptTs: Long): Long = if (isRelativeTs) (trimStartMs + ptTs) else ptTs
+
+            // 3. Índice de Velocidad Pico (VP)
+            val idxPeak = trackingPoints.indices.maxByOrNull { trackingPoints[it].velocityMps }
+                ?: (trackingPoints.size / 2)
+
+            // 1. Índice de Despegue / Punto de Inflexión (inicio real del tirón antes del pico)
+            val searchEndStart = (idxPeak - 1).coerceAtLeast(0)
+            val idxFirstConc = (0..searchEndStart).firstOrNull {
+                trackingPoints[it].isConcentric && trackingPoints[it].velocityMps >= 0.14
+            }
+            val idxLowestBeforePeak = (0..searchEndStart).maxByOrNull { trackingPoints[it].y } ?: 0
+            val idxStart = (idxFirstConc ?: idxLowestBeforePeak).coerceIn(0, searchEndStart)
+
+            // 2. Índice de Máxima Aceleración / RFD (entre el despegue y la velocidad pico)
+            val idxMaxAcc = if (idxPeak - idxStart >= 2) {
+                ((idxStart + 1) until idxPeak).maxByOrNull { accelerations[it] }
+                    ?: ((idxStart + idxPeak) / 2)
+            } else {
+                ((idxStart + idxPeak) / 2).coerceIn(0, trackingPoints.lastIndex)
+            }
+
+            // 4. Índice de Ápice / Recepción (altura máxima de la barra tras la velocidad pico)
+            val idxCatch = if (idxPeak < trackingPoints.lastIndex) {
+                (idxPeak..trackingPoints.lastIndex).minByOrNull { trackingPoints[it].y }
+                    ?.takeIf { it > idxPeak }
+                    ?: minOf(trackingPoints.lastIndex, idxPeak + maxOf(1, (trackingPoints.lastIndex - idxPeak) / 2))
+            } else {
+                trackingPoints.lastIndex
+            }
+
+            val chosenIndices = listOf(idxStart, idxMaxAcc, idxPeak, idxCatch)
+            val startAbsMs = toAbsMs(trackingPoints[idxStart].timestampMs)
+
+            val titles = listOf(
+                "1. Despegue / Inicio",
+                "2. Máx. Aceleración",
+                "3. Velocidad Pico (VP)",
+                "4. Ápice / Recepción"
+            )
+            val colors = listOf(
+                Color.parseColor("#38BDF8"),
+                Color.parseColor("#FF9100"),
+                Color.parseColor("#00FFCC"),
+                Color.parseColor("#FFD600")
+            )
+
+            for (k in 0 until 4) {
+                val pIdx = chosenIndices[k]
+                val pt = trackingPoints[pIdx]
+                val absMs = toAbsMs(pt.timestampMs)
+                val relSec = ((absMs - startAbsMs).coerceAtLeast(0L)) / 1000.0
+                val badge = when (k) {
+                    0 -> String.format(Locale.US, "V: %.2f m/s", pt.velocityMps)
+                    1 -> String.format(Locale.US, "A: +%.1f m/s²", accelerations[pIdx].coerceAtLeast(0.5))
+                    2 -> String.format(Locale.US, "★ %.2f m/s", maxOf(pt.velocityMps, peakVelocity))
+                    else -> {
+                        val startY = trackingPoints[idxStart].y
+                        val liftedPx = (startY - pt.y).coerceAtLeast(0f)
+                        if (liftedPx > 5f) "Ápice / Catch" else String.format(Locale.US, "V: %.2f m/s", pt.velocityMps)
+                    }
+                }
+                keyframeSpecs.add(
+                    KeyframeSpec(
+                        title = titles[k],
+                        timeUs = absMs * 1000L,
+                        relTimeSec = relSec,
+                        metricBadge = badge,
+                        accentColor = colors[k],
+                        pointIndex = pIdx
+                    )
+                )
+            }
+        } else {
+            val durMs = (trimEndMs - trimStartMs).coerceAtLeast(400L)
+            val titles = listOf("1. Despegue / Inicio", "2. Máx. Aceleración", "3. Velocidad Pico (VP)", "4. Ápice / Recepción")
+            val colors = listOf(
+                Color.parseColor("#38BDF8"),
+                Color.parseColor("#FF9100"),
+                Color.parseColor("#00FFCC"),
+                Color.parseColor("#FFD600")
+            )
+            for (k in 0 until 4) {
+                val frac = k / 3.0
+                val tMs = trimStartMs + (durMs * frac).toLong()
+                keyframeSpecs.add(
+                    KeyframeSpec(
+                        title = titles[k],
+                        timeUs = tMs * 1000L,
+                        relTimeSec = (tMs - trimStartMs) / 1000.0,
+                        metricBadge = if (k == 2) String.format(Locale.US, "★ %.2f m/s", peakVelocity) else "--",
+                        accentColor = colors[k],
+                        pointIndex = -1
+                    )
+                )
+            }
+        }
+
         var retriever: MediaMetadataRetriever? = null
         val frameBitmaps = mutableListOf<Bitmap>()
         try {
             retriever = MediaMetadataRetriever().apply { setDataSource(context, videoUri) }
 
-            val t1 = trimStartMs * 1000L
-            val peakPt = trackingPoints.maxByOrNull { it.velocityMps }
-            val t2 = if (peakPt != null && peakPt.timestampMs > 0) {
-                (trimStartMs + peakPt.timestampMs) * 1000L
-            } else {
-                ((trimStartMs + trimEndMs) / 2L) * 1000L
-            }
-            val t3 = trimEndMs * 1000L
-
-            listOf(t1, t2, t3).forEach { timeUs ->
-                val rawBmp = retriever?.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            for (spec in keyframeSpecs) {
+                // OPTION_CLOSEST garantiza extraer el fotograma exacto del milisegundo biomecánico
+                val rawBmp = retriever.getFrameAtTime(spec.timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                    ?: retriever.getFrameAtTime(spec.timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 if (rawBmp != null) {
-                    frameBitmaps.add(preparePdfSafeBitmap(rawBmp, maxDimPx = 480))
+                    frameBitmaps.add(
+                        prepareSmartCroppedKeyframeBitmap(
+                            src = rawBmp,
+                            trackingPoints = trackingPoints,
+                            upToIndex = spec.pointIndex,
+                            startIndex = keyframeSpecs.firstOrNull()?.pointIndex ?: 0,
+                            accentColor = spec.accentColor,
+                            targetAspect = targetAspect,
+                            maxDimPx = 560
+                        )
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -187,15 +317,11 @@ object BiomechanicalPdfReportGenerator {
         textPaint.color = Color.parseColor("#1E293B")
         textPaint.textSize = 9.5f
         textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText("SECUENCIA CINEMÁTICA DEL LEVANTAMIENTO", 24f, 150f, textPaint)
+        canvas.drawText("SECUENCIA CINEMÁTICA DE PRECISIÓN (FOTOGRAMAS EXACTOS & TRAYECTORIA)", 24f, 149f, textPaint)
 
-        val frameWidth = 180f
-        val frameHeight = 98f
-        val frameY = 156f
-        val frameLabels = listOf("1. Despegue / Inicio", "2. Máxima Aceleración (PV)", "3. Bloqueo / Recepción")
-
-        for (i in 0 until 3) {
-            val fx = 20f + i * (frameWidth + 7.5f)
+        for (i in 0 until frameCount) {
+            val spec = keyframeSpecs[i]
+            val fx = 20f + i * (frameWidth + frameGap)
             val frameRect = RectF(fx, frameY, fx + frameWidth, frameY + frameHeight)
 
             paint.color = Color.parseColor("#0F172A")
@@ -203,37 +329,48 @@ object BiomechanicalPdfReportGenerator {
 
             if (i < frameBitmaps.size) {
                 val bmp = frameBitmaps[i]
-                val bmpRatio = bmp.width.toFloat() / bmp.height.toFloat()
-                val targetRatio = frameWidth / frameHeight
-
-                val drawRect: RectF = if (bmpRatio > targetRatio) {
-                    val fittedH = frameWidth / bmpRatio
-                    val yOff = (frameHeight - fittedH) / 2f
-                    RectF(fx + 1f, frameY + yOff + 1f, fx + frameWidth - 1f, frameY + yOff + fittedH - 1f)
-                } else {
-                    val fittedW = frameHeight * bmpRatio
-                    val xOff = (frameWidth - fittedW) / 2f
-                    RectF(fx + xOff, frameY + 1f, fx + xOff + fittedW, frameY + frameHeight - 1f)
-                }
-
                 val srcRect = Rect(0, 0, bmp.width, bmp.height)
+                val dstRect = RectF(fx + 1f, frameY + 1f, fx + frameWidth - 1f, frameY + frameHeight - 1f)
                 paint.isFilterBitmap = true
-                canvas.drawBitmap(bmp, srcRect, drawRect, paint)
+                canvas.drawBitmap(bmp, srcRect, dstRect, paint)
             }
 
-            paint.color = Color.parseColor("#00FFCC")
+            // Cintillo superior translúcido con tiempo relativo (+0.XXs) y métrica instantánea
+            paint.color = Color.parseColor("#BF0F172A")
+            val topBarRect = RectF(fx + 1f, frameY + 1f, fx + frameWidth - 1f, frameY + 15f)
+            canvas.drawRect(topBarRect, paint)
+
+            textPaint.color = Color.parseColor("#E2E8F0")
+            textPaint.textSize = 7f
+            textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            val timeStr = String.format(Locale.US, "+%.2fs", spec.relTimeSec)
+            canvas.drawText(timeStr, fx + 4f, frameY + 10.5f, textPaint)
+
+            textPaint.color = spec.accentColor
+            textPaint.textSize = 7.2f
+            val mW = textPaint.measureText(spec.metricBadge)
+            canvas.drawText(spec.metricBadge, fx + frameWidth - mW - 4f, frameY + 10.5f, textPaint)
+
+            // Cintillo inferior con el nombre de la fase biomecánica
+            paint.color = Color.parseColor("#D90F172A")
+            val labelRect = RectF(fx + 1f, frameY + frameHeight - 15f, fx + frameWidth - 1f, frameY + frameHeight - 1f)
+            canvas.drawRect(labelRect, paint)
+
+            // Indicador lateral de color de fase
+            paint.color = spec.accentColor
+            canvas.drawRect(RectF(fx + 1f, frameY + frameHeight - 15f, fx + 4f, frameY + frameHeight - 1f), paint)
+
+            textPaint.color = Color.WHITE
+            textPaint.textSize = 7.3f
+            textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            canvas.drawText(spec.title, fx + 7f, frameY + frameHeight - 4.5f, textPaint)
+
+            // Borde exterior con acento de fase
+            paint.color = spec.accentColor
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 1f
+            paint.strokeWidth = if (i == 2) 1.3f else 0.9f
             canvas.drawRoundRect(frameRect, 4f, 4f, paint)
             paint.style = Paint.Style.FILL
-
-            paint.color = Color.parseColor("#CC000000")
-            val labelRect = RectF(fx, frameY + frameHeight - 16f, fx + frameWidth, frameY + frameHeight)
-            canvas.drawRect(labelRect, paint)
-            textPaint.color = Color.WHITE
-            textPaint.textSize = 8f
-            textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            canvas.drawText(frameLabels[i], fx + 5f, frameY + frameHeight - 5f, textPaint)
         }
 
         // 5. Tabla de Métricas Biomecánicas (2 Columnas x 5 Filas)
@@ -641,6 +778,143 @@ object BiomechanicalPdfReportGenerator {
             }
         }
         return lines
+    }
+
+    /**
+     * Recorta inteligentemente el fotograma centrándose en la zona de acción del levantamiento (Smart Crop)
+     * para eliminar bandas negras en videos verticales (9:16), y dibuja sobre el fotograma la línea base de
+     * despegue, la estela de trayectoria (Bar Path) hasta ese milisegundo y la mira sobre el disco.
+     */
+    private fun prepareSmartCroppedKeyframeBitmap(
+        src: Bitmap,
+        trackingPoints: List<VideoFrameTrackingPoint>,
+        upToIndex: Int,
+        startIndex: Int,
+        accentColor: Int,
+        targetAspect: Float,
+        maxDimPx: Int = 560
+    ): Bitmap {
+        val baseBmp = src.copy(Bitmap.Config.ARGB_8888, true)
+        val w = baseBmp.width.coerceAtLeast(1)
+        val h = baseBmp.height.coerceAtLeast(1)
+
+        val hasValidCoords = trackingPoints.isNotEmpty() &&
+            upToIndex in trackingPoints.indices &&
+            trackingPoints.maxOf { it.x } <= w * 1.1f &&
+            trackingPoints.maxOf { it.y } <= h * 1.1f
+
+        var cropLeft = 0
+        var cropTop = 0
+        var cropW = w
+        var cropH = h
+
+        if (hasValidCoords) {
+            val minX = trackingPoints.minOf { it.x }
+            val maxX = trackingPoints.maxOf { it.x }
+            val minY = trackingPoints.minOf { it.y }
+            val maxY = trackingPoints.maxOf { it.y }
+
+            val cx = ((minX + maxX) / 2f).coerceIn(0f, w.toFloat())
+            val cy = ((minY + maxY) / 2f).coerceIn(0f, h.toFloat())
+
+            val spanY = (maxY - minY).coerceAtLeast(h * 0.28f)
+            var desiredH = (spanY * 2.15f).coerceIn(h * 0.50f, h.toFloat())
+            var desiredW = desiredH * targetAspect
+
+            if (desiredW > w) {
+                desiredW = w.toFloat()
+                desiredH = (desiredW / targetAspect).coerceAtMost(h.toFloat())
+            }
+            if (desiredH > h) {
+                desiredH = h.toFloat()
+                desiredW = (desiredH * targetAspect).coerceAtMost(w.toFloat())
+            }
+
+            cropW = desiredW.toInt().coerceIn(1, w)
+            cropH = desiredH.toInt().coerceIn(1, h)
+            cropLeft = (cx - cropW / 2f).toInt().coerceIn(0, (w - cropW).coerceAtLeast(0))
+            cropTop = (cy - cropH / 2f).toInt().coerceIn(0, (h - cropH).coerceAtLeast(0))
+
+            // Dibujar detalles biomecánicos directamente sobre el fotograma antes del escalado
+            val bmpCanvas = Canvas(baseBmp)
+            val strokeScale = (maxOf(cropW, cropH) / 360f).coerceAtLeast(1f)
+
+            // 1. Línea horizontal punteada de referencia de despegue
+            val sIdx = startIndex.coerceIn(0, trackingPoints.lastIndex)
+            val startY = trackingPoints[sIdx].y
+            val baseLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(150, 56, 189, 248)
+                style = Paint.Style.STROKE
+                strokeWidth = 2f * strokeScale
+                pathEffect = DashPathEffect(floatArrayOf(10f * strokeScale, 8f * strokeScale), 0f)
+            }
+            bmpCanvas.drawLine(cropLeft.toFloat(), startY, (cropLeft + cropW).toFloat(), startY, baseLinePaint)
+
+            // 2. Estela de la trayectoria (Bar Path) acumulada hasta este instante
+            val fromIdx = minOf(sIdx, upToIndex)
+            if (upToIndex > fromIdx) {
+                val path = Path()
+                for (k in fromIdx..upToIndex) {
+                    val pt = trackingPoints[k]
+                    if (k == fromIdx) path.moveTo(pt.x, pt.y) else path.lineTo(pt.x, pt.y)
+                }
+                val glowPathPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(95, 0, 255, 204)
+                    style = Paint.Style.STROKE
+                    strokeWidth = 8.5f * strokeScale
+                    strokeCap = Paint.Cap.ROUND
+                    strokeJoin = Paint.Join.ROUND
+                }
+                val corePathPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#00FFCC")
+                    style = Paint.Style.STROKE
+                    strokeWidth = 3.8f * strokeScale
+                    strokeCap = Paint.Cap.ROUND
+                    strokeJoin = Paint.Join.ROUND
+                }
+                bmpCanvas.drawPath(path, glowPathPaint)
+                bmpCanvas.drawPath(path, corePathPaint)
+            }
+
+            // 3. Mira telescópica sobre la posición exacta del disco en este fotograma
+            val curPt = trackingPoints[upToIndex]
+            val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(85, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
+                style = Paint.Style.FILL
+            }
+            val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = accentColor
+                style = Paint.Style.STROKE
+                strokeWidth = 3.2f * strokeScale
+            }
+            val centerDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                style = Paint.Style.FILL
+            }
+            bmpCanvas.drawCircle(curPt.x, curPt.y, 14f * strokeScale, haloPaint)
+            bmpCanvas.drawCircle(curPt.x, curPt.y, 9f * strokeScale, ringPaint)
+            bmpCanvas.drawCircle(curPt.x, curPt.y, 3.5f * strokeScale, centerDotPaint)
+        } else {
+            // Si no hay coordenadas, aplicar Center-Crop suave a la proporción de la tarjeta
+            val srcAspect = w.toFloat() / h.toFloat()
+            if (srcAspect < targetAspect) {
+                cropW = w
+                cropH = (w / targetAspect).toInt().coerceIn(1, h)
+                cropTop = ((h - cropH) / 2).coerceAtLeast(0)
+            } else {
+                cropH = h
+                cropW = (h * targetAspect).toInt().coerceIn(1, w)
+                cropLeft = ((w - cropW) / 2).coerceAtLeast(0)
+            }
+        }
+
+        val croppedBmp = try {
+            Bitmap.createBitmap(baseBmp, cropLeft, cropTop, cropW, cropH)
+        } catch (e: Exception) {
+            baseBmp
+        }
+
+        return preparePdfSafeBitmap(croppedBmp, maxDimPx = maxDimPx)
     }
 
     private fun preparePdfSafeBitmap(src: Bitmap, maxDimPx: Int = 480): Bitmap {
