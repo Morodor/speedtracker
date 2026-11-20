@@ -4,8 +4,18 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import com.google.mlkit.vision.pose.Pose
+import com.speedtracker.core.ml.KinoveaBarbellTracker
+import com.speedtracker.core.ml.OlympicPlateAutoDetector
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.speedtracker.core.update.AppReleaseInfo
 import com.speedtracker.core.update.AppUpdateManager
 import com.speedtracker.core.update.UpdateCheckResult
@@ -211,6 +221,24 @@ fun CameraScreen(
         }
     }
 
+    // ── MOTOR UNIFICADO DE TRACKING ÓPTICO EN VIVO (Kinovea ZNCC + Pose Fallback) & SIMULADOR CON VIDEO DE GALERÍA ──
+    val liveBarbellTracker = remember { KinoveaBarbellTracker() }
+    var needsTrackerReinit by remember { mutableStateOf(true) }
+
+    // Estados de diagnóstico en tiempo real para observar qué ocurre al instante
+    var liveTrackerConfidence by remember { mutableFloatStateOf(1.0f) }
+    var liveProcessingMs by remember { mutableDoubleStateOf(0.0) }
+    var livePhaseLabel by remember { mutableStateOf("EN REPOSO") }
+    var liveInstantRomCm by remember { mutableDoubleStateOf(0.0) }
+
+    // Estados del Simulador en Vivo con Video de Galería
+    var simulatedVideoUri by remember { mutableStateOf<Uri?>(null) }
+    var simulatedFrameBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var isSimulationPlaying by remember { mutableStateOf(false) }
+    var simulationCurrentTimeMs by remember { mutableLongStateOf(0L) }
+    var simulationDurationMs by remember { mutableLongStateOf(0L) }
+    var simulationSpeedFactor by remember { mutableFloatStateOf(1.0f) } // 1.0x tiempo real o 0.5x cámara lenta
+
     // Función auxiliar para calibrar disco de 45 cm
     fun applyPlateCalibration(boxW: Float, boxH: Float) {
         val center = circleCenterScreen ?: Offset(boxW / 2f, boxH * 0.62f)
@@ -226,6 +254,101 @@ fun CameraScreen(
             VBTAnalyzer.setCalibratedPlate(center, circleRadiusPx)
         }
         isPlateCalibrated = true
+        needsTrackerReinit = true
+    }
+
+    // Procesador unificado de cada fotograma en tiempo real (usado tanto por la Cámara Real como por el Simulador de Galería)
+    fun processLiveFrame(
+        pose: Pose?,
+        frameBitmap: Bitmap?,
+        frameWidth: Int,
+        frameHeight: Int,
+        timestampMs: Long
+    ) {
+        cameraFrameWidth = frameWidth
+        cameraFrameHeight = frameHeight
+
+        val tStartNs = System.nanoTime()
+        var velocity: Double? = null
+
+        val calCenter = VBTAnalyzer.calibratedPlateCenter
+        val calRadius = VBTAnalyzer.calibratedPlateRadius ?: 0f
+
+        if (frameBitmap != null && calCenter != null && calRadius > 8f) {
+            isAthleteInFrame = true
+            if (isCalibratingPlate && !isRecording && !isSimulationPlaying) {
+                // Mientras el usuario ajusta el círculo sobre el disco, mantener listo para inicializar
+                needsTrackerReinit = true
+                velocity = 0.0
+            } else {
+                if (!liveBarbellTracker.isInitialized || needsTrackerReinit) {
+                    liveBarbellTracker.initialize(frameBitmap, calCenter, calRadius)
+                    needsTrackerReinit = false
+                }
+                val barPos = liveBarbellTracker.trackFrame(frameBitmap)
+                liveTrackerConfidence = liveBarbellTracker.lastConfidence
+                velocity = VBTAnalyzer.processBarPosition(barPos.x, barPos.y, timestampMs)
+            }
+        } else if (pose != null) {
+            val keyLandmark = pose.getPoseLandmark(PoseLandmark.LEFT_WRIST)
+                ?: pose.getPoseLandmark(PoseLandmark.RIGHT_WRIST)
+            isAthleteInFrame = keyLandmark != null && keyLandmark.inFrameLikelihood > 0.30f
+            velocity = VBTAnalyzer.processPose(pose, timestampMs)
+        }
+
+        liveProcessingMs = (System.nanoTime() - tStartNs) / 1_000_000.0
+        vbtVelocityResult = velocity ?: 0.0
+
+        livePhaseLabel = when {
+            VBTAnalyzer.isConcentricActive -> "🟢 CONCÉNTRICA (↑ Tirón)"
+            VBTAnalyzer.isEccentricActive -> "🟡 EXCÉNTRICA (↓ Bajada)"
+            else -> "⚪ REPOSO / BLOQUEO"
+        }
+
+        val curY = VBTAnalyzer.currentBarY
+        val baseY = VBTAnalyzer.lowestInflectionY ?: VBTAnalyzer.originBaselineY
+        liveInstantRomCm = if (curY != null && baseY != null) {
+            ((baseY - curY).coerceAtLeast(0f) * VBTAnalyzer.pxToMetersRatio * 100.0)
+        } else 0.0
+
+        livePathPoints = if (VBTAnalyzer.isConcentricActive || VBTAnalyzer.isEccentricActive || VBTAnalyzer.currentRepPath.isNotEmpty()) {
+            VBTAnalyzer.currentRepPath.toList()
+        } else {
+            VBTAnalyzer.lastCompletedRepPath.toList()
+        }
+
+        if (isRecording && VBTAnalyzer.currentBarX != null && VBTAnalyzer.currentBarY != null) {
+            val relTimeMs = System.currentTimeMillis() - recordingStartTimestampMs
+            liveRecordedTrackingPoints.add(
+                VideoFrameTrackingPoint(
+                    timestampMs = relTimeMs,
+                    x = VBTAnalyzer.currentBarX!!,
+                    y = VBTAnalyzer.currentBarY!!,
+                    velocityMps = velocity ?: 0.0,
+                    isConcentric = VBTAnalyzer.isConcentricActive,
+                    isEccentric = VBTAnalyzer.isEccentricActive,
+                    currentMeanVelocity = VBTAnalyzer.currentMeanVelocity,
+                    currentPeakVelocity = VBTAnalyzer.currentPeakVelocity
+                )
+            )
+        }
+    }
+
+    val simulationVideoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            simulatedVideoUri = uri
+            isSimulationPlaying = false
+            simulationCurrentTimeMs = 0L
+            vbtVelocityResult = null
+            isCutoffAlarmActive = false
+            VBTAnalyzer.reset()
+            repsList = emptyList()
+            livePathPoints = emptyList()
+            needsTrackerReinit = true
+            isCalibratingPlate = true
+        }
     }
 
     val cameraController = remember {
@@ -237,35 +360,14 @@ fun CameraScreen(
             )
             setImageAnalysisAnalyzer(
                 ContextCompat.getMainExecutor(context),
-                PoseAnalyzer { pose, frameWidth, frameHeight ->
-                    cameraFrameWidth = frameWidth
-                    cameraFrameHeight = frameHeight
-
-                    val keyLandmark = pose.getPoseLandmark(PoseLandmark.LEFT_WRIST)
-                        ?: pose.getPoseLandmark(PoseLandmark.RIGHT_WRIST)
-                    isAthleteInFrame = keyLandmark != null && keyLandmark.inFrameLikelihood > 0.30f
-
-                    val velocity = VBTAnalyzer.processPose(pose, System.currentTimeMillis())
-                    vbtVelocityResult = velocity ?: 0.0
-                    livePathPoints = if (VBTAnalyzer.isConcentricActive || VBTAnalyzer.isEccentricActive || VBTAnalyzer.currentRepPath.isNotEmpty()) {
-                        VBTAnalyzer.currentRepPath.toList()
-                    } else {
-                        VBTAnalyzer.lastCompletedRepPath.toList()
-                    }
-
-                    if (isRecording && VBTAnalyzer.currentBarX != null && VBTAnalyzer.currentBarY != null) {
-                        val relTimeMs = System.currentTimeMillis() - recordingStartTimestampMs
-                        liveRecordedTrackingPoints.add(
-                            VideoFrameTrackingPoint(
-                                timestampMs = relTimeMs,
-                                x = VBTAnalyzer.currentBarX!!,
-                                y = VBTAnalyzer.currentBarY!!,
-                                velocityMps = velocity ?: 0.0,
-                                isConcentric = VBTAnalyzer.isConcentricActive,
-                                isEccentric = VBTAnalyzer.isEccentricActive,
-                                currentMeanVelocity = VBTAnalyzer.currentMeanVelocity,
-                                currentPeakVelocity = VBTAnalyzer.currentPeakVelocity
-                            )
+                PoseAnalyzer { pose, frameBitmap, frameWidth, frameHeight ->
+                    if (simulatedVideoUri == null) {
+                        processLiveFrame(
+                            pose = pose,
+                            frameBitmap = frameBitmap,
+                            frameWidth = frameWidth,
+                            frameHeight = frameHeight,
+                            timestampMs = System.currentTimeMillis()
                         )
                     }
                 }
@@ -330,7 +432,174 @@ fun CameraScreen(
         val screenBoxW = constraints.maxWidth.toFloat()
         val screenBoxH = constraints.maxHeight.toFloat()
 
-        if (hasPermission) {
+        // 1. Al cargar un video de galería para el Simulador en Vivo, extraer el primer frame y auto-detectar el disco de 45 cm
+        LaunchedEffect(simulatedVideoUri, screenBoxW, screenBoxH) {
+            val uri = simulatedVideoUri ?: return@LaunchedEffect
+            if (screenBoxW <= 0f || screenBoxH <= 0f) return@LaunchedEffect
+            withContext(Dispatchers.IO) {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, uri)
+                    val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    val durMs = durStr?.toLongOrNull() ?: 5000L
+                    val firstBmp = retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST)
+                        ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+
+                    if (firstBmp != null) {
+                        val softFirst = firstBmp.copy(Bitmap.Config.ARGB_8888, false)
+                        val detected = OlympicPlateAutoDetector.detect(softFirst, null)
+                        withContext(Dispatchers.Main) {
+                            simulationDurationMs = durMs
+                            simulatedFrameBitmap = softFirst
+                            cameraFrameWidth = softFirst.width
+                            cameraFrameHeight = softFirst.height
+
+                            val scale = maxOf(screenBoxW / softFirst.width.toFloat(), screenBoxH / softFirst.height.toFloat())
+                            val offX = (screenBoxW - softFirst.width * scale) / 2f
+                            val offY = (screenBoxH - softFirst.height * scale) / 2f
+
+                            if (detected.radiusPx > 12f) {
+                                circleCenterScreen = Offset(
+                                    detected.center.x * scale + offX,
+                                    detected.center.y * scale + offY
+                                )
+                                circleRadiusPx = (detected.radiusPx * scale).coerceIn(24f, 220f)
+                            } else {
+                                circleCenterScreen = Offset(screenBoxW / 2f, screenBoxH * 0.62f)
+                            }
+                            applyPlateCalibration(screenBoxW, screenBoxH)
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    try { retriever.release() } catch (e: Exception) {}
+                }
+            }
+        }
+
+        // 2. Bucle de Simulación en Tiempo Real: alimenta cada cuadro del video al motor en vivo
+        LaunchedEffect(simulatedVideoUri, isSimulationPlaying, simulationSpeedFactor) {
+            val uri = simulatedVideoUri ?: return@LaunchedEffect
+            if (!isSimulationPlaying) return@LaunchedEffect
+
+            withContext(Dispatchers.IO) {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, uri)
+                    val totalDur = simulationDurationMs.coerceAtLeast(500L)
+                    if (simulationCurrentTimeMs >= totalDur - 40L) {
+                        simulationCurrentTimeMs = 0L
+                        withContext(Dispatchers.Main) {
+                            VBTAnalyzer.resetSet()
+                            repsList = emptyList()
+                            livePathPoints = emptyList()
+                            needsTrackerReinit = true
+                        }
+                    }
+
+                    val stepMs = 33L
+                    while (isSimulationPlaying && simulatedVideoUri == uri && simulationCurrentTimeMs <= totalDur) {
+                        val tLoopStart = System.currentTimeMillis()
+                        val rawFrame = retriever.getFrameAtTime(
+                            simulationCurrentTimeMs * 1000L,
+                            MediaMetadataRetriever.OPTION_CLOSEST
+                        ) ?: retriever.getFrameAtTime(
+                            simulationCurrentTimeMs * 1000L,
+                            MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                        )
+
+                        if (rawFrame != null) {
+                            val softFrame = rawFrame.copy(Bitmap.Config.ARGB_8888, false)
+                            val curSimTs = simulationCurrentTimeMs
+                            withContext(Dispatchers.Main) {
+                                simulatedFrameBitmap = softFrame
+                                processLiveFrame(
+                                    pose = null,
+                                    frameBitmap = softFrame,
+                                    frameWidth = softFrame.width,
+                                    frameHeight = softFrame.height,
+                                    timestampMs = curSimTs
+                                )
+                            }
+                        }
+
+                        simulationCurrentTimeMs += stepMs
+                        val targetFrameDelay = (stepMs / simulationSpeedFactor).toLong().coerceAtLeast(16L)
+                        val elapsed = System.currentTimeMillis() - tLoopStart
+                        val remainingDelay = (targetFrameDelay - elapsed).coerceAtLeast(4L)
+                        delay(remainingDelay)
+                    }
+
+                    if (simulationCurrentTimeMs > totalDur) {
+                        withContext(Dispatchers.Main) {
+                            isSimulationPlaying = false
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    withContext(Dispatchers.Main) {
+                        isSimulationPlaying = false
+                    }
+                } finally {
+                    try { retriever.release() } catch (e: Exception) {}
+                }
+            }
+        }
+
+        if (simulatedVideoUri != null) {
+            // ── VISTA DEL SIMULADOR EN VIVO CON VIDEO DE GALERÍA (Escala FILL_CENTER idéntica a PreviewView) ──
+            val simBmp = simulatedFrameBitmap
+            if (simBmp != null) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val bW = simBmp.width.toFloat().coerceAtLeast(1f)
+                    val bH = simBmp.height.toFloat().coerceAtLeast(1f)
+                    val scale = maxOf(size.width / bW, size.height / bH)
+                    val drawW = (bW * scale).roundToInt()
+                    val drawH = (bH * scale).roundToInt()
+                    val offX = ((size.width - drawW) / 2f).roundToInt()
+                    val offY = ((size.height - drawH) / 2f).roundToInt()
+
+                    drawImage(
+                        image = simBmp.asImageBitmap(),
+                        srcOffset = IntOffset.Zero,
+                        srcSize = IntSize(simBmp.width, simBmp.height),
+                        dstOffset = IntOffset(offX, offY),
+                        dstSize = IntSize(drawW, drawH)
+                    )
+                }
+            }
+
+            BarPathLiveOverlay(
+                frameWidth = cameraFrameWidth,
+                frameHeight = cameraFrameHeight,
+                barX = VBTAnalyzer.currentBarX,
+                barY = VBTAnalyzer.currentBarY,
+                originBaselineY = VBTAnalyzer.lowestInflectionY ?: VBTAnalyzer.originBaselineY,
+                lowestInflectionY = VBTAnalyzer.lowestInflectionY,
+                exerciseType = VBTExerciseType.FLOOR_PULL,
+                velocity = vbtVelocityResult ?: 0.0,
+                trajectoryPoints = livePathPoints,
+                isConcentric = VBTAnalyzer.isConcentricActive,
+                isEccentric = VBTAnalyzer.isEccentricActive
+            )
+
+            if (isCalibratingPlate && !isSimulationPlaying) {
+                val activeCenter = circleCenterScreen ?: Offset(screenBoxW / 2f, screenBoxH * 0.62f)
+                KinoveaCircleReticleCanvas(
+                    center = activeCenter,
+                    radius = circleRadiusPx,
+                    onCenterChange = {
+                        circleCenterScreen = it
+                        applyPlateCalibration(screenBoxW, screenBoxH)
+                    },
+                    onRadiusChange = {
+                        circleRadiusPx = it
+                        applyPlateCalibration(screenBoxW, screenBoxH)
+                    }
+                )
+            }
+        } else if (hasPermission) {
             AndroidView(
                 factory = { ctx ->
                     PreviewView(ctx).apply {
@@ -442,11 +711,52 @@ fun CameraScreen(
                     }
                 }
 
-                // 3. Acciones Derecha (Umbral y 1RM)
+                // 3. Acciones Derecha (Simular Video, Umbral y 1RM)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
+                    // Botón para Probar Medición en Vivo con Video de Galería
+                    Surface(
+                        onClick = {
+                            if (simulatedVideoUri != null) {
+                                isSimulationPlaying = false
+                                simulatedVideoUri = null
+                                simulatedFrameBitmap = null
+                                VBTAnalyzer.reset()
+                                repsList = emptyList()
+                                livePathPoints = emptyList()
+                            } else {
+                                simulationVideoPicker.launch("video/*")
+                            }
+                        },
+                        color = if (simulatedVideoUri != null) Color(0x3300E5FF) else Color(0xCC0D1219),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (simulatedVideoUri != null) Color(0xFF00E5FF) else Color(0xFF38BDF8).copy(alpha = 0.6f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (simulatedVideoUri != null) Icons.Default.Videocam else Icons.Default.VideoLibrary,
+                                contentDescription = "Simular con video",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (simulatedVideoUri != null) "Cámara" else "Probar Video",
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+                    }
+
                     IconButton(
                         onClick = { showThresholdDialog = true },
                         modifier = Modifier
@@ -482,6 +792,157 @@ fun CameraScreen(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text("1RM", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFFFF4081))
+                        }
+                    }
+                }
+            }
+
+            // ── HUD DE DIAGNÓSTICO EN TIEMPO REAL & CONTROLES DEL SIMULADOR DE GALERÍA ──
+            Spacer(modifier = Modifier.height(5.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xD90D1219),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(0.8.dp, if (simulatedVideoUri != null) Color(0xFF38BDF8) else Color(0xFF263342))
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = livePhaseLabel,
+                            color = when {
+                                VBTAnalyzer.isConcentricActive -> Color(0xFF00FFCC)
+                                VBTAnalyzer.isEccentricActive -> Color(0xFFFFD600)
+                                else -> Color.LightGray
+                            },
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = String.format(
+                                Locale.US,
+                                "Vel. Inst: %.2f m/s • ROM: %.1f cm • Disco: %d%% (%.1f ms)",
+                                vbtVelocityResult ?: 0.0,
+                                liveInstantRomCm,
+                                (liveTrackerConfidence * 100).roundToInt().coerceIn(0, 100),
+                                liveProcessingMs
+                            ),
+                            color = Color(0xFF94A3B8),
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    if (simulatedVideoUri != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = String.format(
+                                    Locale.US,
+                                    "🎬 Simulador: %.1fs / %.1fs",
+                                    simulationCurrentTimeMs / 1000.0,
+                                    simulationDurationMs / 1000.0
+                                ),
+                                color = Color(0xFF38BDF8),
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Play / Pause Simulación
+                                Surface(
+                                    onClick = {
+                                        if (!isPlateCalibrated) {
+                                            applyPlateCalibration(screenBoxW, screenBoxH)
+                                        }
+                                        isCalibratingPlate = false
+                                        isSimulationPlaying = !isSimulationPlaying
+                                    },
+                                    color = if (isSimulationPlaying) Color(0xFFFF9100) else Color(0xFF00FFCC),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = if (isSimulationPlaying) "⏸ Pausar" else "▶ Simular",
+                                        color = Color.Black,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+
+                                // Reiniciar video desde t=0
+                                Surface(
+                                    onClick = {
+                                        isSimulationPlaying = false
+                                        simulationCurrentTimeMs = 0L
+                                        vbtVelocityResult = null
+                                        isCutoffAlarmActive = false
+                                        VBTAnalyzer.resetSet()
+                                        repsList = emptyList()
+                                        livePathPoints = emptyList()
+                                        needsTrackerReinit = true
+                                        isSimulationPlaying = true
+                                    },
+                                    color = Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(0.7.dp, Color(0xFF475569))
+                                ) {
+                                    Text(
+                                        text = "↺ Reiniciar",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                    )
+                                }
+
+                                // Selector de Velocidad 1.0x / 0.5x
+                                Surface(
+                                    onClick = {
+                                        simulationSpeedFactor = if (simulationSpeedFactor == 1.0f) 0.5f else 1.0f
+                                    },
+                                    color = Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(0.7.dp, Color(0xFF38BDF8))
+                                ) {
+                                    Text(
+                                        text = if (simulationSpeedFactor == 1.0f) "⚡ 1.0x" else "🐢 0.5x",
+                                        color = Color(0xFF38BDF8),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                    )
+                                }
+
+                                // Cargar otro video de la galería
+                                Surface(
+                                    onClick = {
+                                        isSimulationPlaying = false
+                                        simulationVideoPicker.launch("video/*")
+                                    },
+                                    color = Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(0.7.dp, Color(0xFF475569))
+                                ) {
+                                    Text(
+                                        text = "📂 Otro",
+                                        color = Color.LightGray,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -624,11 +1085,14 @@ fun CameraScreen(
                         }
                     }
 
-                    // Botón Fijar y pasar a Grabar
+                    // Botón Fijar y pasar a Grabar o Simular en Vivo
                     Button(
                         onClick = {
                             applyPlateCalibration(screenBoxW, screenBoxH)
                             isCalibratingPlate = false
+                            if (simulatedVideoUri != null) {
+                                isSimulationPlaying = true
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFF00FFCC),
@@ -639,7 +1103,11 @@ fun CameraScreen(
                             .fillMaxWidth()
                             .height(36.dp)
                     ) {
-                        Text("Fijar y Grabar ✓", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                        Text(
+                            text = if (simulatedVideoUri != null) "▶ Fijar Disco e Iniciar Prueba en Vivo" else "Fijar y Grabar ✓",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.5.sp
+                        )
                     }
                 }
             } else {
@@ -760,6 +1228,10 @@ fun CameraScreen(
                                 VBTAnalyzer.resetSet()
                                 repsList = emptyList()
                                 livePathPoints = emptyList()
+                                needsTrackerReinit = true
+                                if (simulatedVideoUri != null) {
+                                    simulationCurrentTimeMs = 0L
+                                }
                             },
                             modifier = Modifier.height(36.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -771,31 +1243,59 @@ fun CameraScreen(
                             Text("Nueva", fontSize = 11.5.sp)
                         }
 
-                        // Botón REC Más Pequeño y Estilizado
-                        Button(
-                            onClick = { toggleRecording(screenBoxW, screenBoxH) },
-                            modifier = Modifier.height(38.dp),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isRecording) Color(0xFFFF1744) else Color(0xFFD32F2F),
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(19.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .background(if (isRecording) Color.White else Color.Red, if (isRecording) RoundedCornerShape(2.dp) else CircleShape)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isRecording)
-                                    String.format(Locale.US, "%02d:%02d", recordingDurationSeconds / 60, recordingDurationSeconds % 60)
-                                else
-                                    "REC",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
-                            )
+                        // Botón REC (Cámara Real) o SIMULAR/PAUSAR (Simulador con Video de Galería)
+                        if (simulatedVideoUri != null) {
+                            Button(
+                                onClick = {
+                                    if (!isPlateCalibrated) {
+                                        applyPlateCalibration(screenBoxW, screenBoxH)
+                                    }
+                                    isCalibratingPlate = false
+                                    isSimulationPlaying = !isSimulationPlaying
+                                },
+                                modifier = Modifier.height(38.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSimulationPlaying) Color(0xFFFF9100) else Color(0xFF00E5FF),
+                                    contentColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(19.dp)
+                            ) {
+                                Text(
+                                    text = if (isSimulationPlaying)
+                                        String.format(Locale.US, "⏸ %.1fs", simulationCurrentTimeMs / 1000.0)
+                                    else
+                                        "▶ SIMULAR EN VIVO",
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 11.5.sp
+                                )
+                            }
+                        } else {
+                            Button(
+                                onClick = { toggleRecording(screenBoxW, screenBoxH) },
+                                modifier = Modifier.height(38.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isRecording) Color(0xFFFF1744) else Color(0xFFD32F2F),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(19.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .background(if (isRecording) Color.White else Color.Red, if (isRecording) RoundedCornerShape(2.dp) else CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isRecording)
+                                        String.format(Locale.US, "%02d:%02d", recordingDurationSeconds / 60, recordingDurationSeconds % 60)
+                                    else
+                                        "REC",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
 
                         // Botón Guardar Serie

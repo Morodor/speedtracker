@@ -456,6 +456,71 @@ object VBTAnalyzer {
     }
 
     /**
+     * Finaliza y registra la repetición concéntrica activa si cumple los umbrales biomecánicos mínimos
+     * (ROM >= 12 cm, Velocidad Pico >= 0.25 m/s, Duración >= 180 ms).
+     */
+    private fun finalizeActiveConcentricRep(timestampMs: Long) {
+        if (!isConcentricActive) return
+        val activeDuration = maxOf(lastUpwardTimeMs - concentricStartTimeMs, timestampMs - concentricStartTimeMs)
+        val romMeters = (concentricStartY - concentricMinY) * pxToMetersRatio
+
+        if (romMeters >= MIN_REP_ROM_METERS &&
+            currentRepPeakVelocity >= MIN_REP_PEAK_VELOCITY &&
+            activeDuration >= 180L
+        ) {
+            val repNum = currentSetReps.size + 1
+            val meanVelocity = if (currentRepConcentricVelocities.isNotEmpty()) {
+                currentRepConcentricVelocities.average()
+            } else {
+                currentRepPeakVelocity * 0.72
+            }
+            currentMeanVelocity = meanVelocity
+
+            val primaryMetricValue = if (primaryMetric == VBTVelocityMetric.MEAN_VELOCITY) {
+                meanVelocity
+            } else {
+                currentRepPeakVelocity
+            }
+
+            val bestRepMetric = currentSetReps.maxOfOrNull {
+                if (primaryMetric == VBTVelocityMetric.MEAN_VELOCITY) it.meanVelocity else it.peakVelocity
+            } ?: primaryMetricValue
+
+            val loss = if (bestRepMetric > 0) ((bestRepMetric - primaryMetricValue) / bestRepMetric) * 100.0 else 0.0
+
+            var isCutoff = false
+            if (cutoffVelocityMps != null && primaryMetricValue < cutoffVelocityMps!!) {
+                isCutoff = true
+            }
+            if (cutoffLossPercent != null && loss >= cutoffLossPercent!! && currentSetReps.isNotEmpty()) {
+                isCutoff = true
+            }
+
+            val rep = RepResult(
+                repNumber = repNum,
+                peakVelocity = currentRepPeakVelocity,
+                meanVelocity = meanVelocity,
+                romMeters = romMeters,
+                isCutoffReached = isCutoff,
+                velocityLossPercent = loss.coerceAtLeast(0.0)
+            )
+            currentSetReps.add(rep)
+
+            lastCompletedRepPath.clear()
+            lastCompletedRepPath.addAll(currentRepPath)
+
+            onRepCompleted?.invoke(rep)
+        }
+
+        isConcentricActive = false
+        currentRepPeakVelocity = 0.0
+        currentRepConcentricVelocities.clear()
+        currentRepPath.clear()
+        lowestInflectionY = null
+        lowestInflectionX = null
+    }
+
+    /**
      * Procesa la posición de la barra/disco en coordenadas del video (Offset nativo).
      * Calcula cinemática, velocidad media/pico, repeticiones concéntricas/excéntricas y trayectoria.
      */
@@ -478,50 +543,30 @@ object VBTAnalyzer {
             if (deltaSeconds < 0.005) {
                 return 0.0
             }
-            
-            // Si la barra SUBE, pxMoved > 0. Si BAJA, pxMoved < 0.
-            val pxMoved = previousY!! - barY 
-            val rawDisplacementMeters = pxMoved * pxToMetersRatio
-            val rawVelocity = (rawDisplacementMeters / deltaSeconds).coerceIn(-3.0, 3.0)
 
-            // Filtro de media móvil
+            // Si la barra SUBE, pxMoved > 0. Si BAJA, pxMoved < 0.
+            val pxMoved = previousY!! - barY
+            val rawDisplacementMeters = pxMoved * pxToMetersRatio
+            val rawVelocity = (rawDisplacementMeters / deltaSeconds).coerceIn(-3.5, 4.0)
+
+            // Si veníamos bajando y empezamos a subir con claridad, limpiar muestras negativas del filtro
+            // para no amortiguar artificialmente el inicio explosivo del tirón concéntrico
+            if (!isConcentricActive && pxMoved > 2.0f && rawVelocity > VELOCITY_DEADBAND) {
+                velocityHistory.removeAll { it < 0.0 }
+            }
+
             velocityHistory.addLast(rawVelocity)
             if (velocityHistory.size > WINDOW_SIZE) {
                 velocityHistory.removeFirst()
             }
             val smoothedVelocity = velocityHistory.average()
-
-            // Filtro de zona muerta (< 0.18 m/s se trata como 0.0)
             val filteredVelocity = if (smoothedVelocity > VELOCITY_DEADBAND) smoothedVelocity else 0.0
 
-            // 1. Manejo universal de fase descendente / excéntrica (bajada al piso, colgante, sentadilla, etc.)
-            // Independiente del ejercicio: cualquier descenso de la barra se registra para encontrar el punto de despegue real
-            if (pxMoved < -1.5f) {
-                if (!isEccentricActive && !isConcentricActive) {
-                    currentRepPath.clear()
-                }
-                isEccentricActive = true
-                isConcentricActive = false
-                if (lowestInflectionY == null || barY > lowestInflectionY!!) {
-                    lowestInflectionY = barY
-                    lowestInflectionX = barX
-                    originBaselineY = barY
-                    originBaselineX = barX
-                }
-                // Guardar punto para la trayectoria en vivo durante la bajada/descenso
-                val eccentricVelocity = kotlin.math.abs(smoothedVelocity)
-                val point = BarPathPoint(barX, barY, eccentricVelocity, timestampMs)
-                barPath.add(point)
-                currentRepPath.add(point)
-            }
-
-            // 2. Manejo universal de fase concéntrica (subida / tirón)
-            if (pxMoved > 1.5f && filteredVelocity > 0.0) {
+            // 1. Manejo universal de fase concéntrica (subida / tirón)
+            if (pxMoved > 1.2f && filteredVelocity > 0.0) {
                 if (!isConcentricActive) {
                     isConcentricActive = true
-                    
-                    // El inicio exacto es el punto más bajo alcanzado (sea suelo, rodilla o cadera)
-                    concentricStartY = lowestInflectionY ?: barY
+                    concentricStartY = lowestInflectionY ?: previousY ?: barY
                     concentricMinY = barY
                     originBaselineY = concentricStartY
                     originBaselineX = lowestInflectionX ?: barX
@@ -548,15 +593,13 @@ object VBTAnalyzer {
                     currentRepPeakVelocity = filteredVelocity
                 }
 
-                // Guardar muestra para calcular la velocidad media de la fase concéntrica
                 currentRepConcentricVelocities.add(filteredVelocity)
+                currentMeanVelocity = currentRepConcentricVelocities.average()
 
-                // Guardar punto para la trayectoria en vivo
                 val point = BarPathPoint(barX, barY, filteredVelocity, timestampMs)
                 barPath.add(point)
                 currentRepPath.add(point)
 
-                // Calcular desvío horizontal total
                 val minX = currentRepPath.minOfOrNull { it.x } ?: barX
                 val maxX = currentRepPath.maxOfOrNull { it.x } ?: barX
                 maxHorizontalDeviationPx = maxX - minX
@@ -564,74 +607,43 @@ object VBTAnalyzer {
                 previousY = barY
                 previousTime = timestampMs
                 return filteredVelocity
-            } else {
-                // 3. Finalización de la repetición al detenerse en el bloqueo o iniciar descenso
-                if (isConcentricActive && (timestampMs - lastUpwardTimeMs > 250)) {
-                    val concentricDuration = timestampMs - concentricStartTimeMs
-                    val romMeters = (concentricStartY - concentricMinY) * pxToMetersRatio
+            }
 
-                    if (romMeters >= MIN_REP_ROM_METERS &&
-                        currentRepPeakVelocity >= MIN_REP_PEAK_VELOCITY &&
-                        concentricDuration >= MIN_CONCENTRIC_DURATION_MS
-                    ) {
-                        val repNum = currentSetReps.size + 1
-                        
-                        // Cálculo de Velocidad Media Concéntrica (Mean Velocity - MV)
-                        val meanVelocity = if (currentRepConcentricVelocities.isNotEmpty()) {
-                            currentRepConcentricVelocities.average()
-                        } else {
-                            currentRepPeakVelocity
-                        }
-                        currentMeanVelocity = meanVelocity
-
-                        // Seleccionar métrica objetivo para cálculo de fatiga y umbral
-                        val primaryMetricValue = if (primaryMetric == VBTVelocityMetric.MEAN_VELOCITY) {
-                            meanVelocity
-                        } else {
-                            currentRepPeakVelocity
-                        }
-
-                        val bestRepMetric = currentSetReps.maxOfOrNull { 
-                            if (primaryMetric == VBTVelocityMetric.MEAN_VELOCITY) it.meanVelocity else it.peakVelocity 
-                        } ?: primaryMetricValue
-
-                        val loss = if (bestRepMetric > 0) ((bestRepMetric - primaryMetricValue) / bestRepMetric) * 100.0 else 0.0
-
-                        var isCutoff = false
-                        if (cutoffVelocityMps != null && primaryMetricValue < cutoffVelocityMps!!) {
-                            isCutoff = true
-                        }
-                        if (cutoffLossPercent != null && loss >= cutoffLossPercent!! && currentSetReps.isNotEmpty()) {
-                            isCutoff = true
-                        }
-
-                        val rep = RepResult(
-                            repNumber = repNum,
-                            peakVelocity = currentRepPeakVelocity,
-                            meanVelocity = meanVelocity,
-                            romMeters = romMeters,
-                            isCutoffReached = isCutoff,
-                            velocityLossPercent = loss
-                        )
-                        currentSetReps.add(rep)
-
-                        lastCompletedRepPath.clear()
-                        lastCompletedRepPath.addAll(currentRepPath)
-
-                        onRepCompleted?.invoke(rep)
+            // 2. Manejo universal de fase descendente / excéntrica (bajada al piso, recepción o descenso entre reps)
+            if (pxMoved < -1.5f) {
+                if (isConcentricActive) {
+                    // Verificar si ya alcanzó el ápice y comenzó a bajar de verdad (>= 3.5 cm desde el punto más alto o > 150 ms sin subir)
+                    val dropFromApexMeters = (barY - concentricMinY) * pxToMetersRatio
+                    if (dropFromApexMeters >= 0.035 || (timestampMs - lastUpwardTimeMs) >= 150L) {
+                        finalizeActiveConcentricRep(timestampMs)
                     }
+                }
 
-                    isConcentricActive = false
-                    isEccentricActive = false
-                    currentRepPeakVelocity = 0.0
-                    currentRepConcentricVelocities.clear()
-                    currentRepPath.clear()
-                    lowestInflectionY = null
-                    lowestInflectionX = null
+                if (!isConcentricActive) {
+                    if (!isEccentricActive) {
+                        currentRepPath.clear()
+                    }
+                    isEccentricActive = true
+                    if (lowestInflectionY == null || barY > lowestInflectionY!!) {
+                        lowestInflectionY = barY
+                        lowestInflectionX = barX
+                        originBaselineY = barY
+                        originBaselineX = barX
+                    }
+                    val eccentricVelocity = kotlin.math.abs(smoothedVelocity)
+                    val point = BarPathPoint(barX, barY, eccentricVelocity, timestampMs)
+                    barPath.add(point)
+                    currentRepPath.add(point)
                 }
             }
+
+            // 3. Finalización por pausa / bloqueo arriba (sin descenso inmediato)
+            if (isConcentricActive && (timestampMs - lastUpwardTimeMs >= 220L)) {
+                finalizeActiveConcentricRep(timestampMs)
+                isEccentricActive = false
+            }
         }
-        
+
         previousY = barY
         previousTime = timestampMs
         return 0.0
