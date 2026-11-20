@@ -498,7 +498,7 @@ fun CameraScreen(
                         }
                     }
 
-                    val stepMs = 33L
+                    val stepMs = 42L
                     while (isSimulationPlaying && simulatedVideoUri == uri && simulationCurrentTimeMs <= totalDur) {
                         val tLoopStart = System.currentTimeMillis()
                         val rawFrame = retriever.getFrameAtTime(
@@ -657,13 +657,13 @@ fun CameraScreen(
             }
         }
 
-        // Panel Superior Limpio: Botón Cerrar, Estado y Acciones sin superposición
+        // Panel Superior Limpio y Despejado (1 sola fila con separación amplia, sin cajas que tapen el video)
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 14.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -675,48 +675,46 @@ fun CameraScreen(
                 IconButton(
                     onClick = onCloseClick,
                     modifier = Modifier
-                        .size(36.dp)
-                        .background(Color(0x880D1219), CircleShape)
+                        .size(34.dp)
+                        .background(Color(0x990D1219), CircleShape)
                 ) {
                     Icon(
                         Icons.Filled.Close,
                         contentDescription = "Cerrar",
                         tint = Color.White,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                 }
 
-                // 2. Chip Central Compacto de Calibración (Al pulsar abre/cierra el ajuste en el dock)
-                Surface(
-                    onClick = { isCalibratingPlate = !isCalibratingPlate },
-                    color = if (isCalibratingPlate) Color(0x3300FFCC) else Color(0xCC0D1219),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isCalibratingPlate) Color(0xFF00FFCC) else Color(0xFF00FFCC).copy(alpha = 0.5f)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text("🎯", fontSize = 12.sp)
-                        Text(
-                            text = if (isCalibratingPlate) "Ajustando Disco..." else if (isPlateCalibrated) "Disco 45cm ✓" else "Calibrar Disco",
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF00FFCC),
-                            fontSize = 11.5.sp
-                        )
-                    }
-                }
-
-                // 3. Acciones Derecha (Simular Video, Umbral y 1RM)
+                // 2. Grupo Central bien separado: [🎯 Disco 45cm] + [🎬 Video / 📷 Cámara]
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Botón para Probar Medición en Vivo con Video de Galería
+                    Surface(
+                        onClick = { isCalibratingPlate = !isCalibratingPlate },
+                        color = if (isCalibratingPlate) Color(0x3300FFCC) else Color(0xCC0D1219),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isCalibratingPlate) Color(0xFF00FFCC) else Color(0xFF00FFCC).copy(alpha = 0.55f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text("🎯", fontSize = 11.sp)
+                            Text(
+                                text = if (isCalibratingPlate) "Ajustar Disco" else if (isPlateCalibrated) "Disco 45cm ✓" else "Calibrar",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF00FFCC),
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
                     Surface(
                         onClick = {
                             if (simulatedVideoUri != null) {
@@ -731,14 +729,14 @@ fun CameraScreen(
                             }
                         },
                         color = if (simulatedVideoUri != null) Color(0x3300E5FF) else Color(0xCC0D1219),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(16.dp),
                         border = BorderStroke(
                             1.dp,
                             if (simulatedVideoUri != null) Color(0xFF00E5FF) else Color(0xFF38BDF8).copy(alpha = 0.6f)
                         )
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
@@ -746,203 +744,58 @@ fun CameraScreen(
                                 imageVector = if (simulatedVideoUri != null) Icons.Default.Videocam else Icons.Default.VideoLibrary,
                                 contentDescription = "Simular con video",
                                 tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(13.dp)
                             )
                             Text(
-                                text = if (simulatedVideoUri != null) "Cámara" else "Probar Video",
-                                fontSize = 10.5.sp,
+                                text = if (simulatedVideoUri != null) "Cámara" else "Video",
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF38BDF8)
                             )
                         }
                     }
+                }
 
-                    IconButton(
+                // 3. Acciones Derecha con separación clara: [-20%] y [1RM]
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
                         onClick = { showThresholdDialog = true },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(
-                                if (isLossThresholdEnabled || isMinVelocityEnabled) Color(0xFF00FFCC).copy(alpha = 0.22f) else Color(0x880D1219),
-                                CircleShape
-                            )
+                        color = if (isLossThresholdEnabled || isMinVelocityEnabled) Color(0xFF00FFCC).copy(alpha = 0.20f) else Color(0x990D1219),
+                        shape = CircleShape,
+                        modifier = Modifier.size(34.dp),
+                        border = BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.5f))
                     ) {
-                        if (isLossThresholdEnabled) {
-                            Text(
-                                "-${targetLossPercent.toInt()}%",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Black,
-                                color = Color(0xFF00FFCC)
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = "Umbral",
-                                tint = if (isMinVelocityEnabled) Color(0xFF00FFCC) else Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                        Box(contentAlignment = Alignment.Center) {
+                            if (isLossThresholdEnabled) {
+                                Text(
+                                    "-${targetLossPercent.toInt()}%",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color(0xFF00FFCC)
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.Settings,
+                                    contentDescription = "Umbral",
+                                    tint = if (isMinVelocityEnabled) Color(0xFF00FFCC) else Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
 
                     Surface(
                         onClick = { showOneRMDialog = true },
-                        color = Color(0x880D1219),
+                        color = Color(0x990D1219),
                         shape = CircleShape,
-                        modifier = Modifier.size(36.dp),
-                        border = BorderStroke(1.dp, Color(0xFFFF4081).copy(alpha = 0.6f))
+                        modifier = Modifier.size(34.dp),
+                        border = BorderStroke(1.dp, Color(0xFFFF4081).copy(alpha = 0.65f))
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Text("1RM", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFFFF4081))
-                        }
-                    }
-                }
-            }
-
-            // ── HUD DE DIAGNÓSTICO EN TIEMPO REAL & CONTROLES DEL SIMULADOR DE GALERÍA ──
-            Spacer(modifier = Modifier.height(5.dp))
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color(0xD90D1219),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(0.8.dp, if (simulatedVideoUri != null) Color(0xFF38BDF8) else Color(0xFF263342))
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = livePhaseLabel,
-                            color = when {
-                                VBTAnalyzer.isConcentricActive -> Color(0xFF00FFCC)
-                                VBTAnalyzer.isEccentricActive -> Color(0xFFFFD600)
-                                else -> Color.LightGray
-                            },
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = String.format(
-                                Locale.US,
-                                "Vel. Inst: %.2f m/s • ROM: %.1f cm • Disco: %d%% (%.1f ms)",
-                                vbtVelocityResult ?: 0.0,
-                                liveInstantRomCm,
-                                (liveTrackerConfidence * 100).roundToInt().coerceIn(0, 100),
-                                liveProcessingMs
-                            ),
-                            color = Color(0xFF94A3B8),
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    if (simulatedVideoUri != null) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = String.format(
-                                    Locale.US,
-                                    "🎬 Simulador: %.1fs / %.1fs",
-                                    simulationCurrentTimeMs / 1000.0,
-                                    simulationDurationMs / 1000.0
-                                ),
-                                color = Color(0xFF38BDF8),
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Play / Pause Simulación
-                                Surface(
-                                    onClick = {
-                                        if (!isPlateCalibrated) {
-                                            applyPlateCalibration(screenBoxW, screenBoxH)
-                                        }
-                                        isCalibratingPlate = false
-                                        isSimulationPlaying = !isSimulationPlaying
-                                    },
-                                    color = if (isSimulationPlaying) Color(0xFFFF9100) else Color(0xFF00FFCC),
-                                    shape = RoundedCornerShape(6.dp)
-                                ) {
-                                    Text(
-                                        text = if (isSimulationPlaying) "⏸ Pausar" else "▶ Simular",
-                                        color = Color.Black,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                    )
-                                }
-
-                                // Reiniciar video desde t=0
-                                Surface(
-                                    onClick = {
-                                        isSimulationPlaying = false
-                                        simulationCurrentTimeMs = 0L
-                                        vbtVelocityResult = null
-                                        isCutoffAlarmActive = false
-                                        VBTAnalyzer.resetSet()
-                                        repsList = emptyList()
-                                        livePathPoints = emptyList()
-                                        needsTrackerReinit = true
-                                        isSimulationPlaying = true
-                                    },
-                                    color = Color(0xFF1E293B),
-                                    shape = RoundedCornerShape(6.dp),
-                                    border = BorderStroke(0.7.dp, Color(0xFF475569))
-                                ) {
-                                    Text(
-                                        text = "↺ Reiniciar",
-                                        color = Color.White,
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                    )
-                                }
-
-                                // Selector de Velocidad 1.0x / 0.5x
-                                Surface(
-                                    onClick = {
-                                        simulationSpeedFactor = if (simulationSpeedFactor == 1.0f) 0.5f else 1.0f
-                                    },
-                                    color = Color(0xFF1E293B),
-                                    shape = RoundedCornerShape(6.dp),
-                                    border = BorderStroke(0.7.dp, Color(0xFF38BDF8))
-                                ) {
-                                    Text(
-                                        text = if (simulationSpeedFactor == 1.0f) "⚡ 1.0x" else "🐢 0.5x",
-                                        color = Color(0xFF38BDF8),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                    )
-                                }
-
-                                // Cargar otro video de la galería
-                                Surface(
-                                    onClick = {
-                                        isSimulationPlaying = false
-                                        simulationVideoPicker.launch("video/*")
-                                    },
-                                    color = Color(0xFF1E293B),
-                                    shape = RoundedCornerShape(6.dp),
-                                    border = BorderStroke(0.7.dp, Color(0xFF475569))
-                                ) {
-                                    Text(
-                                        text = "📂 Otro",
-                                        color = Color.LightGray,
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                                    )
-                                }
-                            }
+                            Text("1RM", fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = Color(0xFFFF4081))
                         }
                     }
                 }
@@ -950,9 +803,9 @@ fun CameraScreen(
 
             // Alerta visual de fatiga / umbral (Cutoff)
             if (isCutoffAlarmActive) {
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Surface(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     color = Color(0xEEFF1744),
                     shape = RoundedCornerShape(10.dp)
                 ) {
@@ -975,7 +828,7 @@ fun CameraScreen(
             }
         }
 
-        // ── PANEL INFERIOR UNIFICADO: OCUPA EL MISMO ESPACIO PARA CALIBRACIÓN O TELEMETRÍA/REC ──
+        // ── PANEL INFERIOR UNIFICADO: OCUPA EL MISMO ESPACIO PARA CALIBRACIÓN O TELEMETRÍA/SIMULACIÓN ──
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -1111,15 +964,45 @@ fun CameraScreen(
                     }
                 }
             } else {
-                // ── MODO 2: TELEMETRÍA EN VIVO Y CONTROL REC ──
+                // ── MODO 2: TELEMETRÍA EN VIVO Y CONTROLES INTEGRADOS (Sin tapar la pantalla) ──
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
-                    // Fila Superior: Métrica Principal en Grande (Velocidad Pico PV) + Velocidad Media (VMP)
+                    // Micro-cintillo de estado instantáneo en 1 sola línea integrada
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = livePhaseLabel,
+                            color = when {
+                                VBTAnalyzer.isConcentricActive -> Color(0xFF00FFCC)
+                                VBTAnalyzer.isEccentricActive -> Color(0xFFFFD600)
+                                else -> Color(0xFF94A3B8)
+                            },
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = String.format(
+                                Locale.US,
+                                "Inst: %.2f m/s • ROM: %.0f cm • Disco: %d%%",
+                                vbtVelocityResult ?: 0.0,
+                                liveInstantRomCm,
+                                (liveTrackerConfidence * 100).roundToInt().coerceIn(0, 100)
+                            ),
+                            color = Color(0xFF94A3B8),
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    // Fila Principal: Velocidad Pico (PV) + Velocidad Media (VMP) y Repeticiones
                     val displayPeak = VBTAnalyzer.currentPeakVelocity.takeIf { it > 0.05 } ?: (vbtVelocityResult ?: 0.0)
                     val displayMean = VBTAnalyzer.currentMeanVelocity
 
@@ -1128,14 +1011,13 @@ fun CameraScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Velocidad Pico (PV)
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text(
                                 text = String.format(Locale.US, "%.2f", displayPeak),
                                 color = Color(0xFF00FFCC),
-                                fontSize = 32.sp,
+                                fontSize = 31.sp,
                                 fontWeight = FontWeight.Black,
-                                lineHeight = 34.sp
+                                lineHeight = 33.sp
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Column(modifier = Modifier.padding(bottom = 2.dp)) {
@@ -1155,7 +1037,6 @@ fun CameraScreen(
                             }
                         }
 
-                        // Velocidad Media Propulsiva (VMP) y Repeticiones
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
                                 "VMP: ${String.format(Locale.US, "%.2f", displayMean)} m/s",
@@ -1214,13 +1095,13 @@ fun CameraScreen(
                         }
                     }
 
-                    // Fila Inferior de Acciones: [Nueva] | [● REC Compacto] | [Guardar]
+                    // Fila Inferior de Acciones bien distribuidas (nunca se salen de pantalla)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Botón Nueva Serie
+                        // 1. Botón Nueva / Reiniciar
                         OutlinedButton(
                             onClick = {
                                 vbtVelocityResult = null
@@ -1231,6 +1112,7 @@ fun CameraScreen(
                                 needsTrackerReinit = true
                                 if (simulatedVideoUri != null) {
                                     simulationCurrentTimeMs = 0L
+                                    isSimulationPlaying = true
                                 }
                             },
                             modifier = Modifier.height(36.dp),
@@ -1240,10 +1122,10 @@ fun CameraScreen(
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Nueva", fontSize = 11.5.sp)
+                            Text(if (simulatedVideoUri != null) "Reiniciar" else "Nueva", fontSize = 11.sp)
                         }
 
-                        // Botón REC (Cámara Real) o SIMULAR/PAUSAR (Simulador con Video de Galería)
+                        // 2. Botón Principal Central (Simular/Pausar o REC)
                         if (simulatedVideoUri != null) {
                             Button(
                                 onClick = {
@@ -1253,27 +1135,60 @@ fun CameraScreen(
                                     isCalibratingPlate = false
                                     isSimulationPlaying = !isSimulationPlaying
                                 },
-                                modifier = Modifier.height(38.dp),
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = if (isSimulationPlaying) Color(0xFFFF9100) else Color(0xFF00E5FF),
                                     contentColor = Color.Black
                                 ),
-                                shape = RoundedCornerShape(19.dp)
+                                shape = RoundedCornerShape(18.dp)
                             ) {
                                 Text(
                                     text = if (isSimulationPlaying)
-                                        String.format(Locale.US, "⏸ %.1fs", simulationCurrentTimeMs / 1000.0)
+                                        String.format(Locale.US, "⏸ %.1fs / %.1fs", simulationCurrentTimeMs / 1000.0, simulationDurationMs / 1000.0)
                                     else
-                                        "▶ SIMULAR EN VIVO",
+                                        "▶ Simular",
                                     fontWeight = FontWeight.Black,
-                                    fontSize = 11.5.sp
+                                    fontSize = 11.sp,
+                                    maxLines = 1
                                 )
                             }
+
+                            // 3. Selector de Velocidad 1.0x / 0.5x
+                            OutlinedButton(
+                                onClick = {
+                                    simulationSpeedFactor = if (simulationSpeedFactor == 1.0f) 0.5f else 1.0f
+                                },
+                                modifier = Modifier.height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                                border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.6f))
+                            ) {
+                                Text(
+                                    text = if (simulationSpeedFactor == 1.0f) "1.0x" else "0.5x",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                            }
+
+                            // 4. Elegir Otro Video
+                            OutlinedButton(
+                                onClick = {
+                                    isSimulationPlaying = false
+                                    simulationVideoPicker.launch("video/*")
+                                },
+                                modifier = Modifier.height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray),
+                                border = BorderStroke(1.dp, Color(0xFF334050))
+                            ) {
+                                Text("📂", fontSize = 11.sp)
+                            }
                         } else {
+                            Spacer(modifier = Modifier.weight(0.2f))
                             Button(
                                 onClick = { toggleRecording(screenBoxW, screenBoxH) },
-                                modifier = Modifier.height(38.dp),
+                                modifier = Modifier.weight(1f).height(38.dp),
                                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = if (isRecording) Color(0xFFFF1744) else Color(0xFFD32F2F),
@@ -1296,6 +1211,7 @@ fun CameraScreen(
                                     fontSize = 12.sp
                                 )
                             }
+                            Spacer(modifier = Modifier.weight(0.2f))
                         }
 
                         // Botón Guardar Serie
