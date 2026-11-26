@@ -38,17 +38,19 @@ object AppUpdateManager {
     private const val KEY_REPO_NAME = "repo_name"
 
     // Repositorio por defecto en GitHub
-    const val DEFAULT_REPO_OWNER = "bayron"
-    const val DEFAULT_REPO_NAME = "SpeedTracker"
+    const val DEFAULT_REPO_OWNER = "Morodor"
+    const val DEFAULT_REPO_NAME = "speedtracker"
 
     fun getRepoOwner(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_REPO_OWNER, DEFAULT_REPO_OWNER) ?: DEFAULT_REPO_OWNER
+        val saved = prefs.getString(KEY_REPO_OWNER, DEFAULT_REPO_OWNER) ?: DEFAULT_REPO_OWNER
+        return if (saved == "bayron") DEFAULT_REPO_OWNER else saved
     }
 
     fun getRepoName(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_REPO_NAME, DEFAULT_REPO_NAME) ?: DEFAULT_REPO_NAME
+        val saved = prefs.getString(KEY_REPO_NAME, DEFAULT_REPO_NAME) ?: DEFAULT_REPO_NAME
+        return if (saved == "SpeedTracker") DEFAULT_REPO_NAME else saved
     }
 
     fun setRepoInfo(context: Context, owner: String, repo: String) {
@@ -258,25 +260,38 @@ object AppUpdateManager {
     }
 
     /**
-     * Inicia la instalación del APK descargado invocando al Package Installer del sistema Android
+     * Descarga e instala el APK de forma segura a través del navegador / gestor del sistema Android
+     * sin requerir el permiso REQUEST_INSTALL_PACKAGES (evitando el bloqueo de Google Play Protect).
      */
-    fun installApk(context: Context, apkFile: File) {
-        if (!canInstallPackages(context)) {
-            requestInstallPermission(context)
-            return
-        }
-
-        val apkUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            apkFile
-        )
-
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(apkUri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    fun openSystemBrowserDownload(context: Context, downloadUrl: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl)).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         context.startActivity(intent)
+    }
+
+    /**
+     * Inicia la instalación del APK descargado invocando al Package Installer del sistema Android
+     */
+    fun installApk(context: Context, apkFile: File, fallbackUrl: String? = null) {
+        try {
+            val apkUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            if (!fallbackUrl.isNullOrEmpty()) {
+                openSystemBrowserDownload(context, fallbackUrl)
+            }
+        }
     }
 }

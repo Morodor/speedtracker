@@ -44,11 +44,17 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.speedtracker.R
+import com.speedtracker.core.update.AppReleaseInfo
+import com.speedtracker.core.update.AppUpdateManager
+import com.speedtracker.core.update.UpdateCheckResult
 import com.speedtracker.data.UserRepository
 import com.speedtracker.domain.model.Session
+import com.speedtracker.presentation.components.AppUpdateDialog
 import com.speedtracker.presentation.history.SavedPdfReportDialog
 import com.speedtracker.presentation.history.SavedVideoPlayerDialog
 import com.speedtracker.presentation.video.TutorialGuideDialog
+import androidx.compose.material.icons.filled.SystemUpdate
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -62,6 +68,7 @@ fun DashboardScreen(
     onNavigateToVideoAnalysis: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var sessions by remember { mutableStateOf(userRepository.getSessions().sortedByDescending { it.timestamp }) }
     val usersMap = remember(sessions) { userRepository.getUsers().associateBy { it.id } }
 
@@ -69,6 +76,21 @@ fun DashboardScreen(
     var tutorialStep by remember { mutableIntStateOf(0) }
     var selectedTutorialTopic by remember { mutableStateOf("VBT") }
     var pendingCaptureFile by remember { mutableStateOf<File?>(null) }
+
+    // Estado de comprobación de actualización desde GitHub (Morodor/speedtracker)
+    var availableUpdate by remember { mutableStateOf<AppReleaseInfo?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    val currentVersionName = remember { AppUpdateManager.getAppVersionName(context) }
+
+    // Comprobar automáticamente al abrir el Home si hay una versión nueva publicada en GitHub
+    LaunchedEffect(Unit) {
+        when (val result = AppUpdateManager.checkForUpdate(context)) {
+            is UpdateCheckResult.UpdateAvailable -> {
+                availableUpdate = result.release
+            }
+            else -> {}
+        }
+    }
 
     // 1. Selector de Video desde Galería -> pasa directo al Trim de Video
     val videoPickerLauncher = rememberLauncherForActivityResult(
@@ -121,7 +143,73 @@ fun DashboardScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Speed Tracker", fontWeight = FontWeight.Bold) },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Speed Tracker", fontWeight = FontWeight.Bold)
+                        Surface(
+                            color = Color(0xFF00FFCC).copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(0.8.dp, Color(0xFF00FFCC).copy(alpha = 0.45f))
+                        ) {
+                            Text(
+                                text = "v$currentVersionName",
+                                color = Color(0xFF00FFCC),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                },
+                actions = {
+                    TextButton(
+                        enabled = !isCheckingUpdate,
+                        onClick = {
+                            isCheckingUpdate = true
+                            coroutineScope.launch {
+                                when (val res = AppUpdateManager.checkForUpdate(context)) {
+                                    is UpdateCheckResult.UpdateAvailable -> {
+                                        isCheckingUpdate = false
+                                        availableUpdate = res.release
+                                    }
+                                    is UpdateCheckResult.UpToDate -> {
+                                        isCheckingUpdate = false
+                                        Toast.makeText(
+                                            context,
+                                            "Ya tienes la última versión instalada (v$currentVersionName)",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                    is UpdateCheckResult.Error -> {
+                                        isCheckingUpdate = false
+                                        Toast.makeText(
+                                            context,
+                                            res.message,
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SystemUpdate,
+                            contentDescription = "Buscar actualización",
+                            tint = if (availableUpdate != null) Color(0xFFFF9800) else Color(0xFF00FFCC),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isCheckingUpdate) "Buscando..." else if (availableUpdate != null) "¡Actualizar!" else "Actualizar",
+                            color = if (availableUpdate != null) Color(0xFFFF9800) else Color(0xFF00FFCC),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color(0xFF121212),
                     titleContentColor = Color(0xFF00FFCC)
@@ -228,6 +316,13 @@ fun DashboardScreen(
                 val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v4.mp4")
                 onNavigateToVideoAnalysis(uri.toString())
             }
+        )
+    }
+
+    availableUpdate?.let { releaseInfo ->
+        AppUpdateDialog(
+            release = releaseInfo,
+            onDismiss = { availableUpdate = null }
         )
     }
 }
