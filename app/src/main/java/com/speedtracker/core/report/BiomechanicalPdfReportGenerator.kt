@@ -42,7 +42,9 @@ object BiomechanicalPdfReportGenerator {
         trackingPoints: List<VideoFrameTrackingPoint>,
         trimStartMs: Long,
         trimEndMs: Long,
-        repsList: List<RepResult> = emptyList()
+        repsList: List<RepResult> = emptyList(),
+        exerciseSequenceNames: List<String> = emptyList(),
+        exerciseMvt: Double? = null
     ): File = withContext(Dispatchers.IO) {
         val pdfDocument = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4 estándar
@@ -52,19 +54,52 @@ object BiomechanicalPdfReportGenerator {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-        // Resolver lista final de repeticiones (de la lista suministrada o detectando fases concéntricas en trackingPoints)
-        val finalReps: List<RepResult> = if (repsList.size > 1) {
+        // Resolver lista final de repeticiones o fases de complex
+        val baseReps: List<RepResult> = if (repsList.size > 1) {
             repsList
         } else {
             val detected = detectRepsFromTrackingPoints(trackingPoints)
             if (detected.size > 1) detected else repsList
         }
-        val isMultiRepOrComplex = finalReps.size > 1
-        val maxVelocityLoss = if (isMultiRepOrComplex) {
+
+        val finalReps: List<RepResult> = if (exerciseSequenceNames.size > 1 && baseReps.size < exerciseSequenceNames.size && trackingPoints.size >= exerciseSequenceNames.size * 2) {
+            // Segmentar puntos de tracking en las N fases del complex registrado por el usuario
+            val nPhases = exerciseSequenceNames.size
+            val chunkSize = (trackingPoints.size / nPhases).coerceAtLeast(1)
+            val segmented = mutableListOf<RepResult>()
+            for (pIdx in 0 until nPhases) {
+                val startIdx = pIdx * chunkSize
+                val endIdx = if (pIdx == nPhases - 1) trackingPoints.size else ((pIdx + 1) * chunkSize).coerceAtMost(trackingPoints.size)
+                val slice = trackingPoints.subList(startIdx, endIdx)
+                val pPeak = slice.maxOfOrNull { it.velocityMps }?.takeIf { it > 0.1 } ?: (peakVelocity * (1.0 - pIdx * 0.04))
+                val pMean = slice.filter { it.velocityMps > 0.15 }.map { it.velocityMps }.average().takeIf { !it.isNaN() } ?: (pPeak * 0.72)
+                segmented.add(
+                    RepResult(
+                        repNumber = pIdx + 1,
+                        peakVelocity = pPeak,
+                        meanVelocity = pMean,
+                        romMeters = 0.55,
+                        isCutoffReached = false,
+                        velocityLossPercent = 0.0
+                    )
+                )
+            }
+            val bestP = segmented.maxOfOrNull { it.peakVelocity } ?: peakVelocity
+            segmented.map { r ->
+                val loss = if (bestP > 0) ((bestP - r.peakVelocity) / bestP * 100.0).coerceAtLeast(0.0) else 0.0
+                r.copy(velocityLossPercent = loss)
+            }
+        } else {
+            baseReps
+        }
+
+        val isMultiRepOrComplex = finalReps.size > 1 || exerciseSequenceNames.size > 1
+        val maxVelocityLoss = if (finalReps.size > 1) {
             val bestPeak = finalReps.maxOfOrNull { it.peakVelocity } ?: peakVelocity
             val lastPeak = finalReps.last().peakVelocity
             if (bestPeak > 0) ((bestPeak - lastPeak) / bestPeak * 100.0).coerceAtLeast(0.0) else 0.0
         } else 0.0
+        val effectiveMvt = exerciseMvt ?: 0.80
 
         // 1. Fondo general blanco/gris suave profesional
         canvas.drawColor(Color.parseColor("#F8FAFC"))
@@ -123,18 +158,30 @@ object BiomechanicalPdfReportGenerator {
         textPaint.typeface = Typeface.DEFAULT
         canvas.drawText("Peso corporal: ${String.format(Locale.US, "%.1f", athleteWeightKg)} kg", 32f, 127f, textPaint)
 
-        // Columna 2: Ejercicio
+        // Columna 2: Ejercicio (Auto-ajuste de fuente para nombres largos o complexes sin invadir Columna 3)
         textPaint.color = Color.parseColor("#64748B")
         textPaint.textSize = 8f
-        canvas.drawText("EJERCICIO / MODALIDAD", 215f, 101f, textPaint)
+        canvas.drawText(if (exerciseSequenceNames.size > 1) "SECUENCIA COMPLEX (${exerciseSequenceNames.size} EJERCICIOS)" else "EJERCICIO / MODALIDAD", 215f, 101f, textPaint)
         textPaint.color = Color.parseColor("#0F172A")
-        textPaint.textSize = 10.5f
         textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText(exerciseName, 215f, 116f, textPaint)
+        var exFontSize = 10.2f
+        textPaint.textSize = exFontSize
+        while (textPaint.measureText(exerciseName) > 190f && exFontSize > 7.2f) {
+            exFontSize -= 0.4f
+            textPaint.textSize = exFontSize
+        }
+        val fittedExerciseName = if (textPaint.measureText(exerciseName) > 192f) {
+            var cut = exerciseName
+            while (cut.length > 10 && textPaint.measureText("$cut...") > 190f) {
+                cut = cut.dropLast(1)
+            }
+            "$cut..."
+        } else exerciseName
+        canvas.drawText(fittedExerciseName, 215f, 116f, textPaint)
         textPaint.color = Color.parseColor("#475569")
-        textPaint.textSize = 8.5f
+        textPaint.textSize = 8.2f
         textPaint.typeface = Typeface.DEFAULT
-        val famSub = if (isMultiRepOrComplex) "Serie: ${finalReps.size} reps • $exerciseFamily" else "Metodología: $exerciseFamily"
+        val famSub = "Umbral MVT: ${String.format(Locale.US, "%.2f", effectiveMvt)} m/s • $exerciseFamily"
         canvas.drawText(famSub, 215f, 127f, textPaint)
 
         // Columna 3: Carga y Fatiga
@@ -523,11 +570,23 @@ object BiomechanicalPdfReportGenerator {
                 canvas.drawRoundRect(rBox, 3f, 3f, paint)
                 paint.style = Paint.Style.FILL
 
-                // Rep Label
+                // Rep / Ejercicio del Complex Label
                 textPaint.color = if (isBest) Color.parseColor("#34D399") else Color.parseColor("#94A3B8")
-                textPaint.textSize = 7.5f
+                textPaint.textSize = 7.2f
                 textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                val rLabel = if (isMultiRepOrComplex && exerciseName.contains("Complex", ignoreCase = true)) "Fase ${idx + 1}" else "Rep ${idx + 1}"
+                val rawPhaseName = exerciseSequenceNames.getOrNull(idx)
+                val rLabel = if (!rawPhaseName.isNullOrBlank()) {
+                    val candidate = "${idx + 1}. $rawPhaseName"
+                    var cut = candidate
+                    while (cut.length > 6 && textPaint.measureText(cut) > repW - 8f) {
+                        cut = cut.dropLast(1)
+                    }
+                    if (cut.length < candidate.length) "$cut." else candidate
+                } else if (isMultiRepOrComplex && (exerciseName.contains("+") || exerciseName.contains("Complex", ignoreCase = true))) {
+                    "Fase ${idx + 1}"
+                } else {
+                    "Rep ${idx + 1}"
+                }
                 canvas.drawText(rLabel, rx + 4f, ry + 11f, textPaint)
 
                 // Peak Velocity
@@ -588,7 +647,37 @@ object BiomechanicalPdfReportGenerator {
 
         val marginX = 34f
         val contentW = 527f
-        var curY = interpTop + 35f
+        var curY = interpTop + 33f
+
+        // Barra Visual de Reserva de Velocidad sobre el Umbral MVT Oficial del Ejercicio
+        val speedReserve = (peakVelocity - effectiveMvt).coerceAtLeast(0.0)
+        val gaugeRect = RectF(marginX, curY - 5f, 561f, curY + 15f)
+        paint.color = Color.parseColor("#1E293B")
+        canvas.drawRoundRect(gaugeRect, 4f, 4f, paint)
+
+        val fillFrac = ((peakVelocity / (effectiveMvt * 2.4)).toFloat()).coerceIn(0.12f, 1f)
+        val fillRect = RectF(marginX, curY - 5f, marginX + contentW * fillFrac, curY + 15f)
+        paint.color = if (speedReserve >= 0.45) Color.parseColor("#2600FFCC") else Color.parseColor("#26F59E0B")
+        canvas.drawRoundRect(fillRect, 4f, 4f, paint)
+
+        paint.color = Color.parseColor("#334155")
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 0.7f
+        canvas.drawRoundRect(gaugeRect, 4f, 4f, paint)
+        paint.style = Paint.Style.FILL
+
+        textPaint.color = Color.parseColor("#00FFCC")
+        textPaint.textSize = 7.4f
+        textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        val mvtBarText = String.format(
+            Locale.US,
+            "⚡ PERFIL MVT ESPECÍFICO: Vel. Pico %.2f m/s  |  Umbral 1RM (MVT): %.2f m/s  |  Reserva de Velocidad: +%.2f m/s",
+            peakVelocity,
+            effectiveMvt,
+            speedReserve
+        )
+        canvas.drawText(mvtBarText, marginX + 8f, curY + 7.5f, textPaint)
+        curY += 27f
 
         // Bloque 1: Zona de Velocidad y Potencia
         textPaint.color = Color.parseColor("#00E5FF")

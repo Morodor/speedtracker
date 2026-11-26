@@ -633,6 +633,7 @@ fun VideoAnalysisScreen(
     var currentMode by remember { mutableStateOf("VBT") }
     var setupFamily by remember { mutableStateOf(VBTExerciseFamily.DLP_OLYMPIC) }
     var selectedVBTExercise by remember { mutableStateOf(VBTExerciseModel.SNATCH_FLOOR) }
+    var selectedExerciseSequence by remember { mutableStateOf(listOf(VBTExerciseModel.SNATCH_FLOOR)) }
     var selectedJumpType by remember { mutableStateOf(JumpType.CMJ) }
     var isReadyToAnalyze by remember { mutableStateOf(false) }
     var analysisSetupStep by remember { mutableStateOf(AnalysisSetupStep.TRIM_VIDEO) }
@@ -3193,6 +3194,13 @@ fun VideoAnalysisScreen(
             } else if (finalResult != null) {
                 // Resultados Completos (Módulos 2 & 3)
                 var selectedExerciseModel by remember(selectedVBTExercise) { mutableStateOf(selectedVBTExercise) }
+                val combinedExerciseDisplayName = remember(selectedExerciseSequence, selectedExerciseModel) {
+                    if (selectedExerciseSequence.size > 1) {
+                        selectedExerciseSequence.joinToString(" + ") { it.shortName }
+                    } else {
+                        selectedExerciseModel.displayName
+                    }
+                }
 
                 val currentLoadKg = barbellLoadKg.toDoubleOrNull() ?: 70.0
                 val peakVelocity = finalResult ?: 0.0
@@ -3289,7 +3297,7 @@ fun VideoAnalysisScreen(
                     ) {
 
 
-                        // Vista Previa Interactiva del Video Analizado (Trayectoria Bar Path + Retícula en tiempo real)
+                        // 1. Vista Previa Interactiva del Video Analizado (Trayectoria Bar Path + Retícula en tiempo real)
                         AnalysisResultVideoPreview(
                             videoUriString = videoUriString,
                             videoNativeWidth = videoNativeWidth,
@@ -3306,10 +3314,40 @@ fun VideoAnalysisScreen(
                             onCurrentPositionChange = { previewPlaybackPosMs = it },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 12.dp)
+                                .padding(bottom = 8.dp)
                         )
 
-                        // ANCHOR: DATOS ANÁLISIS (Posición exacta para mostrar desde el tipo de ejercicio hacia abajo)
+                        // 2. Telemetría Cinemática JUSTO DEBAJO DEL VIDEO (Visible al instante al presionar Play y con Scrubbing táctil)
+                        if (trackingPointsResult.size >= 2) {
+                            val chartPeakV = if (currentMode == "JUMP") {
+                                val takeoffV = (jumpMetricsResult?.flightTimeSeconds ?: 0.5) * (9.81 / 2.0)
+                                trackingPointsResult.maxOfOrNull { it.velocityMps }?.takeIf { it > 0.1 } ?: takeoffV
+                            } else {
+                                peakVelocity
+                            }
+                            val chartMeanV = if (currentMode == "JUMP") {
+                                val takeoffV = (jumpMetricsResult?.flightTimeSeconds ?: 0.5) * (9.81 / 2.0)
+                                takeoffV * 0.72
+                            } else {
+                                meanVelocity
+                            }
+                            KinematicTelemetryChart(
+                                trackingPoints = trackingPointsResult,
+                                peakVelocity = chartPeakV,
+                                meanVelocity = chartMeanV,
+                                vmpVelocity = if (currentMode == "VBT") vmpVelocity else null,
+                                currentVideoPosMs = previewPlaybackPosMs,
+                                onSeekToTimestamp = { relativeOrAbsMs ->
+                                    val absMs = if (relativeOrAbsMs < trimStartMs) trimStartMs + relativeOrAbsMs else relativeOrAbsMs
+                                    resultSeekPosMs = absMs
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 10.dp)
+                            )
+                        }
+
+                        // 3. ANCHOR: DATOS ANÁLISIS (Cuadro de Ejercicio debajo del gráfico de telemetría + Métricas)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -3335,7 +3373,7 @@ fun VideoAnalysisScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
-                                            Column {
+                                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                                 Text(
                                                     when (selectedJumpType) {
                                                         JumpType.CMJ -> "Salto Contramovimiento (CMJ)"
@@ -3345,7 +3383,9 @@ fun VideoAnalysisScreen(
                                                     },
                                                     color = Color.White,
                                                     fontWeight = FontWeight.Bold,
-                                                    fontSize = 14.sp
+                                                    fontSize = 14.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
                                                 Text(
                                                     "Balísticos-Explosivos (Saltos)",
@@ -3357,7 +3397,9 @@ fun VideoAnalysisScreen(
                                                 "👤 ${activeUser?.name ?: "Invitado"} (${String.format(Locale.US, "%.1f", activeUser?.bodyWeightKg ?: 70.0)} kg)",
                                                 color = Color.LightGray,
                                                 fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Medium
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                     }
@@ -3508,23 +3550,8 @@ fun VideoAnalysisScreen(
                                             }
                                         }
                                     }
-                                    if (trackingPointsResult.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.height(14.dp))
-                                        val takeoffV = (jumpMetricsResult?.flightTimeSeconds ?: 0.5) * (9.81 / 2.0)
-                                        KinematicTelemetryChart(
-                                            trackingPoints = trackingPointsResult,
-                                            peakVelocity = trackingPointsResult.maxOfOrNull { it.velocityMps }?.takeIf { it > 0.1 } ?: takeoffV,
-                                            meanVelocity = takeoffV * 0.72,
-                                            currentVideoPosMs = previewPlaybackPosMs,
-                                            onSeekToTimestamp = { relativeOrAbsMs ->
-                                                val absMs = if (relativeOrAbsMs < trimStartMs) trimStartMs + relativeOrAbsMs else relativeOrAbsMs
-                                                resultSeekPosMs = absMs
-                                            },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
                                 } else if (currentMode == "VBT") {
-                                    // Ficha de Datos de Sesión (Atleta, Tipo de Ejercicio, Ejercicio y Carga)
+                                    // Ficha de Datos de Sesión (Debajo de Telemetría Cinemática, perfectamente alineada sin desencuadrar el badge derecho)
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
                                         color = Color(0xFF1E1E1E),
@@ -3544,23 +3571,33 @@ fun VideoAnalysisScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text(selectedExerciseModel.family.icon, fontSize = 20.sp)
+                                                Row(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .padding(end = 10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(selectedExerciseModel.family.icon, fontSize = 19.sp)
                                                     Spacer(modifier = Modifier.width(8.dp))
-                                                    Column {
+                                                    Column(modifier = Modifier.weight(1f)) {
                                                         Text(
-                                                            selectedExerciseModel.displayName,
+                                                            text = combinedExerciseDisplayName,
                                                             color = Color.White,
                                                             fontWeight = FontWeight.Bold,
-                                                            fontSize = 14.sp
+                                                            fontSize = 13.5.sp,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
                                                         Text(
-                                                            if (selectedExerciseModel.family == VBTExerciseFamily.HILL_TRADITIONAL)
-                                                                "Tradicionales (Ley de Hill)"
-                                                            else
-                                                                "Olímpicos (DLP)",
+                                                            text = when {
+                                                                selectedExerciseSequence.size > 1 -> "Complex (${selectedExerciseSequence.size} ejercicios) • Olímpicos (DLP)"
+                                                                selectedExerciseModel.family == VBTExerciseFamily.HILL_TRADITIONAL -> "Tradicionales (Ley de Hill)"
+                                                                else -> "Olímpicos (DLP) • MVT: ${selectedExerciseModel.mvt} m/s"
+                                                            },
                                                             color = Color(0xFF00FFCC),
-                                                            fontSize = 11.sp
+                                                            fontSize = 11.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
                                                 }
@@ -3570,10 +3607,12 @@ fun VideoAnalysisScreen(
                                                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2C2C2C))
                                                 ) {
                                                     Text(
-                                                        if (selectedExerciseModel.usesPeakVelocity) "⚡ Vel. Pico (PV)" else "🏋️ Vel. Media (VM)",
+                                                        text = if (selectedExerciseModel.usesPeakVelocity) "⚡ Vel. Pico (PV)" else "🏋️ Vel. Media (VM)",
                                                         color = Color.LightGray,
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Medium,
+                                                        maxLines = 1,
+                                                        softWrap = false,
                                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                     )
                                                 }
@@ -3588,13 +3627,18 @@ fun VideoAnalysisScreen(
                                                     "👤 Atleta: ${activeUser?.name ?: "Invitado"} (${String.format(Locale.US, "%.1f", activeUser?.bodyWeightKg ?: 70.0)} kg)",
                                                     color = Color.LightGray,
                                                     fontSize = 11.5.sp,
-                                                    fontWeight = FontWeight.Medium
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
                                                 )
                                                 Text(
                                                     "⚖️ Peso: ${currentLoadKg.toInt()} kg",
                                                     color = Color(0xFF00FFCC),
                                                     fontSize = 11.5.sp,
-                                                    fontWeight = FontWeight.Bold
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    softWrap = false
                                                 )
                                             }
                                         }
@@ -3883,22 +3927,6 @@ fun VideoAnalysisScreen(
 
                                     Spacer(modifier = Modifier.height(14.dp))
 
-                                    // Gráfico Dinámico de Telemetría (Velocidad, Aceleración, Ondas en Cuadrícula)
-                                    KinematicTelemetryChart(
-                                        trackingPoints = trackingPointsResult,
-                                        peakVelocity = peakVelocity,
-                                        meanVelocity = meanVelocity,
-                                        vmpVelocity = vmpVelocity,
-                                        currentVideoPosMs = previewPlaybackPosMs,
-                                        onSeekToTimestamp = { relativeOrAbsMs ->
-                                            val absMs = if (relativeOrAbsMs < trimStartMs) trimStartMs + relativeOrAbsMs else relativeOrAbsMs
-                                            resultSeekPosMs = absMs
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-
-                                    Spacer(modifier = Modifier.height(14.dp))
-
                                     // Tarjeta de Interpretación Biomecánica & Diagnóstico
                                     val evaluation = BiomechanicalPdfReportGenerator.evaluateLift(
                                         peakVelocity = peakVelocity,
@@ -3909,7 +3937,8 @@ fun VideoAnalysisScreen(
                                         peakForceN = peakForceN,
                                         workJoules = workJoules,
                                         timeToPeakMs = timeToPeakMs,
-                                        rfdNPerSec = rfdNPerSec
+                                        rfdNPerSec = rfdNPerSec,
+                                        exerciseName = combinedExerciseDisplayName
                                     )
                                     BiomechanicalInterpretationCard(
                                         evaluation = evaluation,
@@ -3954,7 +3983,7 @@ fun VideoAnalysisScreen(
                                                             videoUri = Uri.parse(videoUriString),
                                                             athleteName = targetUser.name,
                                                             athleteWeightKg = targetUser.bodyWeightKg,
-                                                            exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical (${selectedJumpType.name})",
+                                                            exerciseName = if (currentMode == "VBT") combinedExerciseDisplayName else "Salto Vertical (${selectedJumpType.name})",
                                                             exerciseFamily = if (currentMode == "VBT") selectedExerciseModel.family.label else "Salto",
                                                             loadKg = currentLoadKg,
                                                             peakVelocity = peakVelocity,
@@ -3973,7 +4002,9 @@ fun VideoAnalysisScreen(
                                                             trackingPoints = trackingPointsResult,
                                                             trimStartMs = trimStartMs,
                                                             trimEndMs = trimEndMs,
-                                                            repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList()
+                                                            repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList(),
+                                                            exerciseSequenceNames = if (currentMode == "VBT") selectedExerciseSequence.map { it.shortName } else emptyList(),
+                                                            exerciseMvt = if (currentMode == "VBT") selectedExerciseModel.mvt else null
                                                         )
                                                         generatedPdfPath = repFile.absolutePath
                                                         repFile.absolutePath
@@ -3989,7 +4020,7 @@ fun VideoAnalysisScreen(
 
                                                     val savedVideoPath = generatedVideoPath?.takeIf { File(it).exists() } ?: try {
                                                         val metricSummary = if (currentMode == "VBT") {
-                                                            "${selectedExerciseModel.displayName} • ${currentLoadKg.toInt()} kg • 1RM: ${estimatedOneRM.toInt()}kg • VP: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s"
+                                                            "$combinedExerciseDisplayName • ${currentLoadKg.toInt()} kg • 1RM: ${estimatedOneRM.toInt()}kg • VP: ${String.format(Locale.US, "%.2f", peakVelocity)} m/s"
                                                         } else {
                                                             "Altura: ${String.format(Locale.US, "%.1f", (finalResult ?: 0.0) * 100)} cm"
                                                         }
@@ -3999,7 +4030,7 @@ fun VideoAnalysisScreen(
                                                             outputFile = persistentVideoFile,
                                                             mode = currentMode ?: "VBT",
                                                             trackingPoints = trackingPointsResult,
-                                                            exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical",
+                                                            exerciseName = if (currentMode == "VBT") combinedExerciseDisplayName else "Salto Vertical",
                                                             athleteName = targetUser.name,
                                                             bestMetricSummary = metricSummary,
                                                             originBaselineY = VBTAnalyzer.originBaselineY,
@@ -4033,7 +4064,7 @@ fun VideoAnalysisScreen(
                                                         Session(
                                                             id = UUID.randomUUID().toString(),
                                                             userId = targetUser.id,
-                                                            activityType = if (currentMode == "VBT") "${currentMode} (${selectedExerciseModel.displayName})" else currentMode!!,
+                                                            activityType = if (currentMode == "VBT") "${currentMode} ($combinedExerciseDisplayName)" else currentMode!!,
                                                             result = finalResult!!,
                                                             timestamp = System.currentTimeMillis(),
                                                             powerWatts = if (currentMode == "VBT") peakPowerWatts else jumpMetricsResult?.peakPowerWatts,
@@ -4083,7 +4114,7 @@ fun VideoAnalysisScreen(
                                                     videoUri = Uri.parse(videoUriString),
                                                     athleteName = activeUser?.name ?: "Atleta Invitado",
                                                     athleteWeightKg = activeUser?.bodyWeightKg ?: 75.0,
-                                                    exerciseName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical (${selectedJumpType.name})",
+                                                    exerciseName = if (currentMode == "VBT") combinedExerciseDisplayName else "Salto Vertical (${selectedJumpType.name})",
                                                     exerciseFamily = if (currentMode == "VBT") selectedExerciseModel.family.label else "Salto",
                                                     loadKg = currentLoadKg,
                                                     peakVelocity = peakVelocity,
@@ -4102,7 +4133,9 @@ fun VideoAnalysisScreen(
                                                     trackingPoints = trackingPointsResult,
                                                     trimStartMs = trimStartMs,
                                                     trimEndMs = trimEndMs,
-                                                    repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList()
+                                                    repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList(),
+                                                    exerciseSequenceNames = if (currentMode == "VBT") selectedExerciseSequence.map { it.shortName } else emptyList(),
+                                                    exerciseMvt = if (currentMode == "VBT") selectedExerciseModel.mvt else null
                                                 )
                                                 generatedPdfPath = reportFile.absolutePath
                                                 showPdfPreviewDialog = true
@@ -4186,7 +4219,7 @@ fun VideoAnalysisScreen(
                             }
 
                             if (showExportDataDialog) {
-                                val initialExName = if (currentMode == "VBT") selectedExerciseModel.displayName else "Salto Vertical"
+                                val initialExName = if (currentMode == "VBT") combinedExerciseDisplayName else "Salto Vertical"
                                 ExportReportDataDialog(
                                     initialAthleteName = activeUser?.name ?: "",
                                     initialLoadKg = currentLoadKg,
@@ -4207,6 +4240,7 @@ fun VideoAnalysisScreen(
                                         // Sincronizar modelo de ejercicio si coincide
                                         VBTExerciseModel.values().find { it.displayName.equals(exerciseName, ignoreCase = true) }?.let {
                                             selectedExerciseModel = it
+                                            selectedExerciseSequence = listOf(it)
                                         }
 
                                         coroutineScope.launch {
@@ -4250,7 +4284,9 @@ fun VideoAnalysisScreen(
                                                         trackingPoints = trackingPointsResult,
                                                         trimStartMs = trimStartMs,
                                                         trimEndMs = trimEndMs,
-                                                        repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList()
+                                                        repsList = com.speedtracker.core.math.VBTAnalyzer.currentSetReps.toList(),
+                                                        exerciseSequenceNames = if (currentMode == "VBT") selectedExerciseSequence.map { it.shortName } else emptyList(),
+                                                        exerciseMvt = if (currentMode == "VBT") selectedExerciseModel.mvt else null
                                                     )
                                                     generatedPdfPath = repFile.absolutePath
                                                     repFile.absolutePath
@@ -4640,7 +4676,16 @@ fun VideoAnalysisScreen(
                 setupFamily = setupFamily,
                 onFamilyChange = { setupFamily = it },
                 selectedVBTExercise = selectedVBTExercise,
-                onVBTExerciseChange = { selectedVBTExercise = it },
+                onVBTExerciseChange = {
+                    selectedVBTExercise = it
+                },
+                selectedExerciseSequence = selectedExerciseSequence,
+                onExerciseSequenceChange = { seq ->
+                    if (seq.isNotEmpty()) {
+                        selectedExerciseSequence = seq
+                        selectedVBTExercise = seq.first()
+                    }
+                },
                 selectedJumpType = selectedJumpType,
                 onJumpTypeChange = {
                     selectedJumpType = it
@@ -5783,7 +5828,7 @@ fun AnalysisResultVideoPreview(
     }
 
     val isVertical = if (videoNativeWidth > 0 && videoNativeHeight > 0) videoNativeHeight > videoNativeWidth else true
-    val previewHeight = if (isVertical) 480.dp else 280.dp
+    val previewHeight = if (isVertical) 330.dp else 240.dp
 
     fun applySpeed(speed: Float) {
         playbackSpeed = speed
@@ -6542,42 +6587,6 @@ fun AnalysisResultVideoPreview(
                                 }
                             }
                         }
-
-                        // Botón Gráficos centrado en el espacio restante entre 1.0x y el margen derecho
-                        Box(
-                            modifier = Modifier.weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Surface(
-                                onClick = { showTelemetryOverlay = !showTelemetryOverlay },
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (showTelemetryOverlay) Color(0x3300FFCC) else Color(0xFF262626),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (showTelemetryOverlay) Color(0xFF00FFCC) else Color(0xFF444444)
-                                ),
-                                modifier = Modifier.height(28.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                    modifier = Modifier.padding(horizontal = 10.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.ShowChart,
-                                        contentDescription = "Gráficos en tiempo real",
-                                        tint = if (showTelemetryOverlay) Color(0xFF00FFCC) else Color.LightGray,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        "Gráficos",
-                                        color = if (showTelemetryOverlay) Color(0xFF00FFCC) else Color.LightGray,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (showTelemetryOverlay) FontWeight.Bold else FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -7200,6 +7209,8 @@ fun PreCalibrationSetupDialog(
     onFamilyChange: (VBTExerciseFamily) -> Unit,
     selectedVBTExercise: VBTExerciseModel,
     onVBTExerciseChange: (VBTExerciseModel) -> Unit,
+    selectedExerciseSequence: List<VBTExerciseModel> = listOf(selectedVBTExercise),
+    onExerciseSequenceChange: (List<VBTExerciseModel>) -> Unit = {},
     selectedJumpType: JumpType,
     onJumpTypeChange: (JumpType) -> Unit,
     allUsers: List<com.speedtracker.domain.model.User>,
@@ -7237,7 +7248,11 @@ fun PreCalibrationSetupDialog(
     }
 
     val currentExerciseText = if (currentMode == "VBT") {
-        selectedVBTExercise.displayName
+        if (selectedExerciseSequence.size > 1) {
+            selectedExerciseSequence.mapIndexed { idx, ex -> "${idx + 1}. ${ex.shortName}" }.joinToString(" + ")
+        } else {
+            selectedVBTExercise.displayName
+        }
     } else {
         when (selectedJumpType) {
             JumpType.CMJ -> "Salto Contramovimiento (CMJ)"
@@ -7697,7 +7712,7 @@ fun PreCalibrationSetupDialog(
         }
     }
 
-    // ── POP-UP SECUNDARIO 2: LISTA DE EJERCICIOS FILTRADA POR EL TIPO DE EJERCICIO ACTIVO ──
+    // ── POP-UP SECUNDARIO 2: VENTANA AMPLIA DE SELECCIÓN DE EJERCICIO Y SECUENCIA COMPLEX ──
     if (showExercisePickerPopup) {
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { showExercisePickerPopup = false },
@@ -7705,30 +7720,124 @@ fun PreCalibrationSetupDialog(
         ) {
             Surface(
                 modifier = Modifier
-                    .fillMaxWidth(0.86f)
-                    .heightIn(max = 500.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF21262E),
-                tonalElevation = 12.dp
+                    .fillMaxWidth(0.95f)
+                    .fillMaxHeight(0.86f),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF1E232B),
+                tonalElevation = 14.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333C48))
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 18.dp)
+                        .padding(vertical = 14.dp)
                 ) {
-                    Column(modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp)) {
-                        Text(
-                            text = "Seleccionar Ejercicio",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = currentExerciseTypeLabel,
-                            color = accentColor,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                    // Cabecera amplia con soporte de secuencia de ejercicios (Complex)
+                    Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Seleccionar Ejercicio o Complex",
+                                    color = Color.White,
+                                    fontSize = 17.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "$currentExerciseTypeLabel • Toca para elegir o [+ Sumar] para armar un Complex en orden",
+                                    color = accentColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            if (currentMode == "VBT" && selectedExerciseSequence.size > 1) {
+                                TextButton(
+                                    onClick = {
+                                        val first = selectedExerciseSequence.first()
+                                        onExerciseSequenceChange(listOf(first))
+                                        onVBTExerciseChange(first)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text("Limpiar", color = Color(0xFFFF5252), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        // Barra visual con el orden de ejercicios seleccionados en el video
+                        if (currentMode == "VBT") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                color = Color(0xFF14181E),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2D3744)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                    Text(
+                                        text = if (selectedExerciseSequence.size > 1)
+                                            "Orden del Complex en el video (${selectedExerciseSequence.size} ejercicios):"
+                                        else
+                                            "Ejercicio seleccionado (puedes sumar otro con [+ Sumar] para un Complex):",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        selectedExerciseSequence.forEachIndexed { idx, exModel ->
+                                            Surface(
+                                                color = Color(0x2600FFCC),
+                                                shape = RoundedCornerShape(6.dp),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, accentColor)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "${idx + 1}. ${exModel.shortName}",
+                                                        color = Color.White,
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1
+                                                    )
+                                                    if (selectedExerciseSequence.size > 1) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Close,
+                                                            contentDescription = "Quitar ejercicio",
+                                                            tint = accentColor,
+                                                            modifier = Modifier
+                                                                .size(14.dp)
+                                                                .clickable {
+                                                                    val updated = selectedExerciseSequence.toMutableList().apply { removeAt(idx) }
+                                                                    if (updated.isNotEmpty()) {
+                                                                        onExerciseSequenceChange(updated)
+                                                                        onVBTExerciseChange(updated.first())
+                                                                    }
+                                                                }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            if (idx < selectedExerciseSequence.lastIndex) {
+                                                Text("➔", color = accentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Divider(color = Color(0xFF333C48), thickness = 1.dp)
@@ -7737,7 +7846,7 @@ fun PreCalibrationSetupDialog(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f, fill = false)
+                            .weight(1f)
                             .drawWithContent {
                                 drawContent()
                                 val maxScroll = exerciseScrollState.maxValue.toFloat()
@@ -7752,14 +7861,12 @@ fun PreCalibrationSetupDialog(
                                     val thumbOffsetY = barPaddingVertical + scrollFraction * (trackHeight - thumbHeight)
                                     val barX = size.width - barWidth - barMarginRight
 
-                                    // Riel de fondo de la barra de scroll
                                     drawRoundRect(
                                         color = Color(0xFF333C48),
                                         topLeft = Offset(barX, barPaddingVertical),
                                         size = Size(barWidth, trackHeight),
                                         cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
                                     )
-                                    // Indicador activo (barrita de scroll) en color cian brillante
                                     drawRoundRect(
                                         color = accentColor,
                                         topLeft = Offset(barX, thumbOffsetY),
@@ -7769,10 +7876,9 @@ fun PreCalibrationSetupDialog(
                                 }
                             }
                             .verticalScroll(exerciseScrollState)
-                            .padding(end = 12.dp)
+                            .padding(end = 10.dp)
                     ) {
                         if (currentMode == "JUMP") {
-                            // Solo aparecen los Saltos cuando el Tipo es Balísticos-Explosivos (Saltos)
                             listOf(
                                 JumpType.CMJ to ("Salto Contramovimiento (CMJ)" to "Evaluación elástico-explosiva con fase excéntrica"),
                                 JumpType.SJ to ("Squat Jump (SJ)" to "Potencia concéntrica pura desde flexión estática de 90°"),
@@ -7807,7 +7913,7 @@ fun PreCalibrationSetupDialog(
                                         Text(
                                             text = title,
                                             color = Color.White,
-                                            fontSize = 15.5.sp,
+                                            fontSize = 15.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                         )
                                         Text(
@@ -7819,24 +7925,29 @@ fun PreCalibrationSetupDialog(
                                 }
                             }
                         } else {
-                            // Solo aparecen los ejercicios de la familia seleccionada (Tradicionales Ley de Hill o Olímpicos DLP)
+                            // Catálogo completo filtrado por la familia activa (36 Olímpicos DLP o Ley de Hill)
                             val filteredExercises = VBTExerciseModel.values().filter { it.family == setupFamily }
                             filteredExercises.forEach { model ->
-                                val isSelected = selectedVBTExercise == model
+                                val orderIndices = selectedExerciseSequence.mapIndexedNotNull { idx, m -> if (m == model) idx + 1 else null }
+                                val isSelected = orderIndices.isNotEmpty()
+
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
+                                            // Al tocar la fila, selecciona este ejercicio como único y cierra (flujo rápido 1 toque)
                                             onVBTExerciseChange(model)
+                                            onExerciseSequenceChange(listOf(model))
                                             showExercisePickerPopup = false
                                         }
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                        .padding(horizontal = 14.dp, vertical = 9.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     RadioButton(
                                         selected = isSelected,
                                         onClick = {
                                             onVBTExerciseChange(model)
+                                            onExerciseSequenceChange(listOf(model))
                                             showExercisePickerPopup = false
                                         },
                                         colors = RadioButtonDefaults.colors(
@@ -7844,51 +7955,87 @@ fun PreCalibrationSetupDialog(
                                             unselectedColor = labelColor
                                         )
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                         Text(
                                             text = model.displayName,
-                                            color = Color.White,
-                                            fontSize = 15.5.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            color = if (isSelected) accentColor else Color.White,
+                                            fontSize = 14.5.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
                                             text = if (model.usesPeakVelocity)
-                                                "PV (Pico) • MVT: ${model.mvt} m/s"
+                                                "PV (Pico) • MVT: ${String.format(Locale.US, "%.2f", model.mvt)} m/s"
                                             else
-                                                "VM (Media) • MVT: ${model.mvt} m/s",
+                                                "VM (Media) • MVT: ${String.format(Locale.US, "%.2f", model.mvt)} m/s",
                                             color = labelColor,
                                             fontSize = 11.sp,
                                             maxLines = 1
                                         )
                                     }
+
+                                    // Botón [+ Sumar] para encadenar otro ejercicio en orden (Complex) sin cerrar la ventana
+                                    Surface(
+                                        onClick = {
+                                            val nextSeq = selectedExerciseSequence + model
+                                            onExerciseSequenceChange(nextSeq)
+                                            onVBTExerciseChange(nextSeq.first())
+                                        },
+                                        color = if (isSelected) Color(0x3300FFCC) else Color(0xFF2B333E),
+                                        shape = RoundedCornerShape(6.dp),
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (isSelected) accentColor else Color(0xFF475569)
+                                        )
+                                    ) {
+                                        Text(
+                                            text = if (orderIndices.isNotEmpty()) "+ Sumar (#${orderIndices.joinToString(",")})" else "+ Sumar",
+                                            color = if (isSelected) accentColor else Color.White,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                        )
+                                    }
                                 }
+                                Divider(color = Color(0xFF28303A), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 14.dp))
                             }
                         }
-                    }
-
-                    if (exerciseScrollState.maxValue > 0 && exerciseScrollState.value < exerciseScrollState.maxValue - 10) {
-                        Text(
-                            text = "▾ Desliza para ver más ejercicios",
-                            color = accentColor.copy(alpha = 0.85f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                        )
                     }
 
                     Divider(color = Color(0xFF333C48), thickness = 1.dp)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.End
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        TextButton(onClick = { showExercisePickerPopup = false }) {
-                            Text("CERRAR", color = accentColor, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "${VBTExerciseModel.values().count { it.family == setupFamily }} ejercicios disponibles",
+                            color = labelColor,
+                            fontSize = 11.sp
+                        )
+                        Button(
+                            onClick = { showExercisePickerPopup = false },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accentColor,
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = if (selectedExerciseSequence.size > 1)
+                                    "CONFIRMAR COMPLEX (${selectedExerciseSequence.size})"
+                                else
+                                    "LISTO",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.5.sp
+                            )
                         }
                     }
                 }

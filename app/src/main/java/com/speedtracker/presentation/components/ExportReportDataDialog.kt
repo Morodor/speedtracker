@@ -44,29 +44,9 @@ fun ExportReportDataDialog(
     var loadKgText by remember { mutableStateOf(initialLoadKg.toInt().toString()) }
     var exerciseName by remember { mutableStateOf(initialExerciseName) }
 
-    val commonExercises = listOf(
-        "Arranque (Snatch)",
-        "Arranque Colgante (Hang Snatch)",
-        "Arranque de Potencia (Power Snatch)",
-        "Hang Power Snatch",
-        "Cargada (Clean)",
-        "Cargada Colgante (Hang Clean)",
-        "Cargada de Potencia (Power Clean)",
-        "Hang Power Clean",
-        "Envión (Jerk)",
-        "Push Jerk",
-        "Split Jerk",
-        "Push Press",
-        "Sentadilla de Arranque (Overhead Squat)",
-        "Tirones de Arranque (Snatch Pulls)",
-        "Tirones de Cargada (Clean Pulls)",
-        "Complex: Clean + Jerk",
-        "Complex: Hang Power Clean + Push Jerk",
-        "Complex: Snatch + Overhead Squat",
-        "Sentadilla",
-        "Press Banca",
-        "Peso Muerto"
-    )
+    val commonExercises = remember {
+        com.speedtracker.core.math.VBTExerciseModel.values().map { it.displayName }
+    }
 
     val quickLoads = listOf(40, 50, 60, 70, 80, 90, 100, 110, 120)
 

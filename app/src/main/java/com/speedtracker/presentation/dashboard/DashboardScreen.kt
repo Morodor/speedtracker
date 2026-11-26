@@ -130,140 +130,89 @@ fun DashboardScreen(
         },
         containerColor = Color(0xFF1E1E1E)
     ) { paddingValues ->
-        LazyColumn(
+        // ── CUADRÍCULA 2x2 A PANTALLA COMPLETA (SIN HISTORIAL EN EL HOME) ──
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // ── CUADRÍCULA 2x2 DE ACCIONES PRINCIPALES ALARGADAS (CON TEXTO COMPLETO Y ESPACIO CÓMODO) ──
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // FILA SUPERIOR: [1] Importar Video desde Galería | [2] Grabar desde Cámara
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        HomeActionGridCard(
-                            title = "Importar Video desde Galería",
-                            subtitle = "Recorta la repetición, calibra 45 cm y mide VBT",
-                            icon = Icons.Default.VideoLibrary,
-                            accentColor = Color(0xFF00FFCC),
-                            containerColor = Color(0xFF182825),
-                            onClick = { videoPickerLauncher.launch("video/*") },
-                            modifier = Modifier.weight(1f)
-                        )
+            // FILA SUPERIOR: [1] Importar Video desde Galería | [2] Grabar desde Cámara
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                HomeActionGridCard(
+                    title = "Importar Video desde Galería",
+                    subtitle = "Recorta la repetición, calibra 45 cm y mide VBT",
+                    icon = Icons.Default.VideoLibrary,
+                    accentColor = Color(0xFF00FFCC),
+                    containerColor = Color(0xFF182825),
+                    onClick = { videoPickerLauncher.launch("video/*") },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                )
 
-                        HomeActionGridCard(
-                            title = "Grabar desde Cámara",
-                            subtitle = "Graba tu serie y pasa al análisis concéntrico",
-                            icon = Icons.Default.PhotoCamera,
-                            accentColor = Color(0xFF00E5FF),
-                            containerColor = Color(0xFF16242C),
-                            onClick = {
-                                val granted = ContextCompat.checkSelfPermission(
-                                    context,
-                                    Manifest.permission.CAMERA
-                                ) == PackageManager.PERMISSION_GRANTED
-                                if (granted) {
-                                    launchNormalVideoCamera()
-                                } else {
-                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    // FILA INFERIOR: [3] Medición Rápida (Velocidad en Vivo) | [4] Tutorial
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        HomeActionGridCard(
-                            title = "Medición Rápida (Velocidad en Vivo)",
-                            subtitle = "Medir velocidad de barra al vuelo sin registro",
-                            icon = Icons.Default.Bolt,
-                            accentColor = Color(0xFFFF9800),
-                            containerColor = Color(0xFF2B2211),
-                            onClick = onNavigateToQuickCamera,
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        HomeActionGridCard(
-                            title = "Tutorial VBT",
-                            subtitle = "Guía y práctica interactiva con Snatch Olímpico",
-                            icon = Icons.Default.HelpOutline,
-                            accentColor = Color(0xFF00E676),
-                            containerColor = Color(0xFF17261E),
-                            onClick = {
-                                val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v4.mp4")
-                                onNavigateToVideoAnalysis(uri.toString())
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
-
-            // Historial Reciente de Sesiones
-            item {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Historial Reciente",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = Color.LightGray,
-                    fontWeight = FontWeight.SemiBold
+                HomeActionGridCard(
+                    title = "Grabar desde Cámara",
+                    subtitle = "Graba tu serie y pasa al análisis concéntrico",
+                    icon = Icons.Default.PhotoCamera,
+                    accentColor = Color(0xFF00E5FF),
+                    containerColor = Color(0xFF16242C),
+                    onClick = {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            launchNormalVideoCamera()
+                        } else {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
                 )
             }
 
-            if (sessions.isEmpty()) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF262626))
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                "No hay registros aún",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                "Importa un video desde galería o graba desde cámara para analizar y guardar en la ficha del atleta.",
-                                color = Color.Gray,
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-            } else {
-                items(sessions) { session ->
-                    SessionItemCard(
-                        session = session,
-                        athleteName = usersMap[session.userId]?.name,
-                        onDelete = {
-                            userRepository.deleteSession(session.id)
-                            sessions = userRepository.getSessions().sortedByDescending { it.timestamp }
-                        }
-                    )
-                }
-            }
+            // FILA INFERIOR: [3] Medición Rápida (Velocidad en Vivo) | [4] Tutorial VBT
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                HomeActionGridCard(
+                    title = "Medición Rápida (Velocidad en Vivo)",
+                    subtitle = "Medir velocidad de barra al vuelo sin registro",
+                    icon = Icons.Default.Bolt,
+                    accentColor = Color(0xFFFF9800),
+                    containerColor = Color(0xFF2B2211),
+                    onClick = onNavigateToQuickCamera,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                )
 
-            // Espacio final para que la barra inferior no tape el último item
-            item {
-                Spacer(modifier = Modifier.height(72.dp))
+                HomeActionGridCard(
+                    title = "Tutorial VBT",
+                    subtitle = "Guía y práctica interactiva con Snatch Olímpico",
+                    icon = Icons.Default.HelpOutline,
+                    accentColor = Color(0xFF00E676),
+                    containerColor = Color(0xFF17261E),
+                    onClick = {
+                        val uri = copyRawVideoToCache(context, R.raw.sample_snatch, "sample_snatch_v4.mp4")
+                        onNavigateToVideoAnalysis(uri.toString())
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                )
             }
         }
     }
@@ -295,7 +244,7 @@ fun HomeActionGridCard(
 ) {
     Card(
         modifier = modifier
-            .height(180.dp)
+            .fillMaxHeight()
             .clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(1.2.dp, accentColor.copy(alpha = 0.55f)),
