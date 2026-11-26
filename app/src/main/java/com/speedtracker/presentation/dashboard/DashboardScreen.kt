@@ -355,26 +355,26 @@ fun HomeActionGridCard(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            // ── FOTOGRAFÍA REAL DE HALTEROFILIA EN TRANSPARENCIA DE FONDO ──
+            // ── FOTOGRAFÍA REAL DE HALTEROFILIA CON MAYOR VISIBILIDAD DE FONDO ──
             Image(
                 painter = painterResource(id = backgroundImageResId),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .alpha(0.32f)
+                    .alpha(0.55f)
             )
 
-            // ── VELO DEGRADADO PARA QUE EL TEXTO Y EL ICONO CENTRADO RESALTEN CON CLARIDAD ──
+            // ── VELO DEGRADADO SUAVE PARA QUE LA IMAGEN SE VEA CLARA Y EL TEXTO RESALTE ──
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
-                                containerColor.copy(alpha = 0.68f),
-                                containerColor.copy(alpha = 0.45f),
-                                containerColor.copy(alpha = 0.82f)
+                                containerColor.copy(alpha = 0.50f),
+                                containerColor.copy(alpha = 0.28f),
+                                containerColor.copy(alpha = 0.68f)
                             )
                         )
                     )
