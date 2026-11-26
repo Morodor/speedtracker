@@ -926,7 +926,17 @@ fun SingleAthleteProgressionDialog(
                         }
                     }
 
-                    // ── 3. SELECTOR DE MÉTRICA A COMPARAR ENTRE SUS MEDICIONES ──
+                    // ── 3. SELECTOR DESPLEGABLE DE MÉTRICA DE PROGRESO (MUESTRA TODAS LAS OPCIONES) ──
+                    val metricOptions = listOf(
+                        "VBT" to "⚡ Velocidad Pico (m/s)",
+                        "VMP" to "🎯 Vel. Propulsiva (m/s)",
+                        "POWER" to "🔥 Potencia (Watts)",
+                        "REL_POWER" to "⚖️ Potencia Relativa (W/kg)",
+                        "LOAD" to "🏋️ Carga Levantada (kg)"
+                    )
+                    var metricMenuExpanded by remember { mutableStateOf(false) }
+                    val selectedMetricLabel = metricOptions.find { it.first == selectedMetricType }?.second ?: "⚡ Velocidad Pico (m/s)"
+
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
                             "Métrica de Progreso:",
@@ -934,38 +944,70 @@ fun SingleAthleteProgressionDialog(
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf(
-                                "VBT" to "⚡ Velocidad Pico (m/s)",
-                                "VMP" to "🎯 Vel. Propulsiva (m/s)",
-                                "POWER" to "🔥 Potencia (Watts)",
-                                "REL_POWER" to "⚖️ Relativa (W/kg)",
-                                "LOAD" to "🏋️ Carga (kg)"
-                            ).forEach { (key, label) ->
-                                val isSel = selectedMetricType == key
-                                Surface(
-                                    onClick = { selectedMetricType = key },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (isSel) Color(0xFF00FFCC) else Color(0xFF1B222C),
-                                    border = BorderStroke(1.2.dp, if (isSel) Color(0xFF00FFCC) else Color(0xFF2C394A)),
-                                    modifier = Modifier.height(36.dp)
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Surface(
+                                onClick = { metricMenuExpanded = true },
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFF1B222C),
+                                border = BorderStroke(1.2.dp, Color(0xFF00FFCC)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(42.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.padding(horizontal = 12.dp)
-                                    ) {
-                                        Text(
-                                            label,
-                                            color = if (isSel) Color.Black else Color.White,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                                    Text(
+                                        text = selectedMetricLabel,
+                                        color = Color(0xFF00FFCC),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "Elegir métrica",
+                                        tint = Color(0xFF00FFCC)
+                                    )
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = metricMenuExpanded,
+                                onDismissRequest = { metricMenuExpanded = false },
+                                modifier = Modifier
+                                    .background(Color(0xFF1B222C))
+                                    .widthIn(min = 260.dp)
+                            ) {
+                                metricOptions.forEach { (key, label) ->
+                                    val isSel = selectedMetricType == key
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = label,
+                                                color = if (isSel) Color(0xFF00FFCC) else Color.White,
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = 13.sp
+                                            )
+                                        },
+                                        trailingIcon = if (isSel) {
+                                            {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFF00FFCC),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        } else null,
+                                        onClick = {
+                                            selectedMetricType = key
+                                            metricMenuExpanded = false
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -1249,7 +1291,8 @@ fun SingleAthleteProgressionDialog(
 
                     Button(
                         onClick = {
-                            onGeneratePdfReport(selectedUser, filteredSessionsChronological.reversed())
+                            // Incluir en el informe TODOS los registros ingresados del atleta
+                            onGeneratePdfReport(selectedUser, userSessionsDesc)
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFF00FFCC),
@@ -1467,8 +1510,8 @@ fun generateAthleteSummaryPdfReport(
         }
 
         val dfFull = SimpleDateFormat("dd/MM/yy HH:mm", Locale.getDefault())
-        val maxRows = 16
-        sortedDesc.take(maxRows).forEachIndexed { idx, s ->
+        val firstPageMaxRows = 16
+        sortedDesc.take(firstPageMaxRows).forEachIndexed { idx, s ->
             val y = headerRowY + 24f + idx * 21f
             val dateStr = dfFull.format(Date(s.timestamp))
             val exStr = if (s.activityType.length > 32) s.activityType.take(30) + "…" else s.activityType
@@ -1486,6 +1529,59 @@ fun generateAthleteSummaryPdfReport(
         }
 
         pdfDocument.finishPage(page)
+
+        // Páginas adicionales si el atleta tiene más de 16 mediciones registradas (muestra el 100% de los registros)
+        var remaining = sortedDesc.drop(firstPageMaxRows)
+        var pageNum = 2
+        val extraPageRows = 33
+        while (remaining.isNotEmpty()) {
+            val extraPageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create()
+            val extraPage = pdfDocument.startPage(extraPageInfo)
+            val ec = extraPage.canvas
+            ec.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), bgPaint)
+
+            val extraRect = RectF(28f, 28f, pageWidth - 28f, pageHeight - 36f)
+            ec.drawRoundRect(extraRect, 12f, 12f, cardPaint)
+            ec.drawRoundRect(extraRect, 12f, 12f, borderSubtlePaint)
+
+            ec.drawText(
+                "REGISTRO COMPLETO DE MEDICIONES • ${user.name.uppercase()} (Pág. $pageNum)",
+                44f,
+                52f,
+                whiteBoldPaint.apply { textSize = 11.5f }
+            )
+
+            val eHeaderY = 76f
+            ec.drawText("FECHA / HORA", colFechaX, eHeaderY, tableHeaderPaint)
+            ec.drawText("EJERCICIO / COMPLEX", colEjercicioX, eHeaderY, tableHeaderPaint)
+            ec.drawText("CARGA", colCargaX, eHeaderY, tableHeaderPaint)
+            ec.drawText("VEL. PICO", colPvX, eHeaderY, tableHeaderPaint)
+            ec.drawText("VMP", colVmpX, eHeaderY, tableHeaderPaint)
+            ec.drawText("POTENCIA", colPotX, eHeaderY, tableHeaderPaint)
+            ec.drawLine(40f, eHeaderY + 6f, pageWidth - 40f, eHeaderY + 6f, borderSubtlePaint)
+
+            val chunk = remaining.take(extraPageRows)
+            chunk.forEachIndexed { idx, s ->
+                val y = eHeaderY + 24f + idx * 21f
+                val dateStr = dfFull.format(Date(s.timestamp))
+                val exStr = if (s.activityType.length > 32) s.activityType.take(30) + "…" else s.activityType
+                val loadStr = s.loadKg?.let { "${it.toInt()} kg" } ?: "--"
+                val pvStr = "${String.format(Locale.US, "%.2f", s.result)} m/s"
+                val vmpStr = (s.vmpVelocity ?: s.meanVelocity)?.let { "${String.format(Locale.US, "%.2f", it)} m/s" } ?: "--"
+                val potStr = s.powerWatts?.let { "${it.toInt()} W" } ?: "--"
+
+                ec.drawText(dateStr, colFechaX, y, rowPaint)
+                ec.drawText(exStr, colEjercicioX, y, rowPaint)
+                ec.drawText(loadStr, colCargaX, y, rowPaint)
+                ec.drawText(pvStr, colPvX, y, rowCyanPaint)
+                ec.drawText(vmpStr, colVmpX, y, rowPaint)
+                ec.drawText(potStr, colPotX, y, rowPaint)
+            }
+
+            pdfDocument.finishPage(extraPage)
+            remaining = remaining.drop(extraPageRows)
+            pageNum++
+        }
 
         val reportsDir = File(context.filesDir, "saved_reports").apply { mkdirs() }
         val safeName = user.name.replace(Regex("[^a-zA-Z0-9_-]"), "_")
