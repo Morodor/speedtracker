@@ -7,6 +7,7 @@ import android.widget.VideoView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,6 +26,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -44,17 +47,27 @@ fun HistoryScreen(
 ) {
     val context = LocalContext.current
     var sessions by remember { mutableStateOf(userRepository.getSessions().sortedByDescending { it.timestamp }) }
-    val usersMap = remember(sessions) { userRepository.getUsers().associateBy { it.id } }
+    val allUsers = remember(sessions) { userRepository.getUsers() }
+    val usersMap = remember(allUsers) { allUsers.associateBy { it.id } }
 
     var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "JUMP", "VBT"
+    var selectedAthleteFilterId by remember { mutableStateOf("ALL_ATHLETES") } // Por defecto: Todos los deportistas
     var videoSessionToPlay by remember { mutableStateOf<Session?>(null) }
     var pdfSessionToView by remember { mutableStateOf<Session?>(null) }
 
-    val filteredSessions = remember(sessions, selectedFilter) {
+    val athleteFilteredSessions = remember(sessions, selectedAthleteFilterId) {
+        if (selectedAthleteFilterId == "ALL_ATHLETES") {
+            sessions
+        } else {
+            sessions.filter { it.userId == selectedAthleteFilterId }
+        }
+    }
+
+    val filteredSessions = remember(athleteFilteredSessions, selectedFilter) {
         when (selectedFilter) {
-            "JUMP" -> sessions.filter { it.activityType == "JUMP" }
-            "VBT" -> sessions.filter { it.activityType.startsWith("VBT") }
-            else -> sessions
+            "JUMP" -> athleteFilteredSessions.filter { it.activityType == "JUMP" }
+            "VBT" -> athleteFilteredSessions.filter { it.activityType.startsWith("VBT") }
+            else -> athleteFilteredSessions
         }
     }
 
@@ -84,39 +97,132 @@ fun HistoryScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Filtros de categoría
+            // 1. Los 3 botones de filtro de categoría del MISMO TAMAÑO exacto
             item {
+                val categoryItems = listOf(
+                    "ALL" to "Todos (${athleteFilteredSessions.size})",
+                    "JUMP" to "Saltos",
+                    "VBT" to "VBT / Barra"
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    FilterChip(
-                        selected = selectedFilter == "ALL",
-                        onClick = { selectedFilter = "ALL" },
-                        label = { Text("Todos (${sessions.size})") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFF00FFCC),
-                            selectedLabelColor = Color.Black
-                        )
-                    )
-                    FilterChip(
-                        selected = selectedFilter == "JUMP",
-                        onClick = { selectedFilter = "JUMP" },
-                        label = { Text("Saltos") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFF00FFCC),
-                            selectedLabelColor = Color.Black
-                        )
-                    )
-                    FilterChip(
-                        selected = selectedFilter == "VBT",
-                        onClick = { selectedFilter = "VBT" },
-                        label = { Text("VBT / Barra") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFF00FFCC),
-                            selectedLabelColor = Color.Black
-                        )
-                    )
+                    categoryItems.forEach { (key, label) ->
+                        val isSelected = selectedFilter == key
+                        Surface(
+                            onClick = { selectedFilter = key },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) Color(0xFF00FFCC) else Color(0xFF262626),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) Color(0xFF00FFCC) else Color(0xFF3E3E3E)
+                            )
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 6.dp)
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (isSelected) Color.Black else Color.LightGray,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Barra inferior de filtro por Deportista (por defecto: Todos los deportistas)
+            item {
+                Surface(
+                    color = Color(0xFF181D22),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFF2B3642)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = Color(0xFF00FFCC),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "Filtrar por Deportista:",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val isAllSelected = selectedAthleteFilterId == "ALL_ATHLETES"
+                            Surface(
+                                onClick = { selectedAthleteFilterId = "ALL_ATHLETES" },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isAllSelected) Color(0xFF00FFCC).copy(alpha = 0.20f) else Color(0xFF222932),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isAllSelected) Color(0xFF00FFCC) else Color(0xFF334155)
+                                )
+                            ) {
+                                Text(
+                                    text = "Todos los deportistas (${sessions.size})",
+                                    color = if (isAllSelected) Color(0xFF00FFCC) else Color.LightGray,
+                                    fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 11.5.sp,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+
+                            allUsers.forEach { user ->
+                                val count = sessions.count { it.userId == user.id }
+                                val isSel = selectedAthleteFilterId == user.id
+                                Surface(
+                                    onClick = { selectedAthleteFilterId = user.id },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSel) Color(0xFF00FFCC).copy(alpha = 0.20f) else Color(0xFF222932),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSel) Color(0xFF00FFCC) else Color(0xFF334155)
+                                    )
+                                ) {
+                                    Text(
+                                        text = "${user.name} ($count)",
+                                        color = if (isSel) Color(0xFF00FFCC) else Color.LightGray,
+                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 11.5.sp,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

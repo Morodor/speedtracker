@@ -1,5 +1,10 @@
 package com.speedtracker.presentation.athletes
 
+import android.content.Context
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -23,6 +28,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +46,9 @@ import com.speedtracker.presentation.history.SavedPdfReportDialog
 import com.speedtracker.presentation.history.SavedVideoPlayerDialog
 import com.speedtracker.presentation.history.formatHistoryDate
 import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,9 +66,10 @@ fun AthletesScreen(
     var expandedUserId by remember { mutableStateOf<String?>(users.firstOrNull()?.id) }
     var videoSessionToPlay by remember { mutableStateOf<Session?>(null) }
     var pdfSessionToView by remember { mutableStateOf<Session?>(null) }
+    var generatedAthleteReportFile by remember { mutableStateOf<Pair<File, String>?>(null) }
 
-    // Estado para la Comparación Multiatleta (2 a 4 atletas con Gráfico)
-    var showComparisonDialog by remember { mutableStateOf(false) }
+    // Estado para la Evolución e Informe de un Mismo Atleta
+    var athleteForProgression by remember { mutableStateOf<User?>(null) }
 
     fun refreshUsers() {
         users = userRepository.getUsers()
@@ -69,9 +81,12 @@ fun AthletesScreen(
             TopAppBar(
                 title = { Text("Fichas de Atletas", fontWeight = FontWeight.Bold) },
                 actions = {
-                    if (users.size >= 2) {
+                    if (users.isNotEmpty()) {
                         FilledTonalButton(
-                            onClick = { showComparisonDialog = true },
+                            onClick = {
+                                val target = users.find { it.id == expandedUserId } ?: users.firstOrNull()
+                                athleteForProgression = target
+                            },
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = Color(0xFF1B322C),
                                 contentColor = Color(0xFF00FFCC)
@@ -81,12 +96,12 @@ fun AthletesScreen(
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Icon(
-                                Icons.Default.BarChart,
-                                contentDescription = "Comparar",
+                                Icons.Default.TrendingUp,
+                                contentDescription = "Evolución del Atleta",
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Comparar Atletas", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Evolución e Informe", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                     }
@@ -323,6 +338,55 @@ fun AthletesScreen(
                                     }
                                 }
 
+                                // ── BOTONES DE ACCIÓN DEL ATLETA: COMPARAR SUS MEDICIONES + GENERAR INFORME PDF DEL ATLETA ──
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = { athleteForProgression = user },
+                                        modifier = Modifier.weight(1f),
+                                        colors = ButtonDefaults.filledTonalButtonColors(
+                                            containerColor = Color(0xFF162C28),
+                                            contentColor = Color(0xFF00FFCC)
+                                        ),
+                                        border = BorderStroke(1.dp, Color(0xFF00FFCC)),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.TrendingUp, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Comparar Evolución", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    FilledTonalButton(
+                                        onClick = {
+                                            val pdfFile = generateAthleteSummaryPdfReport(
+                                                context = context,
+                                                user = user,
+                                                userSessions = userSessions
+                                            )
+                                            if (pdfFile != null) {
+                                                generatedAthleteReportFile = pdfFile to "Informe de Evolución • ${user.name}"
+                                            } else {
+                                                Toast.makeText(context, "Error al generar el informe del atleta", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        colors = ButtonDefaults.filledTonalButtonColors(
+                                            containerColor = Color(0xFF162530),
+                                            contentColor = Color(0xFF00E5FF)
+                                        ),
+                                        border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Informe del Atleta", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
                                 Spacer(modifier = Modifier.height(12.dp))
 
                                 // ── SECCIÓN 2: DATOS REGISTRADOS, INFORMES PDF Y VIDEOS ──
@@ -450,13 +514,38 @@ fun AthletesScreen(
             item { Spacer(modifier = Modifier.height(72.dp)) }
         }
 
-        // Modal de Comparación de Atletas con Gráfico
-        if (showComparisonDialog) {
-            AthleteComparisonDialog(
+        // Modal de Evolución Histórica e Informe de un Mismo Atleta
+        athleteForProgression?.let { initialAthlete ->
+            SingleAthleteProgressionDialog(
                 users = users,
-                sessions = allSessions,
-                onDismiss = { showComparisonDialog = false }
+                initialUser = initialAthlete,
+                allSessions = allSessions,
+                onGeneratePdfReport = { targetUser, filteredSessions ->
+                    val pdfFile = generateAthleteSummaryPdfReport(
+                        context = context,
+                        user = targetUser,
+                        userSessions = filteredSessions
+                    )
+                    if (pdfFile != null) {
+                        generatedAthleteReportFile = pdfFile to "Informe de Evolución • ${targetUser.name}"
+                    } else {
+                        Toast.makeText(context, "Error al generar el informe del atleta", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onDismiss = { athleteForProgression = null }
             )
+        }
+
+        generatedAthleteReportFile?.let { (file, title) ->
+            if (file.exists()) {
+                SavedPdfReportDialog(
+                    pdfFile = file,
+                    title = title,
+                    onDismiss = { generatedAthleteReportFile = null }
+                )
+            } else {
+                generatedAthleteReportFile = null
+            }
         }
 
         videoSessionToPlay?.let { session ->
@@ -611,29 +700,38 @@ fun AthletesScreen(
 }
 
 /**
- * Diálogo interactivo para comparar de 2 a 4 atletas con selector de métricas,
- * gráfico biomecánico ampliado y tarjetas individuales de rendimiento sin apreturas.
+ * Diálogo interactivo para analizar y comparar la evolución de UN MISMO ATLETA
+ * a través de sus nuevas mediciones (con filtro por ejercicio, selector de métrica
+ * y botón directo para generar el Informe PDF con todos los datos ingresados del atleta).
  */
 @Composable
-fun AthleteComparisonDialog(
+fun SingleAthleteProgressionDialog(
     users: List<User>,
-    sessions: List<Session>,
+    initialUser: User,
+    allSessions: List<Session>,
+    onGeneratePdfReport: (User, List<Session>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var selectedAthleteIds by remember {
-        mutableStateOf(users.take(minOf(4, users.size)).map { it.id }.toSet())
+    var selectedUser by remember { mutableStateOf(initialUser) }
+    var selectedMetricType by remember { mutableStateOf("VBT") } // "VBT", "VMP", "POWER", "REL_POWER", "LOAD"
+    var selectedExerciseFilter by remember { mutableStateOf("ALL") }
+
+    val userSessionsDesc = remember(selectedUser, allSessions) {
+        allSessions.filter { it.userId == selectedUser.id }.sortedByDescending { it.timestamp }
     }
-    // Métricas disponibles para comparar
-    var selectedMetricType by remember { mutableStateOf("VBT") } // "JUMP", "VBT", "POWER", "REL_POWER"
 
-    val athleteColors = listOf(
-        Color(0xFF00FFCC), // Cian Neón
-        Color(0xFF00E5FF), // Azul Eléctrico
-        Color(0xFFFF9800), // Naranja Neón
-        Color(0xFFE040FB)  // Púrpura Neón
-    )
+    val availableExercises = remember(userSessionsDesc) {
+        userSessionsDesc.map { it.activityType }.distinct()
+    }
 
-    val selectedAthletes = users.filter { selectedAthleteIds.contains(it.id) }
+    val filteredSessionsChronological = remember(userSessionsDesc, selectedExerciseFilter) {
+        val base = if (selectedExerciseFilter == "ALL") {
+            userSessionsDesc
+        } else {
+            userSessionsDesc.filter { it.activityType == selectedExerciseFilter }
+        }
+        base.sortedBy { it.timestamp }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -651,7 +749,7 @@ fun AthleteComparisonDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // ── HEADER SUPERIOR ──
                 Row(
@@ -661,7 +759,8 @@ fun AthleteComparisonDialog(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         Surface(
                             color = Color(0xFF00FFCC).copy(alpha = 0.15f),
@@ -669,20 +768,25 @@ fun AthleteComparisonDialog(
                             modifier = Modifier.size(42.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Text("📊", fontSize = 20.sp)
+                                Icon(
+                                    Icons.Default.TrendingUp,
+                                    contentDescription = null,
+                                    tint = Color(0xFF00FFCC),
+                                    modifier = Modifier.size(22.dp)
+                                )
                             }
                         }
                         Column {
                             Text(
-                                "Comparativa de Rendimiento",
+                                "Evolución del Atleta",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
+                                fontSize = 17.sp
                             )
                             Text(
-                                "${selectedAthleteIds.size} atletas elegidos (elige entre 2 y 4)",
+                                "${selectedUser.name} (${selectedUser.bodyWeightKg.toInt()} kg) • ${filteredSessionsChronological.size} mediciones",
                                 color = Color(0xFF00FFCC),
-                                fontSize = 12.sp,
+                                fontSize = 11.5.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -704,77 +808,61 @@ fun AthleteComparisonDialog(
                     modifier = Modifier
                         .weight(1f)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // ── 1. SELECTOR DE ATLETAS (AMPLIADO Y CÓMODO) ──
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "Seleccionar Atletas a Comparar:",
-                            color = Color.LightGray,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            users.forEachIndexed { index, user ->
-                                val isSelected = selectedAthleteIds.contains(user.id)
-                                val color = athleteColors[index % athleteColors.size]
-
-                                Surface(
-                                    onClick = {
-                                        if (isSelected) {
-                                            if (selectedAthleteIds.size > 2) {
-                                                selectedAthleteIds = selectedAthleteIds - user.id
-                                            }
-                                        } else {
-                                            if (selectedAthleteIds.size < 4) {
-                                                selectedAthleteIds = selectedAthleteIds + user.id
-                                            }
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (isSelected) color.copy(alpha = 0.20f) else Color(0xFF1B222C),
-                                    border = BorderStroke(
-                                        if (isSelected) 2.dp else 1.dp,
-                                        if (isSelected) color else Color(0xFF2C394A)
-                                    )
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    // ── 1. SELECTOR DE UN SOLO ATLETA ──
+                    if (users.size > 1) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "Atleta Evaluado:",
+                                color = Color.LightGray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                users.forEach { user ->
+                                    val isSel = user.id == selectedUser.id
+                                    Surface(
+                                        onClick = {
+                                            selectedUser = user
+                                            selectedExerciseFilter = "ALL"
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSel) Color(0xFF00FFCC).copy(alpha = 0.20f) else Color(0xFF1B222C),
+                                        border = BorderStroke(
+                                            if (isSel) 1.6.dp else 1.dp,
+                                            if (isSel) Color(0xFF00FFCC) else Color(0xFF2C394A)
+                                        )
                                     ) {
-                                        // Círculo con Inicial
-                                        Surface(
-                                            color = if (isSelected) color else Color.Gray,
-                                            shape = CircleShape,
-                                            modifier = Modifier.size(24.dp)
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Text(
-                                                    user.name.take(1).uppercase(),
-                                                    color = Color.Black,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
+                                            Surface(
+                                                color = if (isSel) Color(0xFF00FFCC) else Color.Gray,
+                                                shape = CircleShape,
+                                                modifier = Modifier.size(22.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        user.name.take(1).uppercase(),
+                                                        color = Color.Black,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
                                             }
-                                        }
-                                        Column {
                                             Text(
                                                 user.name,
-                                                color = if (isSelected) Color.White else Color.LightGray,
-                                                fontSize = 13.sp,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                            )
-                                            Text(
-                                                "${user.bodyWeightKg.toInt()} kg",
-                                                color = if (isSelected) color else Color.Gray,
-                                                fontSize = 10.5.sp
+                                                color = if (isSel) Color.White else Color.LightGray,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
                                             )
                                         }
                                     }
@@ -783,15 +871,67 @@ fun AthleteComparisonDialog(
                         }
                     }
 
-                    // ── 2. SELECTOR DE MÉTRICA CON PESTAÑAS AMPLIAS ──
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // ── 2. FILTRO POR EJERCICIO DEL ATLETA ──
+                    if (availableExercises.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "Filtrar Mediciones por Ejercicio:",
+                                color = Color.LightGray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                val allSelected = selectedExerciseFilter == "ALL"
+                                Surface(
+                                    onClick = { selectedExerciseFilter = "ALL" },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (allSelected) Color(0xFF00E5FF).copy(alpha = 0.20f) else Color(0xFF1B222C),
+                                    border = BorderStroke(1.dp, if (allSelected) Color(0xFF00E5FF) else Color(0xFF2C394A))
+                                ) {
+                                    Text(
+                                        "Todos (${userSessionsDesc.size})",
+                                        color = if (allSelected) Color(0xFF00E5FF) else Color.LightGray,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+
+                                availableExercises.forEach { exName ->
+                                    val isSel = selectedExerciseFilter == exName
+                                    val count = userSessionsDesc.count { it.activityType == exName }
+                                    Surface(
+                                        onClick = { selectedExerciseFilter = exName },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSel) Color(0xFF00E5FF).copy(alpha = 0.20f) else Color(0xFF1B222C),
+                                        border = BorderStroke(1.dp, if (isSel) Color(0xFF00E5FF) else Color(0xFF2C394A))
+                                    ) {
+                                        Text(
+                                            "$exName ($count)",
+                                            color = if (isSel) Color(0xFF00E5FF) else Color.LightGray,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── 3. SELECTOR DE MÉTRICA A COMPARAR ENTRE SUS MEDICIONES ──
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            "Métrica a Comparar:",
+                            "Métrica de Progreso:",
                             color = Color.LightGray,
-                            fontSize = 12.5.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
-
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -803,7 +943,7 @@ fun AthleteComparisonDialog(
                                 "VMP" to "🎯 Vel. Propulsiva (m/s)",
                                 "POWER" to "🔥 Potencia (Watts)",
                                 "REL_POWER" to "⚖️ Relativa (W/kg)",
-                                "LOAD" to "🏋️ Carga Levantada (kg)"
+                                "LOAD" to "🏋️ Carga (kg)"
                             ).forEach { (key, label) ->
                                 val isSel = selectedMetricType == key
                                 Surface(
@@ -811,16 +951,16 @@ fun AthleteComparisonDialog(
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (isSel) Color(0xFF00FFCC) else Color(0xFF1B222C),
                                     border = BorderStroke(1.2.dp, if (isSel) Color(0xFF00FFCC) else Color(0xFF2C394A)),
-                                    modifier = Modifier.height(38.dp)
+                                    modifier = Modifier.height(36.dp)
                                 ) {
                                     Box(
                                         contentAlignment = Alignment.Center,
-                                        modifier = Modifier.padding(horizontal = 14.dp)
+                                        modifier = Modifier.padding(horizontal = 12.dp)
                                     ) {
                                         Text(
                                             label,
                                             color = if (isSel) Color.Black else Color.White,
-                                            fontSize = 12.sp,
+                                            fontSize = 11.5.sp,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
@@ -829,35 +969,28 @@ fun AthleteComparisonDialog(
                         }
                     }
 
-                    // ── 3. GRÁFICO COMPARATIVO DE BARRAS BIOMECÁNICO (GRANDE Y ESPACIOSO) ──
-                    val comparisonData = selectedAthletes.mapIndexed { idx, user ->
-                        val userSessions = sessions.filter { it.userId == user.id }
-                        val value: Double = when (selectedMetricType) {
-                            "VBT" -> {
-                                val maxVbt = userSessions.filter { it.activityType.startsWith("VBT") }.maxByOrNull { it.result }
-                                maxVbt?.result ?: 0.0 // m/s
-                            }
-                            "VMP" -> {
-                                val maxVmp = userSessions.mapNotNull { it.vmpVelocity }.maxOrNull()
-                                maxVmp ?: 0.0 // m/s
-                            }
-                            "POWER" -> {
-                                val maxPower = userSessions.mapNotNull { it.powerWatts }.maxOrNull()
-                                maxPower ?: 0.0 // Watts
-                            }
-                            "LOAD" -> {
-                                val maxLoad = userSessions.mapNotNull { it.loadKg }.maxOrNull()
-                                maxLoad ?: 0.0 // kg
-                            }
-                            else -> { // REL_POWER
-                                val maxRel = userSessions.mapNotNull { it.powerWattsPerKg }.maxOrNull()
-                                maxRel ?: 0.0 // W/kg
-                            }
+                    // ── 4. GRÁFICO DE EVOLUCIÓN HISTÓRICA DEL MISMO ATLETA (ÚLTIMAS 10 MEDICIONES) ──
+                    val recentChronological = filteredSessionsChronological.takeLast(10)
+                    val dateFormatShort = remember { SimpleDateFormat("dd/MM", Locale.getDefault()) }
+
+                    val sessionPoints = recentChronological.map { session ->
+                        val v = when (selectedMetricType) {
+                            "VBT" -> session.result
+                            "VMP" -> session.vmpVelocity ?: session.meanVelocity ?: session.result
+                            "POWER" -> session.powerWatts ?: 0.0
+                            "LOAD" -> session.loadKg ?: 0.0
+                            else -> session.powerWattsPerKg ?: 0.0
                         }
-                        Triple(user.name, value, athleteColors[idx % athleteColors.size])
+                        val label = dateFormatShort.format(Date(session.timestamp))
+                        Triple(label, v, session)
                     }
 
-                    val maxValue = comparisonData.maxOfOrNull { it.second }?.takeIf { it > 0.0 } ?: 1.0
+                    val maxVal = sessionPoints.maxOfOrNull { it.second }?.takeIf { it > 0.0 } ?: 1.0
+                    val firstVal = sessionPoints.firstOrNull()?.second ?: 0.0
+                    val lastVal = sessionPoints.lastOrNull()?.second ?: 0.0
+                    val deltaPercent = if (firstVal > 0.0 && sessionPoints.size >= 2) {
+                        ((lastVal - firstVal) / firstVal) * 100.0
+                    } else null
 
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F141B)),
@@ -865,12 +998,12 @@ fun AthleteComparisonDialog(
                         border = BorderStroke(1.5.dp, Color(0xFF263342)),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(260.dp)
+                            .height(255.dp)
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(16.dp),
+                                .padding(14.dp),
                             verticalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(
@@ -880,234 +1013,212 @@ fun AthleteComparisonDialog(
                             ) {
                                 Text(
                                     text = when (selectedMetricType) {
-                                        "VBT" -> "📊 Máxima Velocidad Pico VBT (m/s)"
-                                        "VMP" -> "📊 Velocidad Media Propulsiva (m/s)"
-                                        "POWER" -> "📊 Potencia Pico Máxima (Watts)"
-                                        "LOAD" -> "📊 Carga Máxima Desplazada (kg)"
-                                        else -> "📊 Potencia Relativa al Peso (Watts / kg)"
+                                        "VBT" -> "📈 Evolución de Velocidad Pico (m/s)"
+                                        "VMP" -> "📈 Evolución de Vel. Propulsiva (m/s)"
+                                        "POWER" -> "📈 Evolución de Potencia Pico (W)"
+                                        "LOAD" -> "📈 Evolución de Carga Levantada (kg)"
+                                        else -> "📈 Evolución de Potencia Relativa (W/kg)"
                                     },
                                     color = Color(0xFF00FFCC),
-                                    fontSize = 13.5.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
                                 )
 
-                                val bestAthlete = comparisonData.maxByOrNull { it.second }
-                                if (bestAthlete != null && bestAthlete.second > 0.0) {
+                                if (deltaPercent != null) {
+                                    val isPositive = deltaPercent >= 0.0
+                                    val badgeColor = if (isPositive) Color(0xFF00E676) else Color(0xFFFF9800)
                                     Surface(
-                                        color = Color(0xFFFFD700).copy(alpha = 0.18f),
+                                        color = badgeColor.copy(alpha = 0.16f),
                                         shape = RoundedCornerShape(6.dp),
-                                        border = BorderStroke(1.dp, Color(0xFFFFD700))
+                                        border = BorderStroke(1.dp, badgeColor)
                                     ) {
                                         Text(
-                                            "★ Líder: ${bestAthlete.first.split(" ").first()}",
-                                            color = Color(0xFFFFD700),
+                                            text = String.format(Locale.US, "%s%.1f%%", if (isPositive) "+" else "", deltaPercent),
+                                            color = badgeColor,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                         )
                                     }
                                 }
                             }
 
-                            // Canvas de barras verticales grande
-                            Canvas(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(180.dp)
-                            ) {
-                                val w = size.width
-                                val h = size.height
-                                val barCount = comparisonData.size
-                                val spacing = w / (barCount + 1)
-                                val barWidth = 44.dp.toPx().coerceAtMost(spacing * 0.70f)
-                                val baselineY = h - 28.dp.toPx()
-
-                                // Líneas de referencia horizontales (25%, 50%, 75%, 100%)
-                                for (gridStep in 1..3) {
-                                    val gridY = baselineY - (baselineY - 32.dp.toPx()) * (gridStep / 4f)
-                                    drawLine(
-                                        color = Color(0xFF1E2836),
-                                        start = Offset(12f, gridY),
-                                        end = Offset(w - 12f, gridY),
-                                        strokeWidth = 1.dp.toPx()
+                            if (sessionPoints.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        "Sin mediciones registradas para este filtro.",
+                                        color = Color.Gray,
+                                        fontSize = 12.sp
                                     )
                                 }
+                            } else {
+                                Canvas(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(185.dp)
+                                ) {
+                                    val w = size.width
+                                    val h = size.height
+                                    val count = sessionPoints.size
+                                    val spacing = w / (count + 1)
+                                    val barWidth = 34.dp.toPx().coerceAtMost(spacing * 0.65f)
+                                    val baselineY = h - 28.dp.toPx()
 
-                                // Línea base sólida
-                                drawLine(
-                                    color = Color(0xFF384656),
-                                    start = Offset(8f, baselineY),
-                                    end = Offset(w - 8f, baselineY),
-                                    strokeWidth = 2.dp.toPx()
-                                )
-
-                                comparisonData.forEachIndexed { i, (name, valDouble, color) ->
-                                    val barCenterX = spacing * (i + 1)
-                                    val barLeft = barCenterX - barWidth / 2f
-                                    val fraction = if (maxValue > 0) (valDouble / maxValue).coerceIn(0.04, 1.0).toFloat() else 0.04f
-                                    val availableHeight = baselineY - 32.dp.toPx()
-                                    val barHeight = availableHeight * fraction
-                                    val topY = baselineY - barHeight
-
-                                    // Barra vertical con esquinas superiores redondeadas
-                                    drawRoundRect(
-                                        color = color,
-                                        topLeft = Offset(barLeft, topY),
-                                        size = Size(barWidth, barHeight),
-                                        cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
-                                    )
-
-                                    // Formatear valor numérico prominente
-                                    val textVal = when (selectedMetricType) {
-                                        "VBT", "VMP" -> if (valDouble > 0) "${String.format(Locale.US, "%.2f", valDouble)} m/s" else "-- m/s"
-                                        "POWER" -> if (valDouble > 0) "${valDouble.toInt()} W" else "-- W"
-                                        "LOAD" -> if (valDouble > 0) "${valDouble.toInt()} kg" else "-- kg"
-                                        else -> if (valDouble > 0) "${String.format(Locale.US, "%.1f", valDouble)} W/kg" else "-- W/kg"
+                                    for (gridStep in 1..3) {
+                                        val gridY = baselineY - (baselineY - 28.dp.toPx()) * (gridStep / 4f)
+                                        drawLine(
+                                            color = Color(0xFF1E2836),
+                                            start = Offset(10f, gridY),
+                                            end = Offset(w - 10f, gridY),
+                                            strokeWidth = 1.dp.toPx()
+                                        )
                                     }
 
-                                    val valuePaint = android.graphics.Paint().apply {
-                                        this.color = android.graphics.Color.WHITE
-                                        this.textSize = 12.5.sp.toPx()
-                                        this.isAntiAlias = true
-                                        this.typeface = android.graphics.Typeface.DEFAULT_BOLD
-                                        this.textAlign = android.graphics.Paint.Align.CENTER
-                                    }
-                                    drawContext.canvas.nativeCanvas.drawText(
-                                        textVal,
-                                        barCenterX,
-                                        (topY - 6.dp.toPx()).coerceAtLeast(14.dp.toPx()),
-                                        valuePaint
+                                    drawLine(
+                                        color = Color(0xFF384656),
+                                        start = Offset(8f, baselineY),
+                                        end = Offset(w - 8f, baselineY),
+                                        strokeWidth = 2.dp.toPx()
                                     )
 
-                                    // Nombre del atleta bajo la barra
-                                    val shortName = name.split(" ").firstOrNull() ?: name
-                                    val namePaint = android.graphics.Paint().apply {
-                                        this.color = android.graphics.Color.parseColor("#CBD5E1")
-                                        this.textSize = 12.sp.toPx()
-                                        this.isAntiAlias = true
-                                        this.typeface = android.graphics.Typeface.DEFAULT_BOLD
-                                        this.textAlign = android.graphics.Paint.Align.CENTER
+                                    val linePath = Path()
+                                    sessionPoints.forEachIndexed { i, (dateLabel, valDouble, _) ->
+                                        val cx = spacing * (i + 1)
+                                        val fraction = if (maxVal > 0) (valDouble / maxVal).coerceIn(0.05, 1.0).toFloat() else 0.05f
+                                        val availH = baselineY - 30.dp.toPx()
+                                        val barH = availH * fraction
+                                        val topY = baselineY - barH
+
+                                        val isLatest = i == sessionPoints.lastIndex
+                                        val barColor = if (isLatest) Color(0xFF00FFCC) else Color(0xFF00E5FF).copy(alpha = 0.55f)
+
+                                        drawRoundRect(
+                                            color = barColor,
+                                            topLeft = Offset(cx - barWidth / 2f, topY),
+                                            size = Size(barWidth, barH),
+                                            cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
+                                        )
+
+                                        if (i == 0) linePath.moveTo(cx, topY) else linePath.lineTo(cx, topY)
+
+                                        val textVal = when (selectedMetricType) {
+                                            "VBT", "VMP" -> if (valDouble > 0) String.format(Locale.US, "%.2f", valDouble) else "--"
+                                            "POWER" -> if (valDouble > 0) "${valDouble.toInt()}" else "--"
+                                            "LOAD" -> if (valDouble > 0) "${valDouble.toInt()}kg" else "--"
+                                            else -> if (valDouble > 0) String.format(Locale.US, "%.1f", valDouble) else "--"
+                                        }
+
+                                        val valuePaint = Paint().apply {
+                                            color = android.graphics.Color.WHITE
+                                            textSize = 10.5.sp.toPx()
+                                            isAntiAlias = true
+                                            typeface = Typeface.DEFAULT_BOLD
+                                            textAlign = Paint.Align.CENTER
+                                        }
+                                        drawContext.canvas.nativeCanvas.drawText(
+                                            textVal,
+                                            cx,
+                                            (topY - 6.dp.toPx()).coerceAtLeast(12.dp.toPx()),
+                                            valuePaint
+                                        )
+
+                                        val datePaint = Paint().apply {
+                                            color = android.graphics.Color.parseColor("#CBD5E1")
+                                            textSize = 10.sp.toPx()
+                                            isAntiAlias = true
+                                            textAlign = Paint.Align.CENTER
+                                        }
+                                        drawContext.canvas.nativeCanvas.drawText(
+                                            dateLabel,
+                                            cx,
+                                            h - 6.dp.toPx(),
+                                            datePaint
+                                        )
                                     }
-                                    drawContext.canvas.nativeCanvas.drawText(
-                                        shortName,
-                                        barCenterX,
-                                        h - 6.dp.toPx(),
-                                        namePaint
-                                    )
+
+                                    if (sessionPoints.size >= 2) {
+                                        drawPath(
+                                            path = linePath,
+                                            color = Color(0xFF00FFCC),
+                                            style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // ── 4. TARJETAS DETALLADAS INDIVIDUALES POR ATLETA (ESPACIOSAS Y LIMPIAS) ──
+                    // ── 5. TABLA / TARJETAS DE MEDICIONES COMPARADAS DEL ATLETA ──
                     Text(
-                        "Desglose Biomecánico Individual:",
+                        "Detalle Cronológico de Mediciones (${userSessionsDesc.size} totales):",
                         color = Color.LightGray,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold
                     )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        selectedAthletes.forEachIndexed { idx, user ->
-                            val userSessions = sessions.filter { it.userId == user.id }
-                            val maxJump = userSessions.filter { it.activityType.startsWith("JUMP") || it.activityType.contains("Salto", ignoreCase = true) }.maxByOrNull { it.result }
-                            val maxVbt = userSessions.filter { it.activityType.startsWith("VBT") }.maxByOrNull { it.result }
-                            val maxPower = userSessions.mapNotNull { it.powerWatts }.maxOrNull()
-                            val maxRelPower = userSessions.mapNotNull { it.powerWattsPerKg }.maxOrNull()
-                            val color = athleteColors[idx % athleteColors.size]
+                    val listToDisplay = filteredSessionsChronological.reversed()
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listToDisplay.forEachIndexed { idx, session ->
+                            val prevChronologicalSession = listToDisplay.getOrNull(idx + 1)
+                            val deltaVel = if (prevChronologicalSession != null) {
+                                session.result - prevChronologicalSession.result
+                            } else null
 
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = Color(0xFF161D26)),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.2.dp, color.copy(alpha = 0.5f)),
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (idx == 0) Color(0xFF00FFCC).copy(alpha = 0.65f) else Color(0xFF263342)
+                                ),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(14.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    // Fila de Encabezado de Atleta
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(12.dp)
-                                                    .background(color, CircleShape)
-                                            )
-                                            Text(
-                                                user.name,
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.5.sp
-                                            )
-                                        }
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            "Peso: ${user.bodyWeightKg.toInt()} kg • ${userSessions.size} registros",
-                                            color = Color.LightGray,
-                                            fontSize = 11.5.sp
+                                            text = session.activityType,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        val details = buildList {
+                                            add(formatHistoryDate(session.timestamp))
+                                            if (session.loadKg != null) add("${session.loadKg.toInt()} kg")
+                                            if (session.vmpVelocity != null) add("VMP: ${String.format(Locale.US, "%.2f", session.vmpVelocity)} m/s")
+                                            if (session.powerWatts != null) add("${session.powerWatts.toInt()} W")
+                                        }.joinToString(" • ")
+                                        Text(
+                                            text = details,
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 11.sp
                                         )
                                     }
 
-                                    Divider(color = Color(0xFF222C3A), thickness = 1.dp)
-
-                                    val maxVmp = userSessions.mapNotNull { it.vmpVelocity }.maxOrNull()
-                                    val maxLoad = userSessions.mapNotNull { it.loadKg }.maxOrNull()
-
-                                    // Cuadrícula 4 Métricas Claras VBT
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        // Métrica 1: Vel. Pico
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("⚡ Vel. Pico", color = Color.Gray, fontSize = 10.5.sp)
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = "${String.format(Locale.US, "%.2f", session.result)} m/s",
+                                            color = Color(0xFF00FFCC),
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 15.sp
+                                        )
+                                        if (deltaVel != null) {
+                                            val isUp = deltaVel >= 0.0
                                             Text(
-                                                if (maxVbt != null) "${String.format(Locale.US, "%.2f", maxVbt.result)} m/s" else "-- m/s",
-                                                color = color,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp
-                                            )
-                                        }
-
-                                        // Métrica 2: Vel. Propulsiva
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("🎯 VMP", color = Color.Gray, fontSize = 10.5.sp)
-                                            Text(
-                                                if (maxVmp != null) "${String.format(Locale.US, "%.2f", maxVmp)} m/s" else "-- m/s",
-                                                color = color,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp
-                                            )
-                                        }
-
-                                        // Métrica 3: Potencia W
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("🔥 Potencia", color = Color.Gray, fontSize = 10.5.sp)
-                                            Text(
-                                                if (maxPower != null) "${maxPower.toInt()} W" else "-- W",
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp
-                                            )
-                                        }
-
-                                        // Métrica 4: Carga Máx (kg)
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("🏋️ Carga Máx", color = Color.Gray, fontSize = 10.5.sp)
-                                            Text(
-                                                if (maxLoad != null) "${maxLoad.toInt()} kg" else "-- kg",
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp
+                                                text = String.format(
+                                                    Locale.US,
+                                                    "%s%.2f m/s vs ant.",
+                                                    if (isUp) "+" else "",
+                                                    deltaVel
+                                                ),
+                                                color = if (isUp) Color(0xFF00E676) else Color(0xFFFF9800),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
                                             )
                                         }
                                     }
@@ -1117,18 +1228,272 @@ fun AthleteComparisonDialog(
                     }
                 }
 
-                // ── BOTÓN CERRAR ──
-                Button(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC), contentColor = Color.Black),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
+                // ── BOTONES INFERIORES: GENERAR INFORME PDF DEL ATLETA + CERRAR ──
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Cerrar Comparativa", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        border = BorderStroke(1.dp, Color(0xFF334155)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(0.9f)
+                            .height(46.dp)
+                    ) {
+                        Text("Cerrar", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            onGeneratePdfReport(selectedUser, filteredSessionsChronological.reversed())
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF00FFCC),
+                            contentColor = Color.Black
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .height(46.dp)
+                    ) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Generar Informe PDF", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 }
             }
         }
+    }
+}
+
+/**
+ * Genera un Informe PDF completo con la ficha, mejores marcas personales (PB),
+ * gráfico de evolución histórica y tabla de todas las mediciones registradas del atleta.
+ */
+fun generateAthleteSummaryPdfReport(
+    context: Context,
+    user: User,
+    userSessions: List<Session>
+): File? {
+    return try {
+        val pdfDocument = PdfDocument()
+        val pageWidth = 595
+        val pageHeight = 842
+        val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
+        val page = pdfDocument.startPage(pageInfo)
+        val canvas = page.canvas
+
+        val bgPaint = Paint().apply { color = android.graphics.Color.parseColor("#0B0F17") }
+        canvas.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), bgPaint)
+
+        val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#151C28")
+            style = Paint.Style.FILL
+        }
+        val borderCyanPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#00FFCC")
+            style = Paint.Style.STROKE
+            strokeWidth = 1.4f
+        }
+        val borderSubtlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#263346")
+            style = Paint.Style.STROKE
+            strokeWidth = 1f
+        }
+
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#00FFCC")
+            textSize = 18f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val whiteBoldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = 13f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val grayTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#94A3B8")
+            textSize = 10.5f
+        }
+        val cyanValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#00FFCC")
+            textSize = 16f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+
+        // 1. Encabezado del Informe del Atleta
+        val headerRect = RectF(28f, 24f, pageWidth - 28f, 96f)
+        canvas.drawRoundRect(headerRect, 12f, 12f, cardPaint)
+        canvas.drawRoundRect(headerRect, 12f, 12f, borderCyanPaint)
+
+        canvas.drawText("SPEED TRACKER VBT • INFORME DE EVOLUCIÓN DEL ATLETA", 44f, 48f, titlePaint)
+        val nowStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+        canvas.drawText(
+            "Deportista: ${user.name}   |   Peso Corporal: ${String.format(Locale.US, "%.1f", user.bodyWeightKg)} kg   |   Total Mediciones: ${userSessions.size}",
+            44f,
+            68f,
+            whiteBoldPaint
+        )
+        canvas.drawText("Fecha de emisión del informe: $nowStr", 44f, 84f, grayTextPaint)
+
+        // 2. Mejores Marcas Personales (PB)
+        val sortedDesc = userSessions.sortedByDescending { it.timestamp }
+        val maxPeakVel = sortedDesc.maxByOrNull { it.result }
+        val maxVmp = sortedDesc.mapNotNull { it.vmpVelocity ?: it.meanVelocity }.maxOrNull()
+        val maxPower = sortedDesc.mapNotNull { it.powerWatts }.maxOrNull()
+        val maxLoad = sortedDesc.mapNotNull { it.loadKg }.maxOrNull()
+
+        val pbTop = 112f
+        val pbBottom = 178f
+        val colW = (pageWidth - 56f - 24f) / 4f
+        val pbItems = listOf(
+            Triple("MEJOR VEL. PICO (PV)", if (maxPeakVel != null) "${String.format(Locale.US, "%.2f", maxPeakVel.result)} m/s" else "-- m/s", maxPeakVel?.activityType ?: "Sin registro"),
+            Triple("MEJOR VMP PROPULSIVA", if (maxVmp != null) "${String.format(Locale.US, "%.2f", maxVmp)} m/s" else "-- m/s", "Fase propulsiva"),
+            Triple("POTENCIA PICO MÁX.", if (maxPower != null) "${maxPower.toInt()} W" else "-- W", if (maxPower != null && user.bodyWeightKg > 0) "${String.format(Locale.US, "%.1f", maxPower / user.bodyWeightKg)} W/kg" else "Watts"),
+            Triple("CARGA MÁXIMA", if (maxLoad != null) "${maxLoad.toInt()} kg" else "-- kg", "Mayor peso registrado")
+        )
+
+        pbItems.forEachIndexed { idx, (label, value, sub) ->
+            val left = 28f + idx * (colW + 8f)
+            val rect = RectF(left, pbTop, left + colW, pbBottom)
+            canvas.drawRoundRect(rect, 10f, 10f, cardPaint)
+            canvas.drawRoundRect(rect, 10f, 10f, borderSubtlePaint)
+            canvas.drawText(label, left + 10f, pbTop + 20f, grayTextPaint.apply { textSize = 8.5f })
+            canvas.drawText(value, left + 10f, pbTop + 42f, cyanValuePaint)
+            val shortSub = if (sub.length > 22) sub.take(20) + "…" else sub
+            canvas.drawText(shortSub, left + 10f, pbTop + 58f, grayTextPaint.apply { textSize = 8.5f })
+        }
+
+        // 3. Gráfico de Evolución de Velocidad Pico (últimas 12 sesiones en orden cronológico)
+        val chartRect = RectF(28f, 194f, pageWidth - 28f, 370f)
+        canvas.drawRoundRect(chartRect, 12f, 12f, cardPaint)
+        canvas.drawRoundRect(chartRect, 12f, 12f, borderSubtlePaint)
+
+        canvas.drawText("EVOLUCIÓN CRONOLÓGICA DE VELOCIDAD PICO (ÚLTIMAS MEDICIONES)", 44f, 216f, whiteBoldPaint.apply { textSize = 11.5f })
+
+        val chronoSessions = userSessions.sortedBy { it.timestamp }.takeLast(12)
+        if (chronoSessions.isEmpty()) {
+            canvas.drawText("No hay mediciones registradas para graficar.", 44f, 285f, grayTextPaint.apply { textSize = 11f })
+        } else {
+            val cLeft = 48f
+            val cRight = pageWidth - 48f
+            val cTop = 238f
+            val cBase = 344f
+            val maxV = (chronoSessions.maxOfOrNull { it.result } ?: 1.0).coerceAtLeast(0.5)
+            val count = chronoSessions.size
+            val stepX = (cRight - cLeft) / (count + 1)
+            val barW = (stepX * 0.55f).coerceAtMost(28f)
+            val dfShort = SimpleDateFormat("dd/MM", Locale.getDefault())
+
+            val barFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#00E5FF")
+                style = Paint.Style.FILL
+            }
+            val barLastPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#00FFCC")
+                style = Paint.Style.FILL
+            }
+            val centerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.WHITE
+                textSize = 8.5f
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            }
+
+            canvas.drawLine(cLeft, cBase, cRight, cBase, borderSubtlePaint)
+
+            chronoSessions.forEachIndexed { i, s ->
+                val cx = cLeft + stepX * (i + 1)
+                val frac = (s.result / maxV).coerceIn(0.06, 1.0).toFloat()
+                val bH = (cBase - cTop) * frac
+                val topY = cBase - bH
+                val bRect = RectF(cx - barW / 2f, topY, cx + barW / 2f, cBase)
+                canvas.drawRoundRect(
+                    bRect,
+                    4f,
+                    4f,
+                    if (i == chronoSessions.lastIndex) barLastPaint else barFillPaint
+                )
+                canvas.drawText(String.format(Locale.US, "%.2f", s.result), cx, topY - 5f, centerTextPaint)
+                canvas.drawText(dfShort.format(Date(s.timestamp)), cx, cBase + 14f, centerTextPaint.apply {
+                    color = android.graphics.Color.parseColor("#94A3B8")
+                })
+                centerTextPaint.color = android.graphics.Color.WHITE
+            }
+        }
+
+        // 4. Tabla Histórica de Todas las Mediciones Ingresadas del Atleta
+        val tableRect = RectF(28f, 386f, pageWidth - 28f, pageHeight - 36f)
+        canvas.drawRoundRect(tableRect, 12f, 12f, cardPaint)
+        canvas.drawRoundRect(tableRect, 12f, 12f, borderSubtlePaint)
+
+        canvas.drawText("REGISTRO DETALLADO DE MEDICIONES DEL ATLETA", 44f, 410f, whiteBoldPaint.apply { textSize = 11.5f })
+
+        val colFechaX = 44f
+        val colEjercicioX = 135f
+        val colCargaX = 335f
+        val colPvX = 395f
+        val colVmpX = 455f
+        val colPotX = 515f
+
+        val headerRowY = 432f
+        val tableHeaderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#00FFCC")
+            textSize = 9.5f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        canvas.drawText("FECHA / HORA", colFechaX, headerRowY, tableHeaderPaint)
+        canvas.drawText("EJERCICIO / COMPLEX", colEjercicioX, headerRowY, tableHeaderPaint)
+        canvas.drawText("CARGA", colCargaX, headerRowY, tableHeaderPaint)
+        canvas.drawText("VEL. PICO", colPvX, headerRowY, tableHeaderPaint)
+        canvas.drawText("VMP", colVmpX, headerRowY, tableHeaderPaint)
+        canvas.drawText("POTENCIA", colPotX, headerRowY, tableHeaderPaint)
+
+        canvas.drawLine(40f, headerRowY + 6f, pageWidth - 40f, headerRowY + 6f, borderSubtlePaint)
+
+        val rowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#E2E8F0")
+            textSize = 9.2f
+        }
+        val rowCyanPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#00FFCC")
+            textSize = 9.5f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+
+        val dfFull = SimpleDateFormat("dd/MM/yy HH:mm", Locale.getDefault())
+        val maxRows = 16
+        sortedDesc.take(maxRows).forEachIndexed { idx, s ->
+            val y = headerRowY + 24f + idx * 21f
+            val dateStr = dfFull.format(Date(s.timestamp))
+            val exStr = if (s.activityType.length > 32) s.activityType.take(30) + "…" else s.activityType
+            val loadStr = s.loadKg?.let { "${it.toInt()} kg" } ?: "--"
+            val pvStr = "${String.format(Locale.US, "%.2f", s.result)} m/s"
+            val vmpStr = (s.vmpVelocity ?: s.meanVelocity)?.let { "${String.format(Locale.US, "%.2f", it)} m/s" } ?: "--"
+            val potStr = s.powerWatts?.let { "${it.toInt()} W" } ?: "--"
+
+            canvas.drawText(dateStr, colFechaX, y, rowPaint)
+            canvas.drawText(exStr, colEjercicioX, y, rowPaint)
+            canvas.drawText(loadStr, colCargaX, y, rowPaint)
+            canvas.drawText(pvStr, colPvX, y, rowCyanPaint)
+            canvas.drawText(vmpStr, colVmpX, y, rowPaint)
+            canvas.drawText(potStr, colPotX, y, rowPaint)
+        }
+
+        pdfDocument.finishPage(page)
+
+        val reportsDir = File(context.filesDir, "saved_reports").apply { mkdirs() }
+        val safeName = user.name.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+        val outFile = File(reportsDir, "Informe_Atleta_${safeName}_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(outFile).use { fos ->
+            pdfDocument.writeTo(fos)
+        }
+        pdfDocument.close()
+        outFile
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
     }
 }

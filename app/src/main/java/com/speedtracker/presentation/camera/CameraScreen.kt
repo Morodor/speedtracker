@@ -22,6 +22,7 @@ import com.speedtracker.core.update.UpdateCheckResult
 import com.speedtracker.presentation.components.AppUpdateDialog
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoRecordEvent
@@ -351,8 +352,11 @@ fun CameraScreen(
         }
     }
 
+    var isUsingFrontCamera by remember { mutableStateOf(false) }
+
     val cameraController = remember {
         androidx.camera.view.LifecycleCameraController(context).apply {
+            cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
             setEnabledUseCases(
                 CameraController.IMAGE_ANALYSIS or
                 CameraController.IMAGE_CAPTURE or
@@ -372,6 +376,31 @@ fun CameraScreen(
                     }
                 }
             )
+        }
+    }
+
+    fun switchCameraFacing() {
+        try {
+            val nextFront = !isUsingFrontCamera
+            val nextSelector = if (nextFront) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            }
+            if (cameraController.hasCamera(nextSelector)) {
+                cameraController.cameraSelector = nextSelector
+                isUsingFrontCamera = nextFront
+                needsTrackerReinit = true
+                Toast.makeText(
+                    context,
+                    if (nextFront) "Cámara Frontal activada" else "Cámara Trasera activada",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                Toast.makeText(context, "Cámara no disponible en este dispositivo", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -756,11 +785,32 @@ fun CameraScreen(
                     }
                 }
 
-                // 3. Acciones Derecha con separación clara: [-20%] y [1RM]
+                // 3. Acciones Derecha con separación clara: [🔄 Girar Cámara], [-20%] y [1RM]
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // Botón para alternar entre Cámara Trasera y Cámara Frontal en cualquier modo de cámara
+                    Surface(
+                        onClick = { switchCameraFacing() },
+                        color = if (isUsingFrontCamera) Color(0xFF00E5FF).copy(alpha = 0.28f) else Color(0x990D1219),
+                        shape = CircleShape,
+                        modifier = Modifier.size(34.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isUsingFrontCamera) Color(0xFF00E5FF) else Color(0xFF00E5FF).copy(alpha = 0.65f)
+                        )
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Cameraswitch,
+                                contentDescription = "Cambiar cámara frontal/trasera",
+                                tint = if (isUsingFrontCamera) Color(0xFF00E5FF) else Color.White,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+                    }
+
                     Surface(
                         onClick = { showThresholdDialog = true },
                         color = if (isLossThresholdEnabled || isMinVelocityEnabled) Color(0xFF00FFCC).copy(alpha = 0.20f) else Color(0x990D1219),
