@@ -58,6 +58,7 @@ fun AthletesScreen(
 ) {
     val context = LocalContext.current
     var users by remember { mutableStateOf(userRepository.getUsers()) }
+    var activeAthleteId by remember { mutableStateOf(userRepository.getActiveUser()?.id ?: users.firstOrNull()?.id) }
     var allSessions by remember { mutableStateOf(userRepository.getSessions().sortedByDescending { it.timestamp }) }
 
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -215,12 +216,32 @@ fun AthletesScreen(
                                     }
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column {
-                                        Text(
-                                            user.name,
-                                            color = Color.White,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                user.name,
+                                                color = Color.White,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (activeAthleteId == user.id) {
+                                                Surface(
+                                                    color = Color(0xFF00FFCC).copy(alpha = 0.18f),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    border = BorderStroke(0.8.dp, Color(0xFF00FFCC))
+                                                ) {
+                                                    Text(
+                                                        "⚡ Activo",
+                                                        color = Color(0xFF00FFCC),
+                                                        fontSize = 9.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
                                         Text(
                                             "Peso: ${user.bodyWeightKg} Kg  •  ${userSessions.size} registros",
                                             color = Color.LightGray,
@@ -230,6 +251,18 @@ fun AthletesScreen(
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (activeAthleteId != user.id) {
+                                        TextButton(
+                                            onClick = {
+                                                userRepository.setActiveUserId(user.id)
+                                                activeAthleteId = user.id
+                                                Toast.makeText(context, "${user.name} seleccionado como atleta activo", Toast.LENGTH_SHORT).show()
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("Activar", color = Color(0xFF00FFCC), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
                                     IconButton(onClick = { userToEdit = user }) {
                                         Icon(Icons.Default.Edit, contentDescription = "Editar", tint = Color.LightGray)
                                     }

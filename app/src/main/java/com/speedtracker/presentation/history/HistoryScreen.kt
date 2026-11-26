@@ -65,8 +65,18 @@ fun HistoryScreen(
 
     val filteredSessions = remember(athleteFilteredSessions, selectedFilter) {
         when (selectedFilter) {
-            "JUMP" -> athleteFilteredSessions.filter { it.activityType == "JUMP" }
-            "VBT" -> athleteFilteredSessions.filter { it.activityType.startsWith("VBT") }
+            "SNATCH" -> athleteFilteredSessions.filter {
+                it.activityType.contains("Snatch", ignoreCase = true) ||
+                it.activityType.contains("Arranque", ignoreCase = true)
+            }
+            "CLEAN_JERK" -> athleteFilteredSessions.filter {
+                it.activityType.contains("Clean", ignoreCase = true) ||
+                it.activityType.contains("Cargada", ignoreCase = true) ||
+                it.activityType.contains("Jerk", ignoreCase = true) ||
+                it.activityType.contains("Envión", ignoreCase = true) ||
+                it.activityType.contains("Push", ignoreCase = true) ||
+                it.activityType.contains("Dos Tiempos", ignoreCase = true)
+            }
             else -> athleteFilteredSessions
         }
     }
@@ -97,12 +107,12 @@ fun HistoryScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // 1. Los 3 botones de filtro de categoría del MISMO TAMAÑO exacto
+            // 1. Los 3 botones de filtro de Halterofilia del MISMO TAMAÑO exacto
             item {
                 val categoryItems = listOf(
                     "ALL" to "Todos (${athleteFilteredSessions.size})",
-                    "JUMP" to "Saltos",
-                    "VBT" to "VBT / Barra"
+                    "SNATCH" to "Arranque",
+                    "CLEAN_JERK" to "Cargada / Envión"
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),

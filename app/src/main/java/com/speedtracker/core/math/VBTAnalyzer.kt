@@ -222,11 +222,16 @@ object VBTAnalyzer {
     var cutoffLossPercent: Double? = null
     var onRepCompleted: ((RepResult) -> Unit)? = null
 
-    // Filtros de ruido para evitar falsos positivos estando parado:
-    private const val VELOCITY_DEADBAND = 0.18
-    private const val MIN_REP_ROM_METERS = 0.12
-    private const val MIN_REP_PEAK_VELOCITY = 0.25
-    private const val MIN_CONCENTRIC_DURATION_MS = 200L
+    // Filtros biomecánicos estrictos para evitar que acomodos de barra o movimientos suaves canten velocidad:
+    // - VELOCITY_DEADBAND = 0.25 m/s (ignora ajustes lentos de postura o manos)
+    // - MIN_REP_ROM_METERS = 0.26 m (26 cm mínimos de recorrido vertical real para contar repetición)
+    // - MIN_REP_PEAK_VELOCITY = 0.42 m/s (velocidad pico mínima de un levantamiento real)
+    // - MIN_CONCENTRIC_DURATION_MS = 240 ms (evita chispazos o cruces rápidos frente al lente)
+    private const val VELOCITY_DEADBAND = 0.25
+    private const val MIN_REP_ROM_METERS = 0.26
+    private const val MIN_REP_PEAK_VELOCITY = 0.42
+    private const val MIN_CONCENTRIC_DURATION_MS = 240L
+    private var consecutiveUpwardFrames = 0
 
     var isConcentricActive = false
         private set
@@ -310,6 +315,7 @@ object VBTAnalyzer {
         currentRepPeakVelocity = 0.0
         currentRepConcentricVelocities.clear()
         lastUpwardTimeMs = 0L
+        consecutiveUpwardFrames = 0
         initialHandsPos = null
         plateOffset = null
         previousDisplacementY = 25f
@@ -560,6 +566,7 @@ object VBTAnalyzer {
         currentRepPeakVelocity = 0.0
         currentRepConcentricVelocities.clear()
         currentRepPath.clear()
+        consecutiveUpwardFrames = 0
         lowestInflectionY = null
         lowestInflectionX = null
     }
@@ -607,8 +614,11 @@ object VBTAnalyzer {
             val filteredVelocity = if (smoothedVelocity > VELOCITY_DEADBAND) smoothedVelocity else 0.0
 
             // 1. Manejo universal de fase concéntrica (subida / tirón)
-            if (pxMoved > 1.2f && filteredVelocity > 0.0) {
-                if (!isConcentricActive) {
+            // Exigir al menos 3 frames consecutivos subiendo por encima del deadband antes de activar CONCÉNTRICA
+            // para que micro-movimientos o ajustes de posición en el suelo no se marquen como tirón
+            if (pxMoved > 2.2f && filteredVelocity > 0.0) {
+                consecutiveUpwardFrames++
+                if (!isConcentricActive && consecutiveUpwardFrames >= 3) {
                     isConcentricActive = true
                     concentricStartY = lowestInflectionY ?: previousY ?: barY
                     concentricMinY = barY
@@ -623,6 +633,12 @@ object VBTAnalyzer {
                     currentRepPeakVelocity = 0.0
                     currentRepConcentricVelocities.clear()
                     isEccentricActive = false
+                }
+
+                if (!isConcentricActive) {
+                    previousY = barY
+                    previousTime = timestampMs
+                    return 0.0
                 }
                 lastUpwardTimeMs = timestampMs
 
@@ -655,6 +671,7 @@ object VBTAnalyzer {
 
             // 2. Manejo universal de fase descendente / excéntrica (bajada al piso, recepción o descenso entre reps)
             if (pxMoved < -1.5f) {
+                consecutiveUpwardFrames = 0
                 if (isConcentricActive) {
                     // Verificar si ya alcanzó el ápice y comenzó a bajar de verdad (>= 3.5 cm desde el punto más alto o > 150 ms sin subir)
                     val dropFromApexMeters = (barY - concentricMinY) * pxToMetersRatio

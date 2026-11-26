@@ -35,11 +35,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -60,6 +62,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.mlkit.vision.pose.PoseLandmark
 import com.speedtracker.core.audio.SpeedAudioCoach
+import com.speedtracker.core.audio.VoiceCoachProfile
 import com.speedtracker.core.export.VideoFrameTrackingPoint
 import com.speedtracker.core.export.VideoOverlayExporter
 import com.speedtracker.core.math.*
@@ -163,6 +166,8 @@ fun CameraScreen(
     var isCalibratingPlate by remember { mutableStateOf(true) } // Visible al inicio para ubicar el disco
 
     var showOneRMDialog by remember { mutableStateOf(false) }
+    var showVoiceCoachDialog by remember { mutableStateOf(false) }
+    var selectedVoiceProfile by remember { mutableStateOf(audioCoach.currentProfile) }
     var currentSetLoadKg by remember { mutableStateOf("70") }
 
     // Grabación de Series en Vivo (CameraX VideoCapture)
@@ -286,9 +291,24 @@ fun CameraScreen(
                     liveBarbellTracker.initialize(frameBitmap, calCenter, calRadius)
                     needsTrackerReinit = false
                 }
+                val prevX = VBTAnalyzer.currentBarX
+                val prevY = VBTAnalyzer.currentBarY
                 val barPos = liveBarbellTracker.trackFrame(frameBitmap)
                 liveTrackerConfidence = liveBarbellTracker.lastConfidence
-                velocity = VBTAnalyzer.processBarPosition(barPos.x, barPos.y, timestampMs)
+
+                // Guardia Anti-Cruce frente a la cámara (Occlusion Guard):
+                // Si alguien se cruza frente al lente, la confianza óptica cae o la posición salta de golpe.
+                // En ese instante congelamos la lectura para no disparar velocidades falsas.
+                val jumpDist = if (prevX != null && prevY != null) {
+                    kotlin.math.hypot(barPos.x - prevX, barPos.y - prevY)
+                } else 0f
+                val maxPlausibleJump = (calRadius * 2.35f).coerceAtLeast(95f)
+
+                if (liveTrackerConfidence < 0.21f || (prevX != null && jumpDist > maxPlausibleJump)) {
+                    velocity = 0.0
+                } else {
+                    velocity = VBTAnalyzer.processBarPosition(barPos.x, barPos.y, timestampMs)
+                }
             }
         } else if (pose != null) {
             val keyLandmark = pose.getPoseLandmark(PoseLandmark.LEFT_WRIST)
@@ -745,41 +765,22 @@ fun CameraScreen(
                     }
 
                     Surface(
-                        onClick = {
-                            if (simulatedVideoUri != null) {
-                                isSimulationPlaying = false
-                                simulatedVideoUri = null
-                                simulatedFrameBitmap = null
-                                VBTAnalyzer.reset()
-                                repsList = emptyList()
-                                livePathPoints = emptyList()
-                            } else {
-                                simulationVideoPicker.launch("video/*")
-                            }
-                        },
-                        color = if (simulatedVideoUri != null) Color(0x3300E5FF) else Color(0xCC0D1219),
+                        onClick = { showVoiceCoachDialog = true },
+                        color = Color(0xCC0D1219),
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(
-                            1.dp,
-                            if (simulatedVideoUri != null) Color(0xFF00E5FF) else Color(0xFF38BDF8).copy(alpha = 0.6f)
-                        )
+                        border = BorderStroke(1.dp, Color(0xFFFF9800).copy(alpha = 0.75f))
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Icon(
-                                imageVector = if (simulatedVideoUri != null) Icons.Default.Videocam else Icons.Default.VideoLibrary,
-                                contentDescription = "Simular con video",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(13.dp)
-                            )
+                            Text(selectedVoiceProfile.emoji, fontSize = 11.sp)
                             Text(
-                                text = if (simulatedVideoUri != null) "Cámara" else "Video",
+                                text = selectedVoiceProfile.displayName.split(" ").first(),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8)
+                                color = Color(0xFFFFB74D)
                             )
                         }
                     }
@@ -1264,31 +1265,45 @@ fun CameraScreen(
                             Spacer(modifier = Modifier.weight(0.2f))
                         }
 
-                        // Botón Guardar Serie
-                        if (!isQuickMode && repsList.isNotEmpty()) {
+                        // Botón Guardar Serie (disponible siempre que haya repeticiones medidas en vivo)
+                        if (repsList.isNotEmpty()) {
                             Button(
                                 onClick = {
-                                    val targetUser = activeUser ?: userRepository.getUsers().firstOrNull()
+                                    val targetUser = userRepository.getActiveUser() ?: userRepository.getUsers().firstOrNull()
                                     if (targetUser != null) {
                                         val bestRep = repsList.maxByOrNull { it.peakVelocity }
                                         val res = bestRep?.peakVelocity ?: (vbtVelocityResult ?: 0.0)
                                         val meanVel = bestRep?.meanVelocity
                                         val deviation = VBTAnalyzer.getHorizontalDeviationMeters() * 100.0
+                                        val loadVal = currentSetLoadKg.toDoubleOrNull() ?: 70.0
+                                        val estWatts = loadVal * 9.81 * res
 
                                         userRepository.saveSession(
                                             Session(
                                                 id = UUID.randomUUID().toString(),
                                                 userId = targetUser.id,
-                                                activityType = "VBT",
+                                                activityType = "VBT (En Vivo)",
                                                 result = res,
                                                 timestamp = System.currentTimeMillis(),
                                                 horizontalDeviationCm = deviation,
                                                 meanVelocity = meanVel,
-                                                loadKg = currentSetLoadKg.toDoubleOrNull(),
-                                                vmpVelocity = meanVel
+                                                loadKg = loadVal,
+                                                vmpVelocity = meanVel,
+                                                powerWatts = estWatts,
+                                                powerWattsPerKg = if (targetUser.bodyWeightKg > 0) estWatts / targetUser.bodyWeightKg else null
                                             )
                                         )
-                                        onCloseClick()
+                                        Toast.makeText(
+                                            context,
+                                            "Serie guardada en el historial de ${targetUser.name}",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            "Crea primero un atleta en la pestaña Atletas para guardar",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
                                 },
                                 modifier = Modifier.height(36.dp),
@@ -1577,6 +1592,19 @@ fun CameraScreen(
                     currentSetLoadKg = newLoad.toInt().toString()
                     showOneRMDialog = false
                 }
+            )
+        }
+
+        // Diálogo Selector de Voces de Anime + Coach Olímpico + Personalización de Frases
+        if (showVoiceCoachDialog) {
+            VoiceCoachCustomizationDialog(
+                audioCoach = audioCoach,
+                currentProfile = selectedVoiceProfile,
+                onProfileSelected = { newProfile ->
+                    selectedVoiceProfile = newProfile
+                    audioCoach.currentProfile = newProfile
+                },
+                onDismiss = { showVoiceCoachDialog = false }
             )
         }
 
@@ -2057,6 +2085,364 @@ fun BarPathLiveOverlay(
                 radius = 5.dp.toPx(),
                 center = screenBar
             )
+        }
+    }
+}
+
+@Composable
+fun VoiceCoachCustomizationDialog(
+    audioCoach: SpeedAudioCoach,
+    currentProfile: VoiceCoachProfile,
+    onProfileSelected: (VoiceCoachProfile) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var activeProfile by remember { mutableStateOf(currentProfile) }
+    var fastText by remember(activeProfile) { mutableStateOf(audioCoach.getFastTemplate(activeProfile)) }
+    var normalText by remember(activeProfile) { mutableStateOf(audioCoach.getNormalTemplate(activeProfile)) }
+    var slowCutoffText by remember(activeProfile) { mutableStateOf(audioCoach.getSlowCutoffTemplate(activeProfile)) }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.88f),
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF11161F),
+            border = BorderStroke(1.4.dp, Color(0xFFFF9800))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(
+                            color = Color(0xFFFF9800).copy(alpha = 0.18f),
+                            shape = CircleShape,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(activeProfile.emoji, fontSize = 20.sp)
+                            }
+                        }
+                        Column {
+                            Text(
+                                "Voces Anime & Coach en Vivo",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                            Text(
+                                "Activa: ${activeProfile.displayName} • ${activeProfile.animeOrigin}",
+                                color = Color(0xFFFFB74D),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(Color(0xFF1E2634), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.LightGray, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                Divider(color = Color(0xFF232E3E), thickness = 1.dp)
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "1. Elige la Voz del Personaje:",
+                        color = Color(0xFF00FFCC),
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    // Lista de Voces Anime + Coach Olímpico
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        VoiceCoachProfile.values().forEach { profile ->
+                            val isSelected = activeProfile == profile
+                            Surface(
+                                onClick = {
+                                    activeProfile = profile
+                                    onProfileSelected(profile)
+                                    fastText = audioCoach.getFastTemplate(profile)
+                                    normalText = audioCoach.getNormalTemplate(profile)
+                                    slowCutoffText = audioCoach.getSlowCutoffTemplate(profile)
+                                    if (profile != VoiceCoachProfile.MUTED) {
+                                        audioCoach.speakPreview(profile, "SLOW")
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) Color(0xFF261E10) else Color(0xFF171F2A),
+                                border = BorderStroke(
+                                    if (isSelected) 1.6.dp else 1.dp,
+                                    if (isSelected) Color(0xFFFF9800) else Color(0xFF273344)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(profile.emoji, fontSize = 20.sp)
+                                        Column {
+                                            Text(
+                                                profile.displayName,
+                                                color = if (isSelected) Color(0xFFFFB74D) else Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.5.sp
+                                            )
+                                            Text(
+                                                profile.animeOrigin,
+                                                color = Color(0xFF94A3B8),
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+
+                                    if (profile != VoiceCoachProfile.MUTED) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                activeProfile = profile
+                                                onProfileSelected(profile)
+                                                audioCoach.speakPreview(profile, "SLOW")
+                                            },
+                                            modifier = Modifier.height(30.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            border = BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.7f)),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
+                                        ) {
+                                            Text("🔊 Probar", fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Editor de Frases Personalizadas del Personaje Seleccionado
+                    if (activeProfile != VoiceCoachProfile.MUTED) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Divider(color = Color(0xFF232E3E), thickness = 1.dp)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "2. Personalizar Frases de ${activeProfile.displayName}:",
+                                    color = Color(0xFF00FFCC),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Usa {vel} para que diga la velocidad y {loss} para el % de fatiga.",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 10.5.sp
+                                )
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    audioCoach.resetProfileToDefault(activeProfile)
+                                    fastText = audioCoach.getFastTemplate(activeProfile)
+                                    normalText = audioCoach.getNormalTemplate(activeProfile)
+                                    slowCutoffText = audioCoach.getSlowCutoffTemplate(activeProfile)
+                                    Toast.makeText(context, "Frases originales restauradas", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Text("Restaurar", color = Color(0xFFFF9800), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        // Campo 1: Cuando estás BAJO EL UMBRAL / FATIGA ALCANZADA
+                        Surface(
+                            color = Color(0xFF191F2A),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.6f))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "🚨 Bajo el Umbral / Límite de Fatiga:",
+                                        color = Color(0xFFFF5252),
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            audioCoach.saveCustomTemplates(activeProfile, fastText, normalText, slowCutoffText)
+                                            audioCoach.speakPreview(activeProfile, "SLOW")
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                        modifier = Modifier.height(26.dp)
+                                    ) {
+                                        Text("🔊 Escuchar", color = Color(0xFF00FFCC), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = slowCutoffText,
+                                    onValueChange = { slowCutoffText = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 12.sp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color(0xFFFF5252),
+                                        unfocusedBorderColor = Color(0xFF334155)
+                                    )
+                                )
+                            }
+                        }
+
+                        // Campo 2: Repetición Explosiva / Rápida
+                        Surface(
+                            color = Color(0xFF191F2A),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.5f))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "⚡ Repetición Explosiva (Alta Velocidad):",
+                                        color = Color(0xFF00FFCC),
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            audioCoach.saveCustomTemplates(activeProfile, fastText, normalText, slowCutoffText)
+                                            audioCoach.speakPreview(activeProfile, "FAST")
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                        modifier = Modifier.height(26.dp)
+                                    ) {
+                                        Text("🔊 Escuchar", color = Color(0xFF00FFCC), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = fastText,
+                                    onValueChange = { fastText = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 12.sp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color(0xFF00FFCC),
+                                        unfocusedBorderColor = Color(0xFF334155)
+                                    )
+                                )
+                            }
+                        }
+
+                        // Campo 3: Repetición Normal
+                        Surface(
+                            color = Color(0xFF191F2A),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "✅ Repetición Normal en Zona:",
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            audioCoach.saveCustomTemplates(activeProfile, fastText, normalText, slowCutoffText)
+                                            audioCoach.speakPreview(activeProfile, "NORMAL")
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                        modifier = Modifier.height(26.dp)
+                                    ) {
+                                        Text("🔊 Escuchar", color = Color(0xFF00FFCC), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = normalText,
+                                    onValueChange = { normalText = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 12.sp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color(0xFF38BDF8),
+                                        unfocusedBorderColor = Color(0xFF334155)
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Botón Guardar Voz y Frases
+                Button(
+                    onClick = {
+                        if (activeProfile != VoiceCoachProfile.MUTED) {
+                            audioCoach.saveCustomTemplates(activeProfile, fastText, normalText, slowCutoffText)
+                        }
+                        onProfileSelected(activeProfile)
+                        Toast.makeText(
+                            context,
+                            "Voz activa: ${activeProfile.displayName}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00FFCC),
+                        contentColor = Color.Black
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                ) {
+                    Text("Guardar Voz y Mensajes", fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                }
+            }
         }
     }
 }
