@@ -2101,22 +2101,6 @@ fun VoiceCoachCustomizationDialog(
     var fastText by remember(activeProfile) { mutableStateOf(audioCoach.getFastTemplate(activeProfile)) }
     var normalText by remember(activeProfile) { mutableStateOf(audioCoach.getNormalTemplate(activeProfile)) }
     var slowCutoffText by remember(activeProfile) { mutableStateOf(audioCoach.getSlowCutoffTemplate(activeProfile)) }
-    var pendingAudioEventType by remember { mutableStateOf("SLOW") }
-    var audioRefreshTick by remember { mutableIntStateOf(0) }
-
-    val audioClipPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            val saved = audioCoach.saveCustomAudioClip(activeProfile, pendingAudioEventType, uri)
-            if (saved) {
-                audioRefreshTick++
-                Toast.makeText(context, "Audio real guardado para ${activeProfile.displayName}", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "No se pudo leer el archivo de audio", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -2158,13 +2142,13 @@ fun VoiceCoachCustomizationDialog(
                         }
                         Column {
                             Text(
-                                "Voces Anime & Coach en Vivo",
+                                "Coach de Voz en Vivo",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
                             )
                             Text(
-                                "Activa: ${activeProfile.displayName} • ${activeProfile.animeOrigin}",
+                                "Activo: ${activeProfile.displayName} • ${activeProfile.subtitle}",
                                 color = Color(0xFFFFB74D),
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -2241,7 +2225,7 @@ fun VoiceCoachCustomizationDialog(
                                                 fontSize = 13.5.sp
                                             )
                                             Text(
-                                                profile.animeOrigin,
+                                                profile.subtitle,
                                                 color = Color(0xFF94A3B8),
                                                 fontSize = 11.sp
                                             )
@@ -2305,21 +2289,6 @@ fun VoiceCoachCustomizationDialog(
                             }
                         }
 
-                        // Nota explicativa sobre voz del sistema vs clips MP3 reales
-                        Surface(
-                            color = Color(0xFF17202C),
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(0.8.dp, Color(0xFF334155))
-                        ) {
-                            Text(
-                                text = "💡 Nota: El teléfono usa su voz del sistema (TTS) para leer las frases; por eso el timbre base suena parecido. Si quieres la voz auténtica de Vegeta, Goku o Sakuragi, adjunta un audio (.mp3/.wav) en cualquiera de los 3 eventos de abajo.",
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 10.5.sp,
-                                lineHeight = 14.sp,
-                                modifier = Modifier.padding(10.dp)
-                            )
-                        }
-
                         // Campo 1: Cuando estás BAJO EL UMBRAL / FATIGA ALCANZADA
                         Surface(
                             color = Color(0xFF191F2A),
@@ -2359,42 +2328,6 @@ fun VoiceCoachCustomizationDialog(
                                         unfocusedBorderColor = Color(0xFF334155)
                                     )
                                 )
-                                val hasSlowClip = remember(activeProfile, audioRefreshTick) {
-                                    audioCoach.getCustomAudioClipPath(activeProfile, "SLOW") != null
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            pendingAudioEventType = "SLOW"
-                                            audioClipPicker.launch("audio/*")
-                                        },
-                                        modifier = Modifier.weight(1f).height(30.dp),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        border = BorderStroke(1.dp, if (hasSlowClip) Color(0xFF00E676) else Color(0xFF475569))
-                                    ) {
-                                        Text(
-                                            text = if (hasSlowClip) "🎵 Audio real cargado (Cambiar)" else "🎵 Cargar Audio (.mp3/.wav)",
-                                            color = if (hasSlowClip) Color(0xFF00E676) else Color.LightGray,
-                                            fontSize = 10.5.sp
-                                        )
-                                    }
-                                    if (hasSlowClip) {
-                                        TextButton(
-                                            onClick = {
-                                                audioCoach.clearCustomAudioClip(activeProfile, "SLOW")
-                                                audioRefreshTick++
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                            modifier = Modifier.height(28.dp)
-                                        ) {
-                                            Text("Quitar", color = Color(0xFFFF5252), fontSize = 10.5.sp)
-                                        }
-                                    }
-                                }
                             }
                         }
 
@@ -2437,42 +2370,6 @@ fun VoiceCoachCustomizationDialog(
                                         unfocusedBorderColor = Color(0xFF334155)
                                     )
                                 )
-                                val hasFastClip = remember(activeProfile, audioRefreshTick) {
-                                    audioCoach.getCustomAudioClipPath(activeProfile, "FAST") != null
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            pendingAudioEventType = "FAST"
-                                            audioClipPicker.launch("audio/*")
-                                        },
-                                        modifier = Modifier.weight(1f).height(30.dp),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        border = BorderStroke(1.dp, if (hasFastClip) Color(0xFF00E676) else Color(0xFF475569))
-                                    ) {
-                                        Text(
-                                            text = if (hasFastClip) "🎵 Audio real cargado (Cambiar)" else "🎵 Cargar Audio (.mp3/.wav)",
-                                            color = if (hasFastClip) Color(0xFF00E676) else Color.LightGray,
-                                            fontSize = 10.5.sp
-                                        )
-                                    }
-                                    if (hasFastClip) {
-                                        TextButton(
-                                            onClick = {
-                                                audioCoach.clearCustomAudioClip(activeProfile, "FAST")
-                                                audioRefreshTick++
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                            modifier = Modifier.height(28.dp)
-                                        ) {
-                                            Text("Quitar", color = Color(0xFFFF5252), fontSize = 10.5.sp)
-                                        }
-                                    }
-                                }
                             }
                         }
 
@@ -2515,42 +2412,6 @@ fun VoiceCoachCustomizationDialog(
                                         unfocusedBorderColor = Color(0xFF334155)
                                     )
                                 )
-                                val hasNormalClip = remember(activeProfile, audioRefreshTick) {
-                                    audioCoach.getCustomAudioClipPath(activeProfile, "NORMAL") != null
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            pendingAudioEventType = "NORMAL"
-                                            audioClipPicker.launch("audio/*")
-                                        },
-                                        modifier = Modifier.weight(1f).height(30.dp),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        border = BorderStroke(1.dp, if (hasNormalClip) Color(0xFF00E676) else Color(0xFF475569))
-                                    ) {
-                                        Text(
-                                            text = if (hasNormalClip) "🎵 Audio real cargado (Cambiar)" else "🎵 Cargar Audio (.mp3/.wav)",
-                                            color = if (hasNormalClip) Color(0xFF00E676) else Color.LightGray,
-                                            fontSize = 10.5.sp
-                                        )
-                                    }
-                                    if (hasNormalClip) {
-                                        TextButton(
-                                            onClick = {
-                                                audioCoach.clearCustomAudioClip(activeProfile, "NORMAL")
-                                                audioRefreshTick++
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                            modifier = Modifier.height(28.dp)
-                                        ) {
-                                            Text("Quitar", color = Color(0xFFFF5252), fontSize = 10.5.sp)
-                                        }
-                                    }
-                                }
                             }
                         }
                     }

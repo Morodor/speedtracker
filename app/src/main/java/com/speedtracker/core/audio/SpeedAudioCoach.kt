@@ -1,29 +1,22 @@
 package com.speedtracker.core.audio
 
 import android.content.Context
-import android.media.MediaPlayer
-import android.net.Uri
 import android.os.Build
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
-import java.io.File
-import java.io.FileOutputStream
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /**
- * Perfiles de Voz para el Coach de Velocidad en Vivo (Anime Latino + Coach Olímpico + Silencio).
- * Cada personaje tiene su propio timbre (pitch), cadencia (speechRate) y repertorio de frases
- * personalizables para:
- *  - Repetición Explosiva / Rápida (Alta velocidad)
- *  - Repetición Normal (Con o sin % de pérdida leve)
- *  - Bajo el Umbral / Límite de Fatiga Alcanzado (ej. Vegeta: "Eres muy lento, ¡INSECTO! Bajaste la velocidad.")
+ * Perfiles originales de Coach VBT por voz (100% libres de derechos de autor).
+ * El usuario puede elegir el estilo de retroalimentación y personalizar las frases
+ * usando {vel} (velocidad medida) y {loss} (% de pérdida de velocidad).
  */
 enum class VoiceCoachProfile(
     val id: String,
     val displayName: String,
-    val animeOrigin: String,
+    val subtitle: String,
     val emoji: String,
     val pitch: Float,
     val speechRate: Float,
@@ -31,109 +24,10 @@ enum class VoiceCoachProfile(
     val defaultNormalTemplate: String,
     val defaultSlowCutoffTemplate: String
 ) {
-    GOKU_LATINO(
-        id = "GOKU",
-        displayName = "Goku (Latino)",
-        animeOrigin = "Dragon Ball Z",
-        emoji = "🟠",
-        pitch = 1.02f,
-        speechRate = 1.12f,
-        defaultFastTemplate = "¡Increíble! {vel}. ¡Tu Ki está al máximo, nivel Super Saiyajin!",
-        defaultNormalTemplate = "¡Bien hecho! {vel}. ¡Sigamos entrenando!",
-        defaultSlowCutoffTemplate = "¡Oye, bajaste a {vel}! Perdiste {loss} por ciento, ¡necesitas una Semilla del Ermitaño!"
-    ),
-    VEGETA_LATINO(
-        id = "VEGETA",
-        displayName = "Vegeta (Príncipe Saiyajin)",
-        animeOrigin = "Dragon Ball Z",
-        emoji = "👑",
-        pitch = 0.80f,
-        speechRate = 1.06f,
-        defaultFastTemplate = "¡Nada mal para un guerrero de clase baja! {vel}, ¡ese es el orgullo Saiyajin!",
-        defaultNormalTemplate = "{vel}. ¡No te confíes, sigue empujando esa barra, insecto!",
-        defaultSlowCutoffTemplate = "¡{vel}! Eres muy lento, ¡INSECTO! Bajaste la velocidad {loss} por ciento."
-    ),
-    HANAMICHI_SAKURAGI(
-        id = "SAKURAGI",
-        displayName = "Hanamichi Sakuragi",
-        animeOrigin = "Slam Dunk",
-        emoji = "🏀",
-        pitch = 0.90f,
-        speechRate = 1.15f,
-        defaultFastTemplate = "¡Ja, ja, ja! ¡{vel}! ¡Soy un talentoso, el Rey del Levantamiento!",
-        defaultNormalTemplate = "¡{vel}! ¡El talentoso Sakuragi apenas está calentando!",
-        defaultSlowCutoffTemplate = "¡Oye gorila, bajaste a {vel}! ¡{loss} por ciento de fatiga, hasta un genio necesita descansar!"
-    ),
-    ROCK_LEE(
-        id = "ROCK_LEE",
-        displayName = "Rock Lee / Might Guy",
-        animeOrigin = "Naruto",
-        emoji = "🟢",
-        pitch = 1.08f,
-        speechRate = 1.18f,
-        defaultFastTemplate = "¡{vel}! ¡Las Ocho Puertas Internas abiertas! ¡Esa es la llama de la juventud!",
-        defaultNormalTemplate = "¡{vel}! ¡El trabajo duro supera al talento natural!",
-        defaultSlowCutoffTemplate = "¡{vel}! ¡Tu juventud perdió {loss} por ciento de velocidad! ¡Descansa y vuelve más fuerte!"
-    ),
-    ALL_MIGHT(
-        id = "ALL_MIGHT",
-        displayName = "All Might (Plus Ultra)",
-        animeOrigin = "My Hero Academia",
-        emoji = "💪",
-        pitch = 0.72f,
-        speechRate = 1.04f,
-        defaultFastTemplate = "¡Ya estoy aquí! ¡{vel}! ¡Un tirón digno del Símbolo de la Paz, Plus Ultra!",
-        defaultNormalTemplate = "¡{vel}! ¡Mantén la sonrisa y aprieta esa barra, joven héroe!",
-        defaultSlowCutoffTemplate = "¡Cuidado joven! Bajaste a {vel}, {loss} por ciento de fatiga. ¡Detén la serie por hoy!"
-    ),
-    LUFFY_LATINO(
-        id = "LUFFY",
-        displayName = "Monkey D. Luffy",
-        animeOrigin = "One Piece",
-        emoji = "🏴‍☠️",
-        pitch = 1.16f,
-        speechRate = 1.18f,
-        defaultFastTemplate = "¡Gear Second! ¡{vel}! ¡Seré el Rey de la Halterofilia!",
-        defaultNormalTemplate = "¡{vel}! ¡Estuvo genial, sigamos levantando!",
-        defaultSlowCutoffTemplate = "¡Qué hambre, bajaste a {vel}! ¡Perdiste {loss} por ciento de fuerza, hora de comer carne!"
-    ),
-    RORONOA_ZORO(
-        id = "ZORO",
-        displayName = "Roronoa Zoro",
-        animeOrigin = "One Piece",
-        emoji = "⚔️",
-        pitch = 0.76f,
-        speechRate = 1.02f,
-        defaultFastTemplate = "{vel}. Un corte limpio y veloz. Nada mal.",
-        defaultNormalTemplate = "{vel}. Si no puedes con este peso, jamás serás el mejor.",
-        defaultSlowCutoffTemplate = "{vel}. Eres demasiado débil, perdiste {loss} por ciento de velocidad. Suelta la barra."
-    ),
-    SATORU_GOJO(
-        id = "GOJO",
-        displayName = "Satoru Gojo",
-        animeOrigin = "Jujutsu Kaisen",
-        emoji = "🤞",
-        pitch = 0.94f,
-        speechRate = 1.10f,
-        defaultFastTemplate = "¡Expansión de Dominio! {vel}. No te preocupes, eres el más fuerte.",
-        defaultNormalTemplate = "{vel}. Bastante limpio, pero aún puedes ir más rápido.",
-        defaultSlowCutoffTemplate = "Uy, {vel}, caíste {loss} por ciento. Te quedaste sin energía maldita, descansa."
-    ),
-    EREN_JAEGER(
-        id = "EREN",
-        displayName = "Eren Jaeger / Levi",
-        animeOrigin = "Attack on Titan",
-        emoji = "⚡",
-        pitch = 0.82f,
-        speechRate = 1.08f,
-        defaultFastTemplate = "¡Tatakae! ¡{vel}! ¡Entrega tu corazón en cada levantamiento!",
-        defaultNormalTemplate = "{vel}. Sigue avanzando, pelea, pelea.",
-        defaultSlowCutoffTemplate = "¡{vel}! ¡Perdiste {loss} por ciento de velocidad! ¡No mueras en vano, corta la serie ahora!"
-    ),
     COACH_OLIMPICO(
         id = "COACH",
-        displayName = "Coach Olímpico (Técnico)",
-        animeOrigin = "Modo Competencia VBT",
+        displayName = "Coach Olímpico",
+        subtitle = "Técnico y directo",
         emoji = "🏋️",
         pitch = 0.96f,
         speechRate = 1.08f,
@@ -141,10 +35,32 @@ enum class VoiceCoachProfile(
         defaultNormalTemplate = "{vel}",
         defaultSlowCutoffTemplate = "{vel}. ¡Atención, umbral del {loss} por ciento alcanzado, fin de serie!"
     ),
+    MOTIVADOR_INTENSO(
+        id = "MOTIVADOR",
+        displayName = "Coach Exigente",
+        subtitle = "Feedback intenso y enérgico",
+        emoji = "🔥",
+        pitch = 0.85f,
+        speechRate = 1.12f,
+        defaultFastTemplate = "¡Potencia pura! {vel}, ¡esa barra voló!",
+        defaultNormalTemplate = "¡{vel}! ¡Mantén la aceleración hasta el final!",
+        defaultSlowCutoffTemplate = "¡{vel}! ¡Bajaste {loss} por ciento de velocidad, corta la serie ahora!"
+    ),
+    SOLO_NUMEROS(
+        id = "NUMEROS",
+        displayName = "Solo Velocidad",
+        subtitle = "Lectura rápida de competencia",
+        emoji = "⚡",
+        pitch = 1.0f,
+        speechRate = 1.15f,
+        defaultFastTemplate = "{vel}",
+        defaultNormalTemplate = "{vel}",
+        defaultSlowCutoffTemplate = "{vel}, menos {loss} por ciento"
+    ),
     MUTED(
         id = "MUTED",
-        displayName = "Silencio (Sin Voz)",
-        animeOrigin = "Solo visual en pantalla",
+        displayName = "Silencio",
+        subtitle = "Solo lectura visual en pantalla",
         emoji = "🔇",
         pitch = 1.0f,
         speechRate = 1.0f,
@@ -155,18 +71,16 @@ enum class VoiceCoachProfile(
 
     companion object {
         fun fromId(id: String?): VoiceCoachProfile {
-            return values().find { it.id == id } ?: VEGETA_LATINO
+            return values().find { it.id == id } ?: COACH_OLIMPICO
         }
     }
 }
 
-class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListener {
+class SpeedAudioCoach(context: Context) : TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = TextToSpeech(context.applicationContext, this)
-    private var mediaPlayer: MediaPlayer? = null
     private var isReady = false
     private val prefs = context.getSharedPreferences("speed_audio_coach_prefs", Context.MODE_PRIVATE)
 
-    // Umbral (m/s) a partir del cual una repetición se celebra como "Explosiva / Rápida"
     var fastRepThresholdMps: Double
         get() = prefs.getFloat("fast_rep_threshold_mps", 1.15f).toDouble()
         set(value) {
@@ -174,7 +88,7 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
         }
 
     var currentProfile: VoiceCoachProfile
-        get() = VoiceCoachProfile.fromId(prefs.getString("selected_voice_profile", VoiceCoachProfile.VEGETA_LATINO.id))
+        get() = VoiceCoachProfile.fromId(prefs.getString("selected_voice_profile", VoiceCoachProfile.COACH_OLIMPICO.id))
         set(profile) {
             prefs.edit().putString("selected_voice_profile", profile.id).apply()
             applyVoiceProfileSettings(profile)
@@ -182,7 +96,6 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            // Priorizar Español Latinoamericano (México / EE.UU. / Latinoamérica)
             val candidateLocales = listOf(
                 Locale("es", "MX"),
                 Locale("es", "US"),
@@ -204,7 +117,6 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
                 tts?.language = Locale.getDefault()
             }
 
-            // Intentar seleccionar una voz masculina en Español Latino si el motor de Google TTS la tiene disponible
             selectBestSpanishVoice()
             applyVoiceProfileSettings(currentProfile)
             isReady = true
@@ -216,7 +128,6 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
             try {
                 val voices: Set<Voice>? = tts?.voices
                 if (!voices.isNullOrEmpty()) {
-                    // Buscar voces en español latino (es-US o es-MX), priorizando timbres masculinos o de red local
                     val esVoices = voices.filter { v ->
                         v.locale.language.equals("es", ignoreCase = true) &&
                             (v.locale.country.equals("MX", ignoreCase = true) ||
@@ -246,8 +157,6 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
         tts?.setPitch(profile.pitch)
         tts?.setSpeechRate(profile.speechRate)
     }
-
-    // ── OBTENCIÓN Y PERSONALIZACIÓN DE FRASES POR PERSONAJE ──
 
     fun getFastTemplate(profile: VoiceCoachProfile = currentProfile): String {
         return prefs.getString("tpl_fast_${profile.id}", profile.defaultFastTemplate) ?: profile.defaultFastTemplate
@@ -279,61 +188,7 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
             .remove("tpl_fast_${profile.id}")
             .remove("tpl_normal_${profile.id}")
             .remove("tpl_slow_${profile.id}")
-            .remove("clip_FAST_${profile.id}")
-            .remove("clip_NORMAL_${profile.id}")
-            .remove("clip_SLOW_${profile.id}")
             .apply()
-    }
-
-    /**
-     * Guarda un archivo de audio real (.mp3/.wav) elegido por el usuario en almacenamiento interno
-     * para que suene la voz auténtica del personaje cuando ocurra ese evento.
-     */
-    fun saveCustomAudioClip(profile: VoiceCoachProfile, eventType: String, sourceUri: Uri): Boolean {
-        return try {
-            val clipsDir = File(context.filesDir, "voice_clips").apply { mkdirs() }
-            val destFile = File(clipsDir, "${profile.id}_${eventType}.audio")
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                FileOutputStream(destFile).use { output ->
-                    input.copyTo(output)
-                }
-            } ?: return false
-            prefs.edit().putString("clip_${eventType}_${profile.id}", destFile.absolutePath).apply()
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-
-    fun getCustomAudioClipPath(profile: VoiceCoachProfile, eventType: String): String? {
-        val path = prefs.getString("clip_${eventType}_${profile.id}", null) ?: return null
-        return if (File(path).exists()) path else null
-    }
-
-    fun clearCustomAudioClip(profile: VoiceCoachProfile, eventType: String) {
-        getCustomAudioClipPath(profile, eventType)?.let {
-            try { File(it).delete() } catch (_: Exception) {}
-        }
-        prefs.edit().remove("clip_${eventType}_${profile.id}").apply()
-    }
-
-    private fun playAudioClip(filePath: String): Boolean {
-        return try {
-            mediaPlayer?.release()
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(filePath)
-                setOnCompletionListener { mp ->
-                    try { mp.release() } catch (_: Exception) {}
-                }
-                prepare()
-                start()
-            }
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
     }
 
     private fun formatVelocityForSpeech(velocity: Double): String {
@@ -343,16 +198,8 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
         return if (whole == 0) "cero punto $decStr" else "$whole punto $decStr"
     }
 
-    /**
-     * Prueba en vivo la voz del personaje seleccionado con una frase de demostración.
-     */
     fun speakPreview(profile: VoiceCoachProfile, previewType: String = "SLOW") {
-        if (profile == VoiceCoachProfile.MUTED) return
-        val customClip = getCustomAudioClipPath(profile, previewType)
-        if (customClip != null && playAudioClip(customClip)) {
-            return
-        }
-        if (!isReady) return
+        if (!isReady || profile == VoiceCoachProfile.MUTED) return
         applyVoiceProfileSettings(profile)
         val sampleVel = when (previewType) {
             "FAST" -> formatVelocityForSpeech(1.75)
@@ -379,12 +226,6 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "vbt_speed")
     }
 
-    /**
-     * Anuncia el resultado de la repetición usando la voz y frase personalizada del personaje activo.
-     * Reemplaza los comodines:
-     *  - {vel} -> velocidad hablada (ej. "1 punto 45")
-     *  - {loss} -> porcentaje de pérdida de velocidad (ej. "20")
-     */
     fun speakRepFeedback(
         velocity: Double,
         lossPercent: Double = 0.0,
@@ -392,21 +233,7 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
         targetLossPercent: Double? = null
     ) {
         val profile = currentProfile
-        if (profile == VoiceCoachProfile.MUTED || velocity <= 0.15) return
-
-        val eventKey = when {
-            isCutoffReached -> "SLOW"
-            velocity >= fastRepThresholdMps -> "FAST"
-            else -> "NORMAL"
-        }
-
-        // Si el usuario cargó un audio real (.mp3/.wav) para este personaje y evento, reproducirlo primero
-        val customClip = getCustomAudioClipPath(profile, eventKey)
-        if (customClip != null && playAudioClip(customClip)) {
-            return
-        }
-
-        if (!isReady) return
+        if (!isReady || profile == VoiceCoachProfile.MUTED || velocity <= 0.15) return
         applyVoiceProfileSettings(profile)
 
         val spokenVelocity = formatVelocityForSpeech(velocity)
@@ -446,8 +273,6 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
 
     fun shutdown() {
         try {
-            mediaPlayer?.release()
-            mediaPlayer = null
             tts?.stop()
             tts?.shutdown()
             tts = null
