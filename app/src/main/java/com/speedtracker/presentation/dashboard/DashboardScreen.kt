@@ -84,16 +84,20 @@ fun DashboardScreen(
 
     // Estado de comprobación de actualización desde GitHub (Morodor/speedtracker)
     var availableUpdate by remember { mutableStateOf<AppReleaseInfo?>(null) }
-    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
     val currentVersionName = remember { AppUpdateManager.getAppVersionName(context) }
 
-    // Comprobar automáticamente al abrir el Home si hay una versión nueva publicada en GitHub
+    // Comprobar automáticamente al abrir el Home si hay una versión más nueva publicada en GitHub
     LaunchedEffect(Unit) {
         when (val result = AppUpdateManager.checkForUpdate(context)) {
             is UpdateCheckResult.UpdateAvailable -> {
                 availableUpdate = result.release
+                showUpdateDialog = true
             }
-            else -> {}
+            else -> {
+                availableUpdate = null
+                showUpdateDialog = false
+            }
         }
     }
 
@@ -170,49 +174,28 @@ fun DashboardScreen(
                     }
                 },
                 actions = {
-                    TextButton(
-                        enabled = !isCheckingUpdate,
-                        onClick = {
-                            isCheckingUpdate = true
-                            coroutineScope.launch {
-                                when (val res = AppUpdateManager.checkForUpdate(context)) {
-                                    is UpdateCheckResult.UpdateAvailable -> {
-                                        isCheckingUpdate = false
-                                        availableUpdate = res.release
-                                    }
-                                    is UpdateCheckResult.UpToDate -> {
-                                        isCheckingUpdate = false
-                                        Toast.makeText(
-                                            context,
-                                            "Ya tienes la última versión instalada (v$currentVersionName)",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                    is UpdateCheckResult.Error -> {
-                                        isCheckingUpdate = false
-                                        Toast.makeText(
-                                            context,
-                                            res.message,
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                }
+                    // El botón Actualizar SOLO aparece cuando realmente existe una versión más nueva disponible en GitHub
+                    val pendingRelease = availableUpdate
+                    if (pendingRelease != null) {
+                        TextButton(
+                            onClick = {
+                                showUpdateDialog = true
                             }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdate,
+                                contentDescription = "Nueva actualización disponible",
+                                tint = Color(0xFFFF9800),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "¡Actualizar!",
+                                color = Color(0xFFFF9800),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SystemUpdate,
-                            contentDescription = "Buscar actualización",
-                            tint = if (availableUpdate != null) Color(0xFFFF9800) else Color(0xFF00FFCC),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (isCheckingUpdate) "Buscando..." else if (availableUpdate != null) "¡Actualizar!" else "Actualizar",
-                            color = if (availableUpdate != null) Color(0xFFFF9800) else Color(0xFF00FFCC),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -322,10 +305,10 @@ fun DashboardScreen(
         )
     }
 
-    availableUpdate?.let { releaseInfo ->
+    if (showUpdateDialog && availableUpdate != null) {
         AppUpdateDialog(
-            release = releaseInfo,
-            onDismiss = { availableUpdate = null }
+            release = availableUpdate!!,
+            onDismiss = { showUpdateDialog = false }
         )
     }
 }
