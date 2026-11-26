@@ -206,33 +206,10 @@ fun AppUpdateDialog(
 
                             Button(
                                 onClick = {
-                                    // Igual que en Máxima Potencia 2.0: verificar permiso de fuentes desconocidas ANTES de iniciar la descarga
-                                    if (!AppUpdateManager.canInstallPackages(context)) {
-                                        AppUpdateManager.requestInstallPermission(context)
-                                        return@Button
-                                    }
-                                    state = UpdateDownloadState.DOWNLOADING
-                                    coroutineScope.launch {
-                                        try {
-                                            val file = AppUpdateManager.downloadUpdate(
-                                                context = context,
-                                                downloadUrl = release.apkDownloadUrl,
-                                                onProgress = { prog, cur, tot ->
-                                                    downloadProgress = prog
-                                                    downloadedBytes = cur
-                                                    if (tot > 0) totalBytes = tot
-                                                }
-                                            )
-                                            downloadedFile = file
-                                            state = UpdateDownloadState.DOWNLOADED
-                                            // Lanzar el instalador nativo de Android inmediatamente al terminar la descarga
-                                            AppUpdateManager.installApk(context, file, release.apkDownloadUrl)
-                                        } catch (e: Exception) {
-                                            e.printStackTrace()
-                                            errorMessage = e.message ?: "Fallo al descargar actualización"
-                                            state = UpdateDownloadState.ERROR
-                                        }
-                                    }
+                                    // Descarga segura a través del gestor oficial del navegador Android
+                                    // sin usar REQUEST_INSTALL_PACKAGES (evita el bloqueo de Google Play Protect)
+                                    AppUpdateManager.openSystemBrowserDownload(context, release.apkDownloadUrl)
+                                    onDismiss()
                                 },
                                 modifier = Modifier
                                     .weight(1.35f)
@@ -251,7 +228,7 @@ fun AppUpdateDialog(
                                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Actualizar Ahora",
+                                        text = "Descargar e Instalar",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.sp,
                                         lineHeight = 14.sp,

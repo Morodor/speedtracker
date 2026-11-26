@@ -369,7 +369,7 @@ fun HomeActionGridCard(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 16.dp),
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -397,13 +397,13 @@ fun HomeActionGridCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // 2. Franja fija para el Icono central con doble halo luminoso (72.dp)
+                // 2. Franja fija para el Icono central con doble halo luminoso (68.dp)
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(68.dp)
                         .background(
                             brush = Brush.radialGradient(
                                 colors = listOf(
@@ -419,34 +419,34 @@ fun HomeActionGridCard(
                         color = Color(0xCC0D1418),
                         shape = CircleShape,
                         border = BorderStroke(1.6.dp, accentColor),
-                        modifier = Modifier.size(56.dp)
+                        modifier = Modifier.size(54.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = icon,
                                 contentDescription = title,
                                 tint = accentColor,
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(27.dp)
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // 3. Franja fija para el Título centrado (58.dp -> caben hasta 3 líneas alineadas a la misma altura)
+                // 3. Franja amplia para el Título centrado (64.dp -> caben hasta 3 líneas completas sin recortes)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(58.dp),
+                        .height(64.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = title,
                         color = Color.White,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp,
-                        lineHeight = 18.5.sp,
+                        fontSize = 14.5.sp,
+                        lineHeight = 17.5.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 3
                     )
@@ -454,18 +454,18 @@ fun HomeActionGridCard(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // 4. Franja fija para el Subtítulo centrado (48.dp -> caben 3 líneas siempre al mismo nivel)
+                // 4. Franja amplia para el Subtítulo centrado (54.dp -> caben hasta 3 líneas completas sin recortes)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .height(54.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
                     Text(
                         text = subtitle,
                         color = Color(0xFFE2E8F0),
-                        fontSize = 11.5.sp,
-                        lineHeight = 15.sp,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 3
                     )
