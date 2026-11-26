@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -177,24 +178,56 @@ fun AppUpdateDialog(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             OutlinedButton(
                                 onClick = onDismiss,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8))
                             ) {
-                                Text("Más tarde", fontSize = 12.sp)
+                                Text(
+                                    text = "Más tarde",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
 
                             Button(
                                 onClick = {
-                                    // Descarga segura a través del gestor oficial del navegador Android
-                                    // (100% libre del bloqueo de Google Play Protect)
-                                    AppUpdateManager.openSystemBrowserDownload(context, release.apkDownloadUrl)
-                                    onDismiss()
+                                    state = UpdateDownloadState.DOWNLOADING
+                                    coroutineScope.launch {
+                                        try {
+                                            val file = AppUpdateManager.downloadUpdate(
+                                                context = context,
+                                                downloadUrl = release.apkDownloadUrl,
+                                                onProgress = { prog, cur, tot ->
+                                                    downloadProgress = prog
+                                                    downloadedBytes = cur
+                                                    if (tot > 0) totalBytes = tot
+                                                }
+                                            )
+                                            downloadedFile = file
+                                            state = UpdateDownloadState.DOWNLOADED
+                                            // Lanzar el instalador nativo de Android de inmediato al terminar la descarga
+                                            AppUpdateManager.installApk(context, file, release.apkDownloadUrl)
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                            errorMessage = e.message ?: "Fallo al descargar actualización"
+                                            state = UpdateDownloadState.ERROR
+                                        }
+                                    }
                                 },
-                                modifier = Modifier.weight(1.3f),
+                                modifier = Modifier
+                                    .weight(1.35f)
+                                    .height(44.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF00FFCC),
                                     contentColor = Color.Black
@@ -202,7 +235,13 @@ fun AppUpdateDialog(
                             ) {
                                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Descargar e Instalar", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(
+                                    text = "Actualizar Ahora",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1
+                                )
                             }
                         }
                     }
@@ -270,7 +309,7 @@ fun AppUpdateDialog(
 
                         Button(
                             onClick = {
-                                downloadedFile?.let { AppUpdateManager.installApk(context, it) }
+                                downloadedFile?.let { AppUpdateManager.installApk(context, it, release.apkDownloadUrl) }
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
@@ -281,6 +320,16 @@ fun AppUpdateDialog(
                             Icon(Icons.Default.InstallMobile, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Instalar Ahora", fontWeight = FontWeight.Bold)
+                        }
+
+                        if (!AppUpdateManager.canInstallPackages(context)) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Nota: Si es la primera vez que actualizas desde la app, activa el interruptor 'Permitir desde esta fuente' y vuelve atrás.",
+                                color = Color(0xFFFF9800),
+                                fontSize = 10.5.sp,
+                                textAlign = TextAlign.Center
+                            )
                         }
                     }
 

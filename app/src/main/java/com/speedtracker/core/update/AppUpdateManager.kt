@@ -271,9 +271,13 @@ object AppUpdateManager {
     }
 
     /**
-     * Inicia la instalación del APK descargado invocando al Package Installer del sistema Android
+     * Inicia la instalación del APK descargado invocando directamente al Package Installer del sistema Android
      */
     fun installApk(context: Context, apkFile: File, fallbackUrl: String? = null) {
+        if (!canInstallPackages(context)) {
+            requestInstallPermission(context)
+            return
+        }
         try {
             val apkUri = FileProvider.getUriForFile(
                 context,
@@ -284,7 +288,7 @@ object AppUpdateManager {
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(apkUri, "application/vnd.android.package-archive")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
         } catch (e: Exception) {
