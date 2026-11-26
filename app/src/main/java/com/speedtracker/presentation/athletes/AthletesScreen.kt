@@ -216,32 +216,13 @@ fun AthletesScreen(
                                     }
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                user.name,
-                                                color = Color.White,
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            if (activeAthleteId == user.id) {
-                                                Surface(
-                                                    color = Color(0xFF00FFCC).copy(alpha = 0.18f),
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    border = BorderStroke(0.8.dp, Color(0xFF00FFCC))
-                                                ) {
-                                                    Text(
-                                                        "⚡ Activo",
-                                                        color = Color(0xFF00FFCC),
-                                                        fontSize = 9.5.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
+                                        Text(
+                                            user.name,
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1
+                                        )
                                         Text(
                                             "Peso: ${user.bodyWeightKg} Kg  •  ${userSessions.size} registros",
                                             color = Color.LightGray,
@@ -251,18 +232,6 @@ fun AthletesScreen(
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (activeAthleteId != user.id) {
-                                        TextButton(
-                                            onClick = {
-                                                userRepository.setActiveUserId(user.id)
-                                                activeAthleteId = user.id
-                                                Toast.makeText(context, "${user.name} seleccionado como atleta activo", Toast.LENGTH_SHORT).show()
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text("Activar", color = Color(0xFF00FFCC), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
                                     IconButton(onClick = { userToEdit = user }) {
                                         Icon(Icons.Default.Edit, contentDescription = "Editar", tint = Color.LightGray)
                                     }
@@ -1287,13 +1256,14 @@ fun SingleAthleteProgressionDialog(
                             contentColor = Color.Black
                         ),
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         modifier = Modifier
                             .weight(1.4f)
                             .height(46.dp)
                     ) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Generar Informe PDF", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Informe PDF", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
                     }
                 }
             }

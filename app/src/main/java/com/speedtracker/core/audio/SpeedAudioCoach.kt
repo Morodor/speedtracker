@@ -1,9 +1,13 @@
 package com.speedtracker.core.audio
 
 import android.content.Context
+import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Build
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
+import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlin.random.Random
@@ -158,6 +162,7 @@ enum class VoiceCoachProfile(
 
 class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = TextToSpeech(context.applicationContext, this)
+    private var mediaPlayer: MediaPlayer? = null
     private var isReady = false
     private val prefs = context.getSharedPreferences("speed_audio_coach_prefs", Context.MODE_PRIVATE)
 
@@ -274,7 +279,61 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
             .remove("tpl_fast_${profile.id}")
             .remove("tpl_normal_${profile.id}")
             .remove("tpl_slow_${profile.id}")
+            .remove("clip_FAST_${profile.id}")
+            .remove("clip_NORMAL_${profile.id}")
+            .remove("clip_SLOW_${profile.id}")
             .apply()
+    }
+
+    /**
+     * Guarda un archivo de audio real (.mp3/.wav) elegido por el usuario en almacenamiento interno
+     * para que suene la voz auténtica del personaje cuando ocurra ese evento.
+     */
+    fun saveCustomAudioClip(profile: VoiceCoachProfile, eventType: String, sourceUri: Uri): Boolean {
+        return try {
+            val clipsDir = File(context.filesDir, "voice_clips").apply { mkdirs() }
+            val destFile = File(clipsDir, "${profile.id}_${eventType}.audio")
+            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                FileOutputStream(destFile).use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return false
+            prefs.edit().putString("clip_${eventType}_${profile.id}", destFile.absolutePath).apply()
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun getCustomAudioClipPath(profile: VoiceCoachProfile, eventType: String): String? {
+        val path = prefs.getString("clip_${eventType}_${profile.id}", null) ?: return null
+        return if (File(path).exists()) path else null
+    }
+
+    fun clearCustomAudioClip(profile: VoiceCoachProfile, eventType: String) {
+        getCustomAudioClipPath(profile, eventType)?.let {
+            try { File(it).delete() } catch (_: Exception) {}
+        }
+        prefs.edit().remove("clip_${eventType}_${profile.id}").apply()
+    }
+
+    private fun playAudioClip(filePath: String): Boolean {
+        return try {
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(filePath)
+                setOnCompletionListener { mp ->
+                    try { mp.release() } catch (_: Exception) {}
+                }
+                prepare()
+                start()
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 
     private fun formatVelocityForSpeech(velocity: Double): String {
@@ -288,7 +347,12 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
      * Prueba en vivo la voz del personaje seleccionado con una frase de demostración.
      */
     fun speakPreview(profile: VoiceCoachProfile, previewType: String = "SLOW") {
-        if (!isReady || profile == VoiceCoachProfile.MUTED) return
+        if (profile == VoiceCoachProfile.MUTED) return
+        val customClip = getCustomAudioClipPath(profile, previewType)
+        if (customClip != null && playAudioClip(customClip)) {
+            return
+        }
+        if (!isReady) return
         applyVoiceProfileSettings(profile)
         val sampleVel = when (previewType) {
             "FAST" -> formatVelocityForSpeech(1.75)
@@ -328,7 +392,21 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
         targetLossPercent: Double? = null
     ) {
         val profile = currentProfile
-        if (!isReady || profile == VoiceCoachProfile.MUTED || velocity <= 0.15) return
+        if (profile == VoiceCoachProfile.MUTED || velocity <= 0.15) return
+
+        val eventKey = when {
+            isCutoffReached -> "SLOW"
+            velocity >= fastRepThresholdMps -> "FAST"
+            else -> "NORMAL"
+        }
+
+        // Si el usuario cargó un audio real (.mp3/.wav) para este personaje y evento, reproducirlo primero
+        val customClip = getCustomAudioClipPath(profile, eventKey)
+        if (customClip != null && playAudioClip(customClip)) {
+            return
+        }
+
+        if (!isReady) return
         applyVoiceProfileSettings(profile)
 
         val spokenVelocity = formatVelocityForSpeech(velocity)
@@ -368,6 +446,8 @@ class SpeedAudioCoach(private val context: Context) : TextToSpeech.OnInitListene
 
     fun shutdown() {
         try {
+            mediaPlayer?.release()
+            mediaPlayer = null
             tts?.stop()
             tts?.shutdown()
             tts = null

@@ -112,7 +112,7 @@ fun HistoryScreen(
                 val categoryItems = listOf(
                     "ALL" to "Todos (${athleteFilteredSessions.size})",
                     "SNATCH" to "Arranque",
-                    "CLEAN_JERK" to "Cargada / Envión"
+                    "CLEAN_JERK" to "Cargada / C&J"
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -266,9 +266,10 @@ fun HistoryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            // Fila 1: Ícono + Nombre completo del atleta (1 línea) + Resultado destacado + Borrar
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -282,75 +283,100 @@ fun HistoryScreen(
                                         if (session.activityType == "JUMP") Icons.Default.Height else Icons.Default.FitnessCenter,
                                         contentDescription = null,
                                         tint = Color(0xFF00FFCC),
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column {
-                                        Text(
-                                            athlete?.name ?: "Atleta Invitado",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                        Text(
-                                            session.activityType,
-                                            color = Color(0xFF00FFCC),
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        Text(
-                                            formatHistoryDate(session.timestamp),
-                                            color = Color.Gray,
-                                            style = MaterialTheme.typography.labelSmall
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = athlete?.name ?: "Atleta Invitado",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    val valStr = if (session.activityType == "JUMP") {
+                                        "${String.format(Locale.US, "%.1f", session.result * 100)} cm"
+                                    } else {
+                                        "${String.format(Locale.US, "%.2f", session.result)} m/s"
+                                    }
+                                    Text(
+                                        text = valStr,
+                                        color = Color(0xFF00FFCC),
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 16.sp
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            userRepository.deleteSession(session.id)
+                                            sessions = userRepository.getSessions().sortedByDescending { it.timestamp }
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.DeleteOutline,
+                                            contentDescription = "Borrar",
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
                                 }
+                            }
 
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        val valStr = if (session.activityType == "JUMP") {
-                                            "${String.format(Locale.US, "%.1f", session.result * 100)} cm"
-                                        } else {
-                                            "${String.format(Locale.US, "%.2f", session.result)} m/s"
-                                        }
-                                        Text(
-                                            valStr,
-                                            color = Color(0xFF00FFCC),
-                                            fontWeight = FontWeight.Black,
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
+                            // Fila 2: Ejercicio + Fecha en la misma línea aprovechando el ancho completo
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = session.activityType,
+                                    color = Color(0xFF00E5FF),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = formatHistoryDate(session.timestamp),
+                                    color = Color.Gray,
+                                    fontSize = 10.5.sp,
+                                    maxLines = 1
+                                )
+                            }
 
-                                        if (session.activityType == "JUMP") {
-                                            val subtitle = when {
-                                                session.rsi != null && session.contactTimeMs != null ->
-                                                    "${session.jumpType ?: "DJ"} • RSI: ${String.format(Locale.US, "%.2f", session.rsi)} • Tc: ${session.contactTimeMs}ms"
-                                                session.powerWatts != null ->
-                                                    "${session.jumpType ?: "Salto"} • ${session.powerWatts.toInt()} W"
-                                                else -> session.jumpType ?: ""
-                                            }
-                                            if (subtitle.isNotEmpty()) {
-                                                Text(subtitle, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
-                                            }
-                                        } else {
-                                            val details = buildList {
-                                                if (session.loadKg != null) add("${session.loadKg.toInt()} kg")
-                                                if (session.meanVelocity != null) add("MV: ${String.format(Locale.US, "%.2f", session.meanVelocity)}")
-                                                if (session.horizontalDeviationCm != null) add("Desv: ${String.format(Locale.US, "%.1f", session.horizontalDeviationCm)}cm")
-                                            }.joinToString(" • ")
-
-                                            if (details.isNotEmpty()) {
-                                                Text(details, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
-                                            }
-                                        }
-                                    }
-
-                                    IconButton(onClick = {
-                                        userRepository.deleteSession(session.id)
-                                        sessions = userRepository.getSessions().sortedByDescending { it.timestamp }
-                                    }) {
-                                        Icon(Icons.Default.DeleteOutline, contentDescription = "Borrar", tint = Color.Gray)
-                                    }
+                            // Fila 3 (si aplica): Métricas en una sola línea limpia
+                            val metricsLine = if (session.activityType == "JUMP") {
+                                when {
+                                    session.rsi != null && session.contactTimeMs != null ->
+                                        "${session.jumpType ?: "DJ"} • RSI: ${String.format(Locale.US, "%.2f", session.rsi)} • Tc: ${session.contactTimeMs}ms"
+                                    session.powerWatts != null ->
+                                        "${session.jumpType ?: "Salto"} • ${session.powerWatts.toInt()} W"
+                                    else -> session.jumpType ?: ""
                                 }
+                            } else {
+                                buildList {
+                                    if (session.loadKg != null) add("${session.loadKg.toInt()} kg")
+                                    if (session.meanVelocity != null) add("MV: ${String.format(Locale.US, "%.2f", session.meanVelocity)} m/s")
+                                    if (session.horizontalDeviationCm != null) add("Desv: ${String.format(Locale.US, "%.1f", session.horizontalDeviationCm)}cm")
+                                }.joinToString(" • ")
+                            }
+
+                            if (metricsLine.isNotEmpty()) {
+                                Text(
+                                    text = metricsLine,
+                                    color = Color.LightGray,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
 
                             if (hasVideo || hasPdf) {
@@ -363,14 +389,14 @@ fun HistoryScreen(
                                     if (hasVideo) {
                                         OutlinedButton(
                                             onClick = { videoSessionToPlay = session },
-                                            modifier = Modifier.weight(1f).height(36.dp),
+                                            modifier = Modifier.weight(1f).height(32.dp),
                                             contentPadding = PaddingValues(horizontal = 8.dp),
                                             border = BorderStroke(1.dp, Color(0xFF00FFCC)),
                                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00FFCC))
                                         ) {
-                                            Icon(Icons.Default.PlayCircle, contentDescription = "Ver Video", modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Ver Video Analizado", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                            Icon(Icons.Default.PlayCircle, contentDescription = "Ver Video", modifier = Modifier.size(15.dp))
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text("Ver Video", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                         }
                                     }
                                     if (hasPdf) {
@@ -378,14 +404,14 @@ fun HistoryScreen(
                                             onClick = {
                                                 pdfSessionToView = session
                                             },
-                                            modifier = Modifier.weight(1f).height(36.dp),
+                                            modifier = Modifier.weight(1f).height(32.dp),
                                             contentPadding = PaddingValues(horizontal = 8.dp),
                                             border = BorderStroke(1.dp, Color(0xFF00E5FF)),
                                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
                                         ) {
-                                            Icon(Icons.Default.PictureAsPdf, contentDescription = "Ver Informe PDF", modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Informe PDF", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                            Icon(Icons.Default.PictureAsPdf, contentDescription = "Ver Informe PDF", modifier = Modifier.size(15.dp))
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text("Informe PDF", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                         }
                                     }
                                 }
