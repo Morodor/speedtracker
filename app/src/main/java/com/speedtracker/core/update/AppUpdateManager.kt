@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
@@ -169,15 +170,17 @@ object AppUpdateManager {
     }
 
     /**
-     * Descarga el APK con seguimiento de progreso (0.0f a 1.0f)
+     * Descarga el APK directamente desde el servidor con seguimiento de progreso (idéntico a Máxima Potencia 2.0)
      */
     suspend fun downloadUpdate(
         context: Context,
         downloadUrl: String,
         onProgress: (progress: Float, downloadedBytes: Long, totalBytes: Long) -> Unit
     ): File = withContext(Dispatchers.IO) {
-        val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
-        val targetFile = File(updatesDir, "SpeedTracker_Update.apk")
+        val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
+        if (!outputDir.exists()) outputDir.mkdirs()
+
+        val targetFile = File(outputDir, "update.apk")
         if (targetFile.exists()) targetFile.delete()
 
         var currentUrl = downloadUrl
@@ -186,7 +189,7 @@ object AppUpdateManager {
         var outputStream: FileOutputStream? = null
 
         try {
-            // Manejar redirecciones de GitHub Release (301, 302, 307 -> AWS S3 / CDN)
+            // Manejar redirecciones HTTP 301, 302, 307, 308 (GitHub Releases -> CDN)
             var redirects = 0
             while (redirects < 5) {
                 val url = URL(currentUrl)
@@ -196,37 +199,56 @@ object AppUpdateManager {
                     readTimeout = 30000
                     setRequestProperty("User-Agent", "SpeedTracker-Android/${getAppVersionName(context)}")
                 }
+                connection.connect()
 
                 val status = connection.responseCode
                 if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
                     status == HttpURLConnection.HTTP_MOVED_PERM ||
                     status == HttpURLConnection.HTTP_SEE_OTHER ||
-                    status == 307
+                    status == 307 ||
+                    status == 308
                 ) {
-                    currentUrl = connection.getHeaderField("Location")
+                    val redirectUrl = connection.getHeaderField("Location")
+                    connection.disconnect()
+                    currentUrl = redirectUrl
                     redirects++
                 } else {
                     break
                 }
             }
 
+            val code = connection?.responseCode ?: -1
+            if (code != HttpURLConnection.HTTP_OK) {
+                throw Exception("Error en servidor al descargar actualización (Código $code)")
+            }
+
             val totalBytes = connection?.contentLengthLong ?: -1L
             inputStream = connection?.inputStream ?: throw Exception("No se pudo obtener el flujo de descarga")
             outputStream = FileOutputStream(targetFile)
 
-            val buffer = ByteArray(8192)
+            val buffer = ByteArray(16384)
             var bytesRead: Int
             var downloadedBytes = 0L
+            var lastEmitTime = 0L
 
             while (inputStream.read(buffer).also { bytesRead = it } != -1) {
                 outputStream.write(buffer, 0, bytesRead)
                 downloadedBytes += bytesRead
 
-                val prog = if (totalBytes > 0) (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
-                onProgress(prog, downloadedBytes, totalBytes)
+                val now = System.currentTimeMillis()
+                if (now - lastEmitTime > 120 || (totalBytes > 0 && downloadedBytes >= totalBytes)) {
+                    lastEmitTime = now
+                    val prog = if (totalBytes > 0) (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
+                    withContext(Dispatchers.Main) {
+                        onProgress(prog, downloadedBytes, totalBytes)
+                    }
+                }
             }
 
             outputStream.flush()
+            withContext(Dispatchers.Main) {
+                onProgress(1f, downloadedBytes, if (totalBytes > 0) totalBytes else downloadedBytes)
+            }
             targetFile
         } finally {
             try { outputStream?.close() } catch (e: Exception) {}

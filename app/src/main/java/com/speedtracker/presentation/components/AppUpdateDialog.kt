@@ -185,22 +185,32 @@ fun AppUpdateDialog(
                                 onClick = onDismiss,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(44.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    .height(48.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8))
                             ) {
-                                Text(
-                                    text = "Más tarde",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 1,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Más tarde",
+                                        fontSize = 12.sp,
+                                        lineHeight = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
                             }
 
                             Button(
                                 onClick = {
+                                    // Igual que en Máxima Potencia 2.0: verificar permiso de fuentes desconocidas ANTES de iniciar la descarga
+                                    if (!AppUpdateManager.canInstallPackages(context)) {
+                                        AppUpdateManager.requestInstallPermission(context)
+                                        return@Button
+                                    }
                                     state = UpdateDownloadState.DOWNLOADING
                                     coroutineScope.launch {
                                         try {
@@ -215,7 +225,7 @@ fun AppUpdateDialog(
                                             )
                                             downloadedFile = file
                                             state = UpdateDownloadState.DOWNLOADED
-                                            // Lanzar el instalador nativo de Android de inmediato al terminar la descarga
+                                            // Lanzar el instalador nativo de Android inmediatamente al terminar la descarga
                                             AppUpdateManager.installApk(context, file, release.apkDownloadUrl)
                                         } catch (e: Exception) {
                                             e.printStackTrace()
@@ -226,22 +236,28 @@ fun AppUpdateDialog(
                                 },
                                 modifier = Modifier
                                     .weight(1.35f)
-                                    .height(44.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    .height(48.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF00FFCC),
                                     contentColor = Color.Black
                                 )
                             ) {
-                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Actualizar Ahora",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 1
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Actualizar Ahora",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        lineHeight = 14.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
                             }
                         }
                     }
