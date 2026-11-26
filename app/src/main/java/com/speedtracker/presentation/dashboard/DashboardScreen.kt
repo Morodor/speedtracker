@@ -380,33 +380,43 @@ fun HomeActionGridCard(
                     )
             )
 
-            // ── CONTENIDO CENTRADO: BADGE + ICONO DESTACADO + TÍTULO Y SUBTÍTULO CENTRADOS ──
+            // ── CONTENIDO CON ALINEACIÓN HORIZONTAL IDÉNTICA EN LAS 4 TARJETAS ──
+            // Cada elemento (Pill, Icono, Título y Subtítulo) ocupa un contenedor de altura fija
+            // para que los iconos, títulos y subtítulos queden exactamente a la misma altura en cada fila.
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 14.dp, vertical = 18.dp),
+                    .padding(horizontal = 12.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                // Pill superior de categoría
-                Surface(
-                    color = Color(0xAA0B1014),
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(0.9.dp, accentColor.copy(alpha = 0.65f))
+                // 1. Franja fija para el Pill superior (26.dp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(26.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = tagText,
-                        color = accentColor,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.6.sp,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                    )
+                    Surface(
+                        color = Color(0xAA0B1014),
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(0.9.dp, accentColor.copy(alpha = 0.65f))
+                    ) {
+                        Text(
+                            text = tagText,
+                            color = accentColor,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.6.sp,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Icono central con doble halo luminoso
+                // 2. Franja fija para el Icono central con doble halo luminoso (72.dp)
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -439,30 +449,44 @@ fun HomeActionGridCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Título centrado
-                Text(
-                    text = title,
-                    color = Color.White,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 15.5.sp,
-                    lineHeight = 19.sp,
-                    textAlign = TextAlign.Center,
-                    maxLines = 3
-                )
+                // 3. Franja fija para el Título centrado (58.dp -> caben hasta 3 líneas alineadas a la misma altura)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        lineHeight = 18.5.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 3
+                    )
+                }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                // Subtítulo centrado
-                Text(
-                    text = subtitle,
-                    color = Color(0xFFE2E8F0),
-                    fontSize = 11.5.sp,
-                    lineHeight = 15.sp,
-                    textAlign = TextAlign.Center,
-                    maxLines = 3
-                )
+                // 4. Franja fija para el Subtítulo centrado (48.dp -> caben 3 líneas siempre al mismo nivel)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    Text(
+                        text = subtitle,
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 11.5.sp,
+                        lineHeight = 15.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 3
+                    )
+                }
             }
         }
     }
