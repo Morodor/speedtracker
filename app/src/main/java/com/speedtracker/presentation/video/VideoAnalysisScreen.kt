@@ -7413,6 +7413,31 @@ fun PreCalibrationSetupDialog(
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Divider(color = lineColor, thickness = 1.dp)
+                    if (currentMode == "VBT") {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Surface(
+                            onClick = { showExercisePickerPopup = true },
+                            color = Color(0x1800FFCC),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x5500FFCC)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = when {
+                                    selectedExerciseSequence.isEmpty() ->
+                                        "💡 Puedes elegir 1 ejercicio o sumar varios en orden (Complex)"
+                                    selectedExerciseSequence.size == 1 ->
+                                        "➕ ¿Es un Complex? Toca aquí para agregar otro ejercicio en orden"
+                                    else ->
+                                        "🔗 Complex de ${selectedExerciseSequence.size} ejercicios • Toca para editar o sumar"
+                                },
+                                color = accentColor,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
                 }
 
                 // 3. Campo: Atleta (abre Pop-up seleccionable al tocar)
@@ -7988,10 +8013,11 @@ fun PreCalibrationSetupDialog(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            // Al tocar la fila, selecciona este ejercicio como único y cierra (flujo rápido 1 toque)
-                                            onVBTExerciseChange(model)
-                                            onExerciseSequenceChange(listOf(model))
-                                            showExercisePickerPopup = false
+                                            // Agrega el ejercicio a la secuencia y mantiene abierta la ventana
+                                            // para que el usuario pueda sumar otro si es un Complex, o confirmar.
+                                            val nextSeq = selectedExerciseSequence + model
+                                            onExerciseSequenceChange(nextSeq)
+                                            onVBTExerciseChange(nextSeq.first())
                                         }
                                         .padding(horizontal = 14.dp, vertical = 9.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -7999,9 +8025,9 @@ fun PreCalibrationSetupDialog(
                                     RadioButton(
                                         selected = isSelected,
                                         onClick = {
-                                            onVBTExerciseChange(model)
-                                            onExerciseSequenceChange(listOf(model))
-                                            showExercisePickerPopup = false
+                                            val nextSeq = selectedExerciseSequence + model
+                                            onExerciseSequenceChange(nextSeq)
+                                            onVBTExerciseChange(nextSeq.first())
                                         },
                                         colors = RadioButtonDefaults.colors(
                                             selectedColor = accentColor,
