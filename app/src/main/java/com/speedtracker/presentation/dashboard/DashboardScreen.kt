@@ -14,8 +14,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.ChevronRight
@@ -24,6 +26,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -46,6 +49,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.speedtracker.R
@@ -78,6 +83,7 @@ fun DashboardScreen(
     val usersMap = remember(sessions) { userRepository.getUsers().associateBy { it.id } }
 
     var showTutorialModal by remember { mutableStateOf(false) }
+    var showServiceInfoDialog by remember { mutableStateOf(false) }
     var tutorialStep by remember { mutableIntStateOf(0) }
     var selectedTutorialTopic by remember { mutableStateOf("VBT") }
     var pendingCaptureFile by remember { mutableStateOf<File?>(null) }
@@ -211,9 +217,48 @@ fun DashboardScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Breve explicación de la app bajo el título + botón de información del servicio
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF14181C),
+                border = BorderStroke(1.dp, Color(0xFF00E5A3).copy(alpha = 0.22f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Análisis biomecánico VBT para halterofilia: mide velocidad, potencia y trayectoria de barra en video o en vivo.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFD0D5DD),
+                        lineHeight = 16.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Surface(
+                        onClick = { showServiceInfoDialog = true },
+                        shape = CircleShape,
+                        color = Color(0xFF00E5A3).copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, Color(0xFF00E5A3).copy(alpha = 0.45f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Información del servicio",
+                            tint = Color(0xFF00E5A3),
+                            modifier = Modifier
+                                .padding(7.dp)
+                                .size(18.dp)
+                        )
+                    }
+                }
+            }
+
             // FILA SUPERIOR: [1] Importar Video desde Galería | [2] Grabar desde Cámara
             Row(
                 modifier = Modifier
@@ -309,6 +354,12 @@ fun DashboardScreen(
         AppUpdateDialog(
             release = availableUpdate!!,
             onDismiss = { showUpdateDialog = false }
+        )
+    }
+
+    if (showServiceInfoDialog) {
+        ServiceInfoDialog(
+            onDismiss = { showServiceInfoDialog = false }
         )
     }
 }
@@ -652,6 +703,138 @@ fun SessionItemCard(
             title = "Informe PDF • ${session.activityType}",
             onDismiss = { showPdfDialog = false }
         )
+    }
+}
+
+@Composable
+private fun ServiceInfoDialog(onDismiss: () -> Unit) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .padding(vertical = 24.dp),
+            shape = RoundedCornerShape(22.dp),
+            color = Color(0xFF14181C),
+            border = BorderStroke(1.dp, Color(0xFF00E5A3).copy(alpha = 0.35f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .background(Color(0xFF00E5A3).copy(alpha = 0.14f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = Color(0xFF00E5A3),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Sobre Speed Tracker",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Servicio Biomecánico VBT",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF00E5A3)
+                            )
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = Color(0xFF98A2B3)
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Speed Tracker transforma tu teléfono en un laboratorio de entrenamiento basado en velocidad (VBT) para halterofilia olímpica y fuerza.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFD0D5DD),
+                    lineHeight = 18.sp
+                )
+
+                ServiceFeatureItem(
+                    title = "Análisis Biomecánico de Video + Complex",
+                    description = "Importa o graba tus levantamientos, calibra el disco olímpico de 45 cm y analiza velocidad pico, velocidad media propulsiva (VMP), potencia y trayectoria frame por frame. Crea series o complex combinando varios ejercicios."
+                )
+                ServiceFeatureItem(
+                    title = "Medición Rápida en Vivo",
+                    description = "Detecta el disco en tiempo real con cámara frontal o trasera, entregando retroalimentación visual y por voz sin guardar datos innecesarios."
+                )
+                ServiceFeatureItem(
+                    title = "Fichas de Atletas e Informes PDF",
+                    description = "Registra marcas por atleta, compara la evolución de cada métrica y exporta informes biomecánicos en PDF listos para compartir."
+                )
+
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00E5A3),
+                        contentColor = Color(0xFF071310)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Entendido", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServiceFeatureItem(
+    title: String,
+    description: String
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFF1D232A),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF00E5A3)
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFCBD5E1),
+                lineHeight = 17.sp
+            )
+        }
     }
 }
 
