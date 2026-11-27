@@ -3336,10 +3336,9 @@ fun VideoAnalysisScreen(
                                 peakVelocity = chartPeakV,
                                 meanVelocity = chartMeanV,
                                 vmpVelocity = if (currentMode == "VBT") vmpVelocity else null,
-                                currentVideoPosMs = previewPlaybackPosMs,
-                                onSeekToTimestamp = { relativeOrAbsMs ->
-                                    val absMs = if (relativeOrAbsMs < trimStartMs) trimStartMs + relativeOrAbsMs else relativeOrAbsMs
-                                    resultSeekPosMs = absMs
+                                currentVideoPosMs = (previewPlaybackPosMs - trimStartMs).coerceAtLeast(0L),
+                                onSeekToTimestamp = { relativeMs ->
+                                    resultSeekPosMs = trimStartMs + relativeMs.coerceAtLeast(0L)
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -5789,17 +5788,36 @@ fun AnalysisResultVideoPreview(
             try { previewRetriever.release() } catch (e: Exception) {}
         }
     }
+    val effectiveEndMs = if (trimEndMs > trimStartMs + 100L) trimEndMs else (trimStartMs + 3000L)
+
     LaunchedEffect(currentPosMs, isPlaying) {
-        if (!isPlaying) {
+        if (isPlaying) {
+            previewStillBitmap = null
+        } else {
+            // Sincronización exacta 1:1 con el fotograma analizado del tracker:
+            // Si existen trackingPoints, decodificamos exactamente el mismo timestamp (trimStartMs + pt.timestampMs)
+            // que se usó para rastrear el disco, evitando cualquier desfase entre imagen pausada y retícula.
+            val elapsedRelMs = (currentPosMs - trimStartMs).coerceAtLeast(0L)
+            val matchedPt = if (trackingPoints.isNotEmpty()) {
+                trackingPoints.lastOrNull { it.timestampMs <= elapsedRelMs } ?: trackingPoints.first()
+            } else null
+            val exactDecodeMs = if (matchedPt != null) {
+                (trimStartMs + matchedPt.timestampMs).coerceIn(trimStartMs, effectiveEndMs)
+            } else {
+                currentPosMs
+            }
+
             withContext(Dispatchers.IO) {
                 try {
-                    val targetUs = currentPosMs * 1000L
+                    val targetUs = exactDecodeMs * 1000L
                     val bm = previewRetriever.getFrameAtTime(targetUs, MediaMetadataRetriever.OPTION_CLOSEST)
                         ?: previewRetriever.getFrameAtTime(targetUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                        ?: previewRetriever.getFrameAtTime((currentPosMs - 50L).coerceAtLeast(0L) * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                        ?: previewRetriever.getFrameAtTime((exactDecodeMs - 50L).coerceAtLeast(0L) * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
                     if (bm != null) {
                         withContext(Dispatchers.Main) {
-                            previewStillBitmap = bm
+                            if (!isPlaying) {
+                                previewStillBitmap = bm
+                            }
                         }
                     }
                 } catch (e: Exception) {}
@@ -5814,8 +5832,6 @@ fun AnalysisResultVideoPreview(
     LaunchedEffect(currentPosMs) {
         onCurrentPositionChange(currentPosMs)
     }
-
-    val effectiveEndMs = if (trimEndMs > trimStartMs + 100L) trimEndMs else (trimStartMs + 3000L)
 
     LaunchedEffect(externalSeekPosMs) {
         externalSeekPosMs?.let { targetMs ->
@@ -6388,13 +6404,19 @@ fun AnalysisResultVideoPreview(
                             onClick = {
                                 previewVideoViewRef?.let { vv ->
                                     if (isPlaying) {
+                                        val actualPos = vv.currentPosition.toLong().coerceIn(trimStartMs, effectiveEndMs)
                                         vv.pause()
                                         isPlaying = false
+                                        currentPosMs = actualPos
+                                        lastSyncPositionMs = actualPos
+                                        lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+                                        seekVideoAccurate(previewPlayerRef, vv, actualPos)
                                     } else {
                                         val startFrom = if (currentPosMs >= effectiveEndMs - 50L) trimStartMs else currentPosMs
                                         currentPosMs = startFrom
                                         lastSyncPositionMs = startFrom
                                         lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+                                        previewStillBitmap = null
                                         seekVideoAccurate(previewPlayerRef, vv, startFrom)
                                         vv.start()
                                         isPlaying = true
@@ -6432,18 +6454,25 @@ fun AnalysisResultVideoPreview(
                             )
                         }
 
-                        // Botón -1 Frame (33ms) - Avanza libremente cuadro a cuadro usando MediaMetadataRetriever sin bloqueo del MediaPlayer
+                        // Botón -1 Frame: retrocede al fotograma analizado exacto anterior
                         FilledTonalIconButton(
                             onClick = {
                                 previewVideoViewRef?.let { vv ->
                                     if (vv.isPlaying) vv.pause()
                                 }
                                 isPlaying = false
-                                val rawPrev = currentPosMs - 33L
-                                val stepPos = if (rawPrev <= trimStartMs + 15L) trimStartMs else rawPrev.coerceIn(trimStartMs, effectiveEndMs)
+                                val elapsedRelMs = (currentPosMs - trimStartMs).coerceAtLeast(0L)
+                                val prevPt = trackingPoints.lastOrNull { it.timestampMs < elapsedRelMs - 5L }
+                                val stepPos = if (prevPt != null) {
+                                    (trimStartMs + prevPt.timestampMs).coerceIn(trimStartMs, effectiveEndMs)
+                                } else {
+                                    val rawPrev = currentPosMs - 33L
+                                    if (rawPrev <= trimStartMs + 15L) trimStartMs else rawPrev.coerceIn(trimStartMs, effectiveEndMs)
+                                }
                                 currentPosMs = stepPos
                                 lastSyncPositionMs = stepPos
                                 lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+                                seekVideoAccurate(previewPlayerRef, previewVideoViewRef, stepPos)
                             },
                             modifier = Modifier.size(36.dp),
                             colors = IconButtonDefaults.filledTonalIconButtonColors(
@@ -6456,18 +6485,25 @@ fun AnalysisResultVideoPreview(
 
                         Spacer(modifier = Modifier.width(4.dp))
 
-                        // Botón +1 Frame (33ms) - Avanza hasta el último frame exacto (effectiveEndMs) sin estancarse antes del final
+                        // Botón +1 Frame: avanza al siguiente fotograma analizado exacto
                         FilledTonalIconButton(
                             onClick = {
                                 previewVideoViewRef?.let { vv ->
                                     if (vv.isPlaying) vv.pause()
                                 }
                                 isPlaying = false
-                                val rawNext = currentPosMs + 33L
-                                val stepPos = if (rawNext >= effectiveEndMs - 15L) effectiveEndMs else rawNext.coerceIn(trimStartMs, effectiveEndMs)
+                                val elapsedRelMs = (currentPosMs - trimStartMs).coerceAtLeast(0L)
+                                val nextPt = trackingPoints.firstOrNull { it.timestampMs > elapsedRelMs + 5L }
+                                val stepPos = if (nextPt != null) {
+                                    (trimStartMs + nextPt.timestampMs).coerceIn(trimStartMs, effectiveEndMs)
+                                } else {
+                                    val rawNext = currentPosMs + 33L
+                                    if (rawNext >= effectiveEndMs - 15L) effectiveEndMs else rawNext.coerceIn(trimStartMs, effectiveEndMs)
+                                }
                                 currentPosMs = stepPos
                                 lastSyncPositionMs = stepPos
                                 lastSyncWallClockMs = android.os.SystemClock.elapsedRealtime()
+                                seekVideoAccurate(previewPlayerRef, previewVideoViewRef, stepPos)
                             },
                             modifier = Modifier.size(36.dp),
                             colors = IconButtonDefaults.filledTonalIconButtonColors(
