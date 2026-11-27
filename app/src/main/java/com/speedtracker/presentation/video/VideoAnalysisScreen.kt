@@ -7319,30 +7319,27 @@ fun PreCalibrationSetupDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.88f)
+                .fillMaxWidth(0.92f)
                 .wrapContentHeight(),
-            shape = RoundedCornerShape(6.dp),
+            shape = RoundedCornerShape(10.dp),
             color = Color(0xFF1C2128),
             tonalElevation = 10.dp
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 22.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // Título centrado limpio
                 Text(
                     text = "Información del Video",
                     color = valueColor,
-                    fontSize = 19.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
-
-                Spacer(modifier = Modifier.height(2.dp))
 
                 // 1. Campo: Tipo de Ejercicio (Tradicionales Hill | Olímpicos DLP | Balísticos-Explosivos Saltos)
                 Column(
@@ -7353,9 +7350,9 @@ fun PreCalibrationSetupDialog(
                     Text(
                         text = "Tipo de Ejercicio",
                         color = labelColor,
-                        fontSize = 13.sp
+                        fontSize = 11.5.sp
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -7364,7 +7361,7 @@ fun PreCalibrationSetupDialog(
                         Text(
                             text = currentExerciseTypeLabel,
                             color = valueColor,
-                            fontSize = 17.sp,
+                            fontSize = 15.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
@@ -7372,10 +7369,11 @@ fun PreCalibrationSetupDialog(
                         Icon(
                             Icons.Default.ArrowDropDown,
                             contentDescription = "Seleccionar tipo de ejercicio",
-                            tint = labelColor
+                            tint = labelColor,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Divider(color = lineColor, thickness = 1.dp)
                 }
 
@@ -7388,9 +7386,9 @@ fun PreCalibrationSetupDialog(
                     Text(
                         text = "Ejercicio",
                         color = labelColor,
-                        fontSize = 13.sp
+                        fontSize = 11.5.sp
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -7399,7 +7397,7 @@ fun PreCalibrationSetupDialog(
                         Text(
                             text = currentExerciseText,
                             color = if (isExerciseUnselected) Color(0xFFFFB74D) else valueColor,
-                            fontSize = 17.sp,
+                            fontSize = 15.sp,
                             fontWeight = if (isExerciseUnselected) FontWeight.SemiBold else FontWeight.Normal,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -7408,13 +7406,14 @@ fun PreCalibrationSetupDialog(
                         Icon(
                             Icons.Default.ArrowDropDown,
                             contentDescription = "Seleccionar ejercicio",
-                            tint = labelColor
+                            tint = labelColor,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Divider(color = lineColor, thickness = 1.dp)
                     if (currentMode == "VBT") {
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(5.dp))
                         Surface(
                             onClick = { showExercisePickerPopup = true },
                             color = Color(0x1800FFCC),
@@ -7425,16 +7424,18 @@ fun PreCalibrationSetupDialog(
                             Text(
                                 text = when {
                                     selectedExerciseSequence.isEmpty() ->
-                                        "💡 Puedes elegir 1 ejercicio o sumar varios en orden (Complex)"
+                                        "💡 Puedes elegir 1 ejercicio o sumar varios (Complex)"
                                     selectedExerciseSequence.size == 1 ->
-                                        "➕ ¿Es un Complex? Toca aquí para agregar otro ejercicio en orden"
+                                        "➕ ¿Es un Complex? Toca aquí para sumar otro ejercicio"
                                     else ->
-                                        "🔗 Complex de ${selectedExerciseSequence.size} ejercicios • Toca para editar o sumar"
+                                        "🔗 Complex de ${selectedExerciseSequence.size} ejercicios • Toca para editar"
                                 },
                                 color = accentColor,
-                                fontSize = 11.5.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                             )
                         }
                     }
@@ -7449,9 +7450,9 @@ fun PreCalibrationSetupDialog(
                     Text(
                         text = "Atleta",
                         color = labelColor,
-                        fontSize = 13.sp
+                        fontSize = 11.5.sp
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -7460,7 +7461,7 @@ fun PreCalibrationSetupDialog(
                         Text(
                             text = currentAthleteText,
                             color = valueColor,
-                            fontSize = 17.sp,
+                            fontSize = 15.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
@@ -7468,163 +7469,139 @@ fun PreCalibrationSetupDialog(
                         Icon(
                             Icons.Default.ArrowDropDown,
                             contentDescription = "Seleccionar atleta",
-                            tint = labelColor
+                            tint = labelColor,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Divider(color = lineColor, thickness = 1.dp)
                 }
 
-                // 4. Campo: Peso (kg)
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "Peso (kg)",
-                        color = labelColor,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    BasicTextField(
-                        value = barbellLoadKg,
-                        onValueChange = { newVal ->
-                            if (newVal.isEmpty() || newVal.all { it.isDigit() || it == '.' }) {
-                                onLoadChange(newVal)
-                            }
-                        },
-                        singleLine = true,
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            color = valueColor,
-                            fontSize = 17.sp
-                        ),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        cursorBrush = SolidColor(accentColor),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Divider(color = lineColor, thickness = 1.dp)
+                // 4. Fila compacta 2 columnas: Peso (kg) + Diámetro del Disco (mm)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Peso (kg)",
+                            color = labelColor,
+                            fontSize = 11.5.sp
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        BasicTextField(
+                            value = barbellLoadKg,
+                            onValueChange = { newVal ->
+                                if (newVal.isEmpty() || newVal.all { it.isDigit() || it == '.' }) {
+                                    onLoadChange(newVal)
+                                }
+                            },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = valueColor,
+                                fontSize = 15.sp
+                            ),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            cursorBrush = SolidColor(accentColor),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Divider(color = lineColor, thickness = 1.dp)
+                    }
+
+                    if (currentMode != "JUMP") {
+                        Column(modifier = Modifier.weight(1.2f)) {
+                            Text(
+                                text = "Disco (mm, est. 450)",
+                                color = labelColor,
+                                fontSize = 11.5.sp,
+                                maxLines = 1
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            BasicTextField(
+                                value = plateDiameterMm,
+                                onValueChange = { newVal ->
+                                    if (newVal.isEmpty() || newVal.all { it.isDigit() }) {
+                                        plateDiameterMm = newVal
+                                    }
+                                },
+                                singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    color = valueColor,
+                                    fontSize = 15.sp
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                cursorBrush = SolidColor(accentColor),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Divider(color = lineColor, thickness = 1.dp)
+                        }
+                    }
                 }
 
-                // 5. Campo: Notas
+                // 5. Notas (1 línea compacta)
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "Notas",
                         color = labelColor,
-                        fontSize = 13.sp
+                        fontSize = 11.5.sp
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                     BasicTextField(
                         value = notesText,
                         onValueChange = { notesText = it },
                         singleLine = true,
                         textStyle = androidx.compose.ui.text.TextStyle(
                             color = valueColor,
-                            fontSize = 16.sp
+                            fontSize = 14.5.sp
                         ),
                         cursorBrush = SolidColor(accentColor),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Divider(color = lineColor, thickness = 1.dp)
                 }
 
-                if (currentMode != "JUMP") {
-                    // 6. Campo: Diámetro del Disco (mm) - Exclusivo para Halterofilia / VBT
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "Diámetro del Disco (mm) - Disco estándar es 450mm",
-                            color = labelColor,
-                            fontSize = 12.5.sp
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        BasicTextField(
-                            value = plateDiameterMm,
-                            onValueChange = { newVal ->
-                                if (newVal.isEmpty() || newVal.all { it.isDigit() }) {
-                                    plateDiameterMm = newVal
-                                }
-                            },
-                            singleLine = true,
-                            textStyle = androidx.compose.ui.text.TextStyle(
-                                color = valueColor,
-                                fontSize = 17.sp
-                            ),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            cursorBrush = SolidColor(accentColor),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Divider(color = lineColor, thickness = 1.dp)
-                    }
-
-                    // Switch de diámetro por defecto
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = "Fijar como diámetro por defecto",
-                            color = labelColor,
-                            fontSize = 14.sp
-                        )
-                        Switch(
-                            checked = defaultPlateDiameter,
-                            onCheckedChange = { defaultPlateDiameter = it },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = accentColor,
-                                checkedTrackColor = accentColor.copy(alpha = 0.35f)
+                // 6. Fila compacta: Switch diámetro defecto + Fecha y Hora
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (currentMode != "JUMP") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Disco defecto",
+                                color = labelColor,
+                                fontSize = 11.5.sp
                             )
-                        )
-                    }
-                } else {
-                    Column(modifier = Modifier.fillMaxWidth()) {
+                            Switch(
+                                checked = defaultPlateDiameter,
+                                onCheckedChange = { defaultPlateDiameter = it },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = accentColor,
+                                    checkedTrackColor = accentColor.copy(alpha = 0.35f)
+                                )
+                            )
+                        }
+                    } else {
                         Text(
-                            text = "Método de Calibración de Salto",
-                            color = labelColor,
-                            fontSize = 12.5.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Tiempo de Vuelo (My Jump) + Detección de FPS e Interpolación IA Sub-Frame",
+                            text = "IA Sub-Frame + My Jump",
                             color = accentColor,
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.Medium
+                            fontSize = 11.5.sp
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Divider(color = lineColor, thickness = 1.dp)
                     }
-                }
 
-                // 7. Fecha
-                Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "Fecha",
+                        text = "$nowDateStr • $nowTimeStr",
                         color = labelColor,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = nowDateStr,
-                        color = valueColor,
-                        fontSize = 16.sp
+                        fontSize = 11.5.sp
                     )
                 }
-
-                // 8. Hora
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "Hora",
-                        color = labelColor,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = nowTimeStr,
-                        color = valueColor,
-                        fontSize = 16.sp
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
 
                 // Botones inferiores a la derecha: CANCELAR / GUARDAR
                 Row(
