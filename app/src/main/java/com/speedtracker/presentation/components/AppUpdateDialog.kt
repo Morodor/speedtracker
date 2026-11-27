@@ -206,10 +206,31 @@ fun AppUpdateDialog(
 
                             Button(
                                 onClick = {
-                                    // Descarga segura a través del gestor oficial del navegador Android
-                                    // sin usar REQUEST_INSTALL_PACKAGES (evita el bloqueo de Google Play Protect)
-                                    AppUpdateManager.openSystemBrowserDownload(context, release.apkDownloadUrl)
-                                    onDismiss()
+                                    if (!AppUpdateManager.canInstallPackages(context)) {
+                                        AppUpdateManager.requestInstallPermission(context)
+                                        return@Button
+                                    }
+                                    state = UpdateDownloadState.DOWNLOADING
+                                    coroutineScope.launch {
+                                        try {
+                                            val file = AppUpdateManager.downloadUpdate(
+                                                context = context,
+                                                downloadUrl = release.apkDownloadUrl,
+                                                onProgress = { prog, cur, tot ->
+                                                    downloadProgress = prog
+                                                    downloadedBytes = cur
+                                                    if (tot > 0) totalBytes = tot
+                                                }
+                                            )
+                                            downloadedFile = file
+                                            state = UpdateDownloadState.DOWNLOADED
+                                            AppUpdateManager.installApk(context, file, release.apkDownloadUrl)
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                            errorMessage = e.message ?: "Fallo al descargar actualización"
+                                            state = UpdateDownloadState.ERROR
+                                        }
+                                    }
                                 },
                                 modifier = Modifier
                                     .weight(1.35f)
@@ -228,7 +249,7 @@ fun AppUpdateDialog(
                                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Descargar e Instalar",
+                                        text = "Actualizar Ahora",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.sp,
                                         lineHeight = 14.sp,
