@@ -633,7 +633,7 @@ fun VideoAnalysisScreen(
     var currentMode by remember { mutableStateOf("VBT") }
     var setupFamily by remember { mutableStateOf(VBTExerciseFamily.DLP_OLYMPIC) }
     var selectedVBTExercise by remember { mutableStateOf(VBTExerciseModel.SNATCH_FLOOR) }
-    var selectedExerciseSequence by remember { mutableStateOf(listOf(VBTExerciseModel.SNATCH_FLOOR)) }
+    var selectedExerciseSequence by remember { mutableStateOf<List<VBTExerciseModel>>(emptyList()) }
     var selectedJumpType by remember { mutableStateOf(JumpType.CMJ) }
     var isReadyToAnalyze by remember { mutableStateOf(false) }
     var analysisSetupStep by remember { mutableStateOf(AnalysisSetupStep.TRIM_VIDEO) }
@@ -4681,8 +4681,8 @@ fun VideoAnalysisScreen(
                 },
                 selectedExerciseSequence = selectedExerciseSequence,
                 onExerciseSequenceChange = { seq ->
+                    selectedExerciseSequence = seq
                     if (seq.isNotEmpty()) {
-                        selectedExerciseSequence = seq
                         selectedVBTExercise = seq.first()
                     }
                 },
@@ -7247,11 +7247,13 @@ fun PreCalibrationSetupDialog(
         else -> "Olímpicos (DLP)"
     }
 
+    val isExerciseUnselected = currentMode == "VBT" && selectedExerciseSequence.isEmpty()
     val currentExerciseText = if (currentMode == "VBT") {
-        if (selectedExerciseSequence.size > 1) {
-            selectedExerciseSequence.mapIndexed { idx, ex -> "${idx + 1}. ${ex.shortName}" }.joinToString(" + ")
-        } else {
-            selectedVBTExercise.displayName
+        when {
+            selectedExerciseSequence.isEmpty() -> "Selecciona tu ejercicio o serie"
+            selectedExerciseSequence.size > 1 ->
+                selectedExerciseSequence.mapIndexed { idx, ex -> "${idx + 1}. ${ex.shortName}" }.joinToString(" + ")
+            else -> selectedExerciseSequence.first().displayName
         }
     } else {
         when (selectedJumpType) {
@@ -7360,8 +7362,9 @@ fun PreCalibrationSetupDialog(
                     ) {
                         Text(
                             text = currentExerciseText,
-                            color = valueColor,
+                            color = if (isExerciseUnselected) Color(0xFFFFB74D) else valueColor,
                             fontSize = 17.sp,
+                            fontWeight = if (isExerciseUnselected) FontWeight.SemiBold else FontWeight.Normal,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
@@ -7578,7 +7581,21 @@ fun PreCalibrationSetupDialog(
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    TextButton(onClick = onConfirmAndCalibrate) {
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    TextButton(
+                        onClick = {
+                            if (currentMode == "VBT" && selectedExerciseSequence.isEmpty()) {
+                                android.widget.Toast.makeText(
+                                    ctx,
+                                    "Selecciona tu ejercicio o serie para continuar",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                showExercisePickerPopup = true
+                            } else {
+                                onConfirmAndCalibrate()
+                            }
+                        }
+                    ) {
                         Text(
                             text = "GUARDAR",
                             color = accentColor,

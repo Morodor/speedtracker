@@ -64,7 +64,7 @@ fun AthletesScreen(
     var showCreateDialog by remember { mutableStateOf(false) }
     var userToEdit by remember { mutableStateOf<User?>(null) }
     var userToDelete by remember { mutableStateOf<User?>(null) }
-    var expandedUserId by remember { mutableStateOf<String?>(users.firstOrNull()?.id) }
+    var expandedUserId by remember { mutableStateOf<String?>(null) }
     var videoSessionToPlay by remember { mutableStateOf<Session?>(null) }
     var pdfSessionToView by remember { mutableStateOf<Session?>(null) }
     var generatedAthleteReportFile by remember { mutableStateOf<Pair<File, String>?>(null) }
