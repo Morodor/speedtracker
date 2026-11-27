@@ -3314,7 +3314,7 @@ fun VideoAnalysisScreen(
                             onCurrentPositionChange = { previewPlaybackPosMs = it },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 8.dp)
+                                .padding(bottom = 6.dp)
                         )
 
                         // 2. Telemetría Cinemática JUSTO DEBAJO DEL VIDEO (Visible al instante al presionar Play y con Scrubbing táctil)
@@ -3342,7 +3342,7 @@ fun VideoAnalysisScreen(
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 10.dp)
+                                    .padding(bottom = 6.dp)
                             )
                         }
 
@@ -4914,7 +4914,7 @@ fun KinematicTelemetryChart(
         shape = RoundedCornerShape(14.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262C36))
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             // Cabecera: Título y Selector de Métrica
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -4954,7 +4954,7 @@ fun KinematicTelemetryChart(
                                 1.dp,
                                 if (isSelected) activeColor else Color(0xFF2D3542)
                             ),
-                            modifier = Modifier.height(26.dp)
+                            modifier = Modifier.height(22.dp)
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
@@ -4972,7 +4972,7 @@ fun KinematicTelemetryChart(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(5.dp))
 
             // Barra HUD con valores instantáneos dinámicos sincronizados
             Surface(
@@ -4984,7 +4984,7 @@ fun KinematicTelemetryChart(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -5013,13 +5013,13 @@ fun KinematicTelemetryChart(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Cuadrícula y Ondas (Canvas de Telemetría Dinámica con Touch & Drag Scrubbing)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(155.dp)
+                    .height(108.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF090C10))
                     .border(1.dp, Color(0xFF1E2530), RoundedCornerShape(8.dp))
@@ -5844,7 +5844,7 @@ fun AnalysisResultVideoPreview(
     }
 
     val isVertical = if (videoNativeWidth > 0 && videoNativeHeight > 0) videoNativeHeight > videoNativeWidth else true
-    val previewHeight = if (isVertical) 330.dp else 240.dp
+    val previewHeight = if (isVertical) 405.dp else 265.dp
 
     fun applySpeed(speed: Float) {
         playbackSpeed = speed

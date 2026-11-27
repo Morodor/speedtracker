@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -1127,8 +1128,19 @@ fun CameraScreen(
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.sp
                                         )
-                                        if (rep.repNumber > 1) {
-                                            val lossVal = rep.velocityLossPercent.roundToInt()
+                                        val bestRepNum = repsList.maxByOrNull {
+                                            if (vbtPrimaryMetric == VBTVelocityMetric.MEAN_VELOCITY) it.meanVelocity else it.peakVelocity
+                                        }?.repNumber
+                                        val isBestRef = rep.repNumber == bestRepNum
+                                        val lossVal = rep.velocityLossPercent.roundToInt()
+                                        if (isBestRef) {
+                                            Text(
+                                                text = "★ Ref",
+                                                color = Color(0xFF00FFCC),
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 10.sp
+                                            )
+                                        } else {
                                             Text(
                                                 text = if (lossVal > 0) "-$lossVal%" else "0%",
                                                 color = when {
@@ -1325,24 +1337,27 @@ fun CameraScreen(
         if (showThresholdDialog) {
             AlertDialog(
                 onDismissRequest = { showThresholdDialog = false },
+                containerColor = Color(0xFF12161D),
+                titleContentColor = Color.White,
+                textContentColor = Color.White,
                 title = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text("⚡", fontSize = 18.sp)
-                        Text("Control de Fatiga VBT", fontWeight = FontWeight.Bold)
+                        Text("Control de Fatiga VBT", fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 },
                 text = {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
-                            "Optimiza la serie deteniéndote antes del fallo neuromuscular cuando caiga la velocidad respecto a la mejor repetición.",
+                            "Optimiza la serie deteniéndote antes del fallo neuromuscular cuando caiga la velocidad respecto a la 1.ª repetición o la mejor marca.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.LightGray
+                            color = Color(0xFFCBD5E1)
                         )
 
                         // 1. Control por % de Pérdida de Velocidad (Fatiga Intraserie)
@@ -1387,22 +1402,25 @@ fun CameraScreen(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         listOf(
-                                            10.0 to "10% Fuerza",
-                                            15.0 to "15% Óptimo",
-                                            20.0 to "20% Estándar",
-                                            30.0 to "30% Máx"
+                                            10.0 to "10%\nFuerza",
+                                            15.0 to "15%\nÓptimo",
+                                            20.0 to "20%\nEstán.",
+                                            30.0 to "30%\nMáx"
                                         ).forEach { (pct, label) ->
                                             val isSel = targetLossPercent == pct
                                             Surface(
                                                 onClick = { targetLossPercent = pct },
                                                 shape = RoundedCornerShape(8.dp),
                                                 color = if (isSel) Color(0xFF00FFCC) else Color(0xFF26323F),
-                                                modifier = Modifier.weight(1f).height(32.dp)
+                                                modifier = Modifier.weight(1f).height(42.dp)
                                             ) {
-                                                Box(contentAlignment = Alignment.Center) {
+                                                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 2.dp)) {
                                                     Text(
                                                         label,
                                                         fontSize = 10.sp,
+                                                        lineHeight = 12.sp,
+                                                        maxLines = 2,
+                                                        textAlign = TextAlign.Center,
                                                         fontWeight = FontWeight.Bold,
                                                         color = if (isSel) Color.Black else Color.LightGray
                                                     )
@@ -1623,6 +1641,9 @@ fun CameraScreen(
 
             AlertDialog(
                 onDismissRequest = { showRepoEditDialog = false },
+                containerColor = Color(0xFF12161D),
+                titleContentColor = Color.White,
+                textContentColor = Color.White,
                 title = { Text("Configurar Repositorio de GitHub", color = Color(0xFF00FFCC), fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1681,6 +1702,9 @@ fun CameraScreen(
         if (showPostRecordDialog && lastRecordedVideoUri != null) {
             AlertDialog(
                 onDismissRequest = { showPostRecordDialog = false },
+                containerColor = Color(0xFF12161D),
+                titleContentColor = Color.White,
+                textContentColor = Color.White,
                 title = {
                     Text("¡Serie Grabada con Éxito!", fontWeight = FontWeight.Bold, color = Color(0xFF00FFCC))
                 },
@@ -1876,6 +1900,9 @@ fun OneRMCalculatorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = Color(0xFF12161D),
+        titleContentColor = Color.White,
+        textContentColor = Color.White,
         title = {
             Text("Calculador 1RM & Perfil VBT", fontWeight = FontWeight.Bold, color = Color(0xFF00FFCC))
         },
@@ -1887,7 +1914,7 @@ fun OneRMCalculatorDialog(
                 Text(
                     "Estimación científica de 1RM basada en la velocidad de la serie actual:",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.LightGray
+                    color = Color(0xFFCBD5E1)
                 )
 
                 OutlinedTextField(
@@ -1896,10 +1923,19 @@ fun OneRMCalculatorDialog(
                     label = { Text("Carga Levantada en la Serie (kg)") },
                     singleLine = true,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFF00FFCC),
+                        unfocusedBorderColor = Color(0xFF334155),
+                        focusedLabelColor = Color(0xFF00FFCC),
+                        unfocusedLabelColor = Color(0xFF94A3B8),
+                        cursorColor = Color(0xFF00FFCC)
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text("Ejercicio:", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                Text("Ejercicio:", style = MaterialTheme.typography.labelSmall, color = Color(0xFF94A3B8))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1919,6 +1955,8 @@ fun OneRMCalculatorDialog(
                             onClick = { selectedExercise = ex },
                             label = { Text(ex.displayName, style = MaterialTheme.typography.labelSmall) },
                             colors = FilterChipDefaults.filterChipColors(
+                                containerColor = Color(0xFF1B232D),
+                                labelColor = Color(0xFFCBD5E1),
                                 selectedContainerColor = Color(0xFF00FFCC),
                                 selectedLabelColor = Color.Black
                             )
@@ -1927,27 +1965,44 @@ fun OneRMCalculatorDialog(
                 }
 
                 Surface(
-                    color = Color(0xFF1E1E1E),
+                    color = Color(0xFF1B232D),
                     shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, Color(0xFF00FFCC).copy(alpha = 0.5f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("1RM Estimado", color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
+                        Text("1RM Estimado", color = Color(0xFFCBD5E1), style = MaterialTheme.typography.labelMedium)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "${estimated1RM.toInt()} kg",
-                            color = Color(0xFF00FFCC),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Black
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Intensidad: ${String.format(Locale.US, "%.1f", percent1RM)}% 1RM (a ${String.format(Locale.US, "%.2f", currentBestVelocity)} m/s)",
-                            color = Color(0xFF00E5FF),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold
-                        )
+                        if (currentBestVelocity > 0.05) {
+                            Text(
+                                "${estimated1RM.toInt()} kg",
+                                color = Color(0xFF00FFCC),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Black
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Intensidad: ${String.format(Locale.US, "%.1f", percent1RM)}% 1RM (a ${String.format(Locale.US, "%.2f", currentBestVelocity)} m/s)",
+                                color = Color(0xFF00E5FF),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        } else {
+                            Text(
+                                "-- kg",
+                                color = Color(0xFF00FFCC),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Black
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Completa al menos 1 repetición para calcular tu 1RM",
+                                color = Color(0xFF94A3B8),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
