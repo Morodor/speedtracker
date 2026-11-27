@@ -11,8 +11,8 @@ android {
         applicationId = "com.speedtracker"
         minSdk = 24
         targetSdk = 34
-        versionCode = 52
-        versionName = "2.1.3"
+        versionCode = 53
+        versionName = "2.1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

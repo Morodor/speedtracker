@@ -194,7 +194,7 @@ object AppUpdateManager {
             while (redirects < 5) {
                 val url = URL(currentUrl)
                 connection = (url.openConnection() as HttpURLConnection).apply {
-                    instanceFollowRedirects = true
+                    instanceFollowRedirects = false
                     connectTimeout = 15000
                     readTimeout = 30000
                     setRequestProperty("User-Agent", "SpeedTracker-Android/${getAppVersionName(context)}")
